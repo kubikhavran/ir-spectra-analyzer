@@ -6,6 +6,7 @@ Zodpovědnost:
 - Styly textu (fonty, velikosti, barvy)
 - Konfigurovatelné sekce reportu
 """
+
 from __future__ import annotations
 
 

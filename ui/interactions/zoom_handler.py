@@ -9,6 +9,7 @@ Zodpovědnost:
 Poznámka: PyQtGraph zpracovává základní zoom nativně.
 Tato třída přidává rectangle zoom a programmatický reset.
 """
+
 from __future__ import annotations
 
 from PySide6.QtCore import QObject

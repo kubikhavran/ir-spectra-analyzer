@@ -1,7 +1,8 @@
 """Dialog for choosing export format and options."""
+
 from __future__ import annotations
 
-from PySide6.QtWidgets import QDialog, QDialogButtonBox, QVBoxLayout, QRadioButton
+from PySide6.QtWidgets import QDialog, QDialogButtonBox, QRadioButton, QVBoxLayout
 
 
 class ExportDialog(QDialog):

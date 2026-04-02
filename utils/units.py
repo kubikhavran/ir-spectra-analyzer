@@ -5,6 +5,7 @@ Zodpovědnost:
 - Konstanty (rychlost světla, Planckova konstanta)
 - Pojmenované jednotky a konverzní faktory
 """
+
 from __future__ import annotations
 
 # Speed of light in cm/s

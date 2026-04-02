@@ -3,6 +3,7 @@ IR Spectra Analyzer — Main Entry Point
 
 Spustí PySide6 aplikaci pro analýzu IR spekter.
 """
+
 import sys
 
 from PySide6.QtWidgets import QApplication

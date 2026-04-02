@@ -10,6 +10,7 @@ Architektonické pravidlo:
   PeakPicker POUZE převádí UI akci na doménový event.
   Samotné vytvoření Peak objektu provádí core vrstva.
 """
+
 from __future__ import annotations
 
 from PySide6.QtCore import QObject, Signal

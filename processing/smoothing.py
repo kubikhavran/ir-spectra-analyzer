@@ -8,6 +8,7 @@ Zodpovědnost:
 Architektonické pravidlo:
   Čistě funkcionální. Vstup: numpy array. Výstup: numpy array.
 """
+
 from __future__ import annotations
 
 import numpy as np

@@ -5,6 +5,7 @@ Zodpovědnost:
 - Načítání a ukládání uživatelských předvoleb
 - JSON serializace do ~/.ir-spectra-analyzer/settings.json
 """
+
 from __future__ import annotations
 
 import json

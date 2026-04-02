@@ -13,10 +13,13 @@ Schéma:
   - vibration_presets     — předvolby vibrací (builtins + uživatelské)
   - vibration_assignments — přiřazení předvolby k peaku
 """
+
 from __future__ import annotations
 
 import sqlite3
 from pathlib import Path
+
+import numpy as np
 
 from app.config import DB_PATH
 
@@ -26,14 +29,16 @@ class Database:
 
     SCHEMA_VERSION = 1
 
-    def __init__(self, db_path: Path = DB_PATH) -> None:
+    def __init__(self, db_path: str | Path = DB_PATH) -> None:
         self._db_path = db_path
         self._conn: sqlite3.Connection | None = None
 
     def initialize(self) -> None:
         """Create data directory, open connection, apply schema, seed data."""
-        self._db_path.parent.mkdir(parents=True, exist_ok=True)
-        self._conn = sqlite3.connect(self._db_path)
+        db_path = str(self._db_path)
+        if db_path != ":memory:":
+            Path(db_path).parent.mkdir(parents=True, exist_ok=True)
+        self._conn = sqlite3.connect(db_path)
         self._conn.row_factory = sqlite3.Row
         self._apply_schema()
         self._seed_vibration_presets()
@@ -83,6 +88,19 @@ class Database:
 
             CREATE INDEX IF NOT EXISTS idx_peaks_project  ON peaks(project_id);
             CREATE INDEX IF NOT EXISTS idx_peaks_position ON peaks(position);
+
+            CREATE TABLE IF NOT EXISTS reference_spectra (
+                id          INTEGER PRIMARY KEY AUTOINCREMENT,
+                name        TEXT    NOT NULL,
+                description TEXT    NOT NULL DEFAULT '',
+                source      TEXT    NOT NULL DEFAULT '',
+                wavenumbers BLOB    NOT NULL,
+                intensities BLOB    NOT NULL,
+                y_unit      TEXT    NOT NULL DEFAULT 'Absorbance',
+                created_at  TEXT    NOT NULL DEFAULT (datetime('now'))
+            );
+
+            CREATE INDEX IF NOT EXISTS idx_reference_spectra_name ON reference_spectra(name);
         """)
         self._conn.commit()
 
@@ -96,30 +114,81 @@ class Database:
 
         presets = [
             # (name, range_min, range_max, category, description, color)
-            ("O-H stretch",           3200.0, 3600.0, "stretch",
-             "Broad O-H stretching vibration (alcohols, phenols, carboxylic acids)", "#E74C3C"),
-            ("N-H stretch",           3300.0, 3500.0, "stretch",
-             "N-H stretching vibration (primary/secondary amines, amides)",          "#E67E22"),
-            ("C-H stretch aromatic",  3000.0, 3100.0, "stretch",
-             "Aromatic C-H stretching vibrations",                                   "#9B59B6"),
-            ("C-H stretch aliphatic", 2850.0, 3000.0, "stretch",
-             "Aliphatic C-H stretching (CH3, CH2, CH groups)",                       "#8E44AD"),
-            ("C≡N stretch",           2200.0, 2260.0, "stretch",
-             "Nitrile C≡N stretching vibration",                                     "#1ABC9C"),
-            ("C=O stretch",           1680.0, 1750.0, "stretch",
-             "Carbonyl C=O stretching (esters, ketones, aldehydes, carboxylic acids)", "#E74C3C"),
-            ("C=C aromatic",          1450.0, 1600.0, "stretch",
-             "Aromatic ring C=C stretching vibrations",                              "#3498DB"),
-            ("C-H bend",              1350.0, 1470.0, "bend",
-             "C-H in-plane bending vibrations",                                      "#27AE60"),
-            ("C-O stretch",           1000.0, 1260.0, "stretch",
-             "C-O stretching vibrations (ethers, esters, alcohols)",                 "#F39C12"),
-            ("C-Cl stretch",           600.0,  800.0, "stretch",
-             "C-Cl stretching vibration",                                            "#7F8C8D"),
-            ("C-Br stretch",           500.0,  700.0, "stretch",
-             "C-Br stretching vibration",                                            "#95A5A6"),
-            ("Fingerprint region",     500.0, 1500.0, "region",
-             "Complex fingerprint region with skeletal vibrations",                  "#BDC3C7"),
+            (
+                "O-H stretch",
+                3200.0,
+                3600.0,
+                "stretch",
+                "Broad O-H stretching vibration (alcohols, phenols, carboxylic acids)",
+                "#E74C3C",
+            ),
+            (
+                "N-H stretch",
+                3300.0,
+                3500.0,
+                "stretch",
+                "N-H stretching vibration (primary/secondary amines, amides)",
+                "#E67E22",
+            ),
+            (
+                "C-H stretch aromatic",
+                3000.0,
+                3100.0,
+                "stretch",
+                "Aromatic C-H stretching vibrations",
+                "#9B59B6",
+            ),
+            (
+                "C-H stretch aliphatic",
+                2850.0,
+                3000.0,
+                "stretch",
+                "Aliphatic C-H stretching (CH3, CH2, CH groups)",
+                "#8E44AD",
+            ),
+            (
+                "C≡N stretch",
+                2200.0,
+                2260.0,
+                "stretch",
+                "Nitrile C≡N stretching vibration",
+                "#1ABC9C",
+            ),
+            (
+                "C=O stretch",
+                1680.0,
+                1750.0,
+                "stretch",
+                "Carbonyl C=O stretching (esters, ketones, aldehydes, carboxylic acids)",
+                "#E74C3C",
+            ),
+            (
+                "C=C aromatic",
+                1450.0,
+                1600.0,
+                "stretch",
+                "Aromatic ring C=C stretching vibrations",
+                "#3498DB",
+            ),
+            ("C-H bend", 1350.0, 1470.0, "bend", "C-H in-plane bending vibrations", "#27AE60"),
+            (
+                "C-O stretch",
+                1000.0,
+                1260.0,
+                "stretch",
+                "C-O stretching vibrations (ethers, esters, alcohols)",
+                "#F39C12",
+            ),
+            ("C-Cl stretch", 600.0, 800.0, "stretch", "C-Cl stretching vibration", "#7F8C8D"),
+            ("C-Br stretch", 500.0, 700.0, "stretch", "C-Br stretching vibration", "#95A5A6"),
+            (
+                "Fingerprint region",
+                500.0,
+                1500.0,
+                "region",
+                "Complex fingerprint region with skeletal vibrations",
+                "#BDC3C7",
+            ),
         ]
 
         cursor.executemany(
@@ -137,6 +206,61 @@ class Database:
             "SELECT * FROM vibration_presets ORDER BY typical_range_max DESC"
         ).fetchall()
         return [dict(row) for row in rows]
+
+    def add_reference_spectrum(
+        self,
+        name: str,
+        wavenumbers: np.ndarray,
+        intensities: np.ndarray,
+        description: str = "",
+        source: str = "",
+        y_unit: str = "Absorbance",
+    ) -> int:
+        """Insert a reference spectrum. Returns new row id."""
+        assert self._conn is not None
+        cursor = self._conn.cursor()
+        cursor.execute(
+            """INSERT INTO reference_spectra
+               (name, description, source, wavenumbers, intensities, y_unit)
+               VALUES (?, ?, ?, ?, ?, ?)""",
+            (
+                name,
+                description,
+                source,
+                wavenumbers.astype(np.float64).tobytes(),
+                intensities.astype(np.float64).tobytes(),
+                y_unit,
+            ),
+        )
+        self._conn.commit()
+        return cursor.lastrowid
+
+    def get_reference_spectra(self) -> list[dict]:
+        """Return all reference spectra as list of dicts (wavenumbers/intensities as ndarray)."""
+        assert self._conn is not None
+        rows = self._conn.execute("SELECT * FROM reference_spectra ORDER BY name").fetchall()
+        result = []
+        for row in rows:
+            d = dict(row)
+            d["wavenumbers"] = np.frombuffer(d["wavenumbers"], dtype=np.float64).copy()
+            d["intensities"] = np.frombuffer(d["intensities"], dtype=np.float64).copy()
+            result.append(d)
+        return result
+
+    def delete_reference_spectrum(self, ref_id: int) -> None:
+        """Delete a reference spectrum by id."""
+        assert self._conn is not None
+        self._conn.execute("DELETE FROM reference_spectra WHERE id = ?", (ref_id,))
+        self._conn.commit()
+
+    def rename_reference_spectrum(self, ref_id: int, new_name: str) -> None:
+        """Rename a reference spectrum by id."""
+        assert self._conn is not None
+        self._conn.execute(
+            "UPDATE reference_spectra SET name = ? WHERE id = ?",
+            (new_name, ref_id),
+        )
+        self._conn.commit()
 
     def close(self) -> None:
         """Close the database connection."""

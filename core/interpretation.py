@@ -6,6 +6,7 @@ Zodpovědnost:
 - Uložení poznámek k přiřazení
 - Export interpretace pro reporting
 """
+
 from __future__ import annotations
 
 from dataclasses import dataclass
@@ -23,6 +24,7 @@ class VibrationAssignment:
         preset: The vibration preset.
         notes: Optional analyst notes for this assignment.
     """
+
     peak: Peak
     preset: VibrationPreset
     notes: str = ""

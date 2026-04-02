@@ -1,7 +1,8 @@
 """About dialog with application info and version."""
+
 from __future__ import annotations
 
-from PySide6.QtWidgets import QDialog, QVBoxLayout, QLabel, QDialogButtonBox
+from PySide6.QtWidgets import QDialog, QDialogButtonBox, QLabel, QVBoxLayout
 
 
 class AboutDialog(QDialog):

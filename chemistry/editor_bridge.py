@@ -7,6 +7,7 @@ Zodpovědnost:
 
 Plánováno pro v0.4.0.
 """
+
 from __future__ import annotations
 
 

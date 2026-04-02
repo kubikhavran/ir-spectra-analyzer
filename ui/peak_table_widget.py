@@ -7,10 +7,11 @@ Zodpovědnost:
 - Synchronizace s SpectrumWidget (výběr v tabulce = highlight v grafu)
 - Signály pro přidání/odebrání peaku
 """
+
 from __future__ import annotations
 
-from PySide6.QtWidgets import QWidget, QVBoxLayout, QTableWidget, QTableWidgetItem
 from PySide6.QtCore import Signal
+from PySide6.QtWidgets import QTableWidget, QTableWidgetItem, QVBoxLayout, QWidget
 
 from core.peak import Peak
 
@@ -19,7 +20,7 @@ class PeakTableWidget(QWidget):
     """Editable table displaying detected/assigned IR peaks."""
 
     peak_selected = Signal(object)  # emits Peak on row selection
-    peak_deleted = Signal(object)   # emits Peak on delete action
+    peak_deleted = Signal(object)  # emits Peak on delete action
 
     def __init__(self, parent=None) -> None:
         super().__init__(parent)
@@ -49,4 +50,12 @@ class PeakTableWidget(QWidget):
             self._table.setItem(row, 0, QTableWidgetItem(f"{peak.position:.2f}"))
             self._table.setItem(row, 1, QTableWidgetItem(f"{peak.intensity:.4f}"))
             self._table.setItem(row, 2, QTableWidgetItem(peak.label))
-            self._table.setItem(row, 3, QTableWidgetItem(""))
+            assignment = peak.label if peak.vibration_id is not None else ""
+            self._table.setItem(row, 3, QTableWidgetItem(assignment))
+
+    def selected_peak(self) -> Peak | None:
+        """Return the currently selected Peak, or None."""
+        row = self._table.currentRow()
+        if 0 <= row < len(self._peaks):
+            return self._peaks[row]
+        return None

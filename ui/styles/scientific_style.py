@@ -6,6 +6,7 @@ Zodpovědnost:
 - Tick marks, grid, font os
 - IR spektrometrické konvence (invertovaná X osa)
 """
+
 from __future__ import annotations
 
 import pyqtgraph as pg

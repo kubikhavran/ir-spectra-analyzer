@@ -6,6 +6,7 @@ Zodpovědnost:
 - Bezpečné in-place migrace při aktualizaci aplikace
 - Tracking aplikované verze migrace v tabulce schema_version
 """
+
 from __future__ import annotations
 
 import sqlite3

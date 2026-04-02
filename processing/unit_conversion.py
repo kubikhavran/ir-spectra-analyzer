@@ -5,6 +5,7 @@ Zodpovědnost:
 - Absorbance ↔ Transmittance konverze
 - Wavenumber ↔ Wavelength (nm, μm) konverze
 """
+
 from __future__ import annotations
 
 import numpy as np

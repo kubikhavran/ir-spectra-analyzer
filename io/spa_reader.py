@@ -13,6 +13,7 @@ Poznámka k SPA formátu:
   Parsování je založeno na reverse engineeringu. U exotických modelů
   spektrometrů může selhat — proto třístupňový fallback.
 """
+
 from __future__ import annotations
 
 from pathlib import Path
@@ -57,6 +58,7 @@ class SPAReader:
         # Stage 2: Custom binary parser
         try:
             from io.spa_binary import SPABinaryReader  # noqa: PLC0415
+
             return SPABinaryReader().read(filepath)
         except Exception:  # noqa: BLE001
             pass
@@ -68,8 +70,9 @@ class SPAReader:
 
     def _read_spectrochempy(self, filepath: Path) -> Spectrum:
         """Read SPA using SpectroChemPy library."""
-        import spectrochempy as scp  # noqa: PLC0415
         import numpy as np  # noqa: PLC0415
+        import spectrochempy as scp  # noqa: PLC0415
+
         from core.spectrum import SpectralUnit, XAxisUnit  # noqa: PLC0415
 
         dataset = scp.read_omnic(str(filepath))

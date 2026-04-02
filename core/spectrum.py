@@ -10,6 +10,7 @@ Zodpovědnost:
 Toto je centrální datová třída. Všechny ostatní komponenty
 pracují s instancí Spectrum.
 """
+
 from __future__ import annotations
 
 from dataclasses import dataclass, field
@@ -22,6 +23,7 @@ import numpy as np
 
 class SpectralUnit(Enum):
     """Spectral intensity units."""
+
     ABSORBANCE = "Absorbance"
     TRANSMITTANCE = "Transmittance"
     REFLECTANCE = "Reflectance"
@@ -30,6 +32,7 @@ class SpectralUnit(Enum):
 
 class XAxisUnit(Enum):
     """X-axis units."""
+
     WAVENUMBER = "cm⁻¹"
     WAVELENGTH_NM = "nm"
     WAVELENGTH_UM = "μm"
@@ -50,6 +53,7 @@ class Spectrum:
         comments: Free-text notes from file header.
         extra_metadata: Additional key-value metadata from file.
     """
+
     wavenumbers: np.ndarray
     intensities: np.ndarray
     title: str = ""

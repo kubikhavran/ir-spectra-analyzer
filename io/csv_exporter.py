@@ -6,6 +6,7 @@ Zodpovědnost:
 - Konfigurovatelný oddělovač (čárka, tabulátor, středník)
 - Volitelné záhlaví s metadaty spektra
 """
+
 from __future__ import annotations
 
 import csv
@@ -40,9 +41,11 @@ class CSVExporter:
             if include_header:
                 writer.writerow(["Position (cm⁻¹)", "Intensity", "Label", "Vibration"])
             for peak in peaks:
-                writer.writerow([
-                    f"{peak.position:.2f}",
-                    f"{peak.intensity:.4f}",
-                    peak.label,
-                    "",  # vibration assignment — populated when implemented
-                ])
+                writer.writerow(
+                    [
+                        f"{peak.position:.2f}",
+                        f"{peak.intensity:.4f}",
+                        peak.label,
+                        "",  # vibration assignment — populated when implemented
+                    ]
+                )

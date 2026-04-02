@@ -10,6 +10,7 @@ Architektonické pravidlo:
   Čistě funkcionální — vstup: numpy arrays, výstup: seznam Peak objektů.
   Žádný stav, žádné side-effects. Snadno testovatelné.
 """
+
 from __future__ import annotations
 
 import numpy as np

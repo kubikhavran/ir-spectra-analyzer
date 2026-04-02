@@ -10,6 +10,7 @@ Zodpovědnost:
 Pravidlo: UI nikdy nemodifikuje data přímo.
 Vždy volá metody na Project instanci.
 """
+
 from __future__ import annotations
 
 from dataclasses import dataclass, field
@@ -31,8 +32,10 @@ class Project:
         updated_at: Last modification timestamp.
         db_id: Database row ID (None if not persisted).
     """
+
     name: str
     spectrum: Spectrum | None = None
+    corrected_spectrum: Spectrum | None = None
     peaks: list[Peak] = field(default_factory=list)
     created_at: datetime = field(default_factory=datetime.now)
     updated_at: datetime = field(default_factory=datetime.now)

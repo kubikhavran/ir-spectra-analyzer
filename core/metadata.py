@@ -6,6 +6,7 @@ Zodpovědnost:
 - Uživatelem editovatelná pole (vzorek, operátor, poznámky)
 - Serializace pro ukládání do databáze
 """
+
 from __future__ import annotations
 
 from dataclasses import dataclass, field
@@ -27,6 +28,7 @@ class SpectrumMetadata:
         comments: Free-text notes.
         extra: Additional key-value metadata from file.
     """
+
     title: str = ""
     sample_name: str = ""
     operator: str = ""

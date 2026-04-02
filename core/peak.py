@@ -8,6 +8,7 @@ Zodpovědnost:
 - Přiřazená vibrační předvolba (optional)
 - Pozice labelu pro ruční umístění v grafu
 """
+
 from __future__ import annotations
 
 from dataclasses import dataclass
@@ -27,7 +28,9 @@ class Peak:
         manual_placement: True if user manually positioned the label.
         fwhm: Full width at half maximum (cm⁻¹), if computed.
         db_id: Database row ID (None if not yet persisted).
+        smiles: SMILES string for the associated molecule structure (optional).
     """
+
     position: float
     intensity: float
     label: str = ""
@@ -37,6 +40,7 @@ class Peak:
     manual_placement: bool = False
     fwhm: float | None = None
     db_id: int | None = None
+    smiles: str = ""
 
     def __post_init__(self) -> None:
         if not self.label:

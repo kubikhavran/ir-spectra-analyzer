@@ -6,9 +6,10 @@ Zodpovědnost:
 - Stav operace (načítání, export, ...)
 - Počet detekovaných peaků
 """
+
 from __future__ import annotations
 
-from PySide6.QtWidgets import QStatusBar, QLabel
+from PySide6.QtWidgets import QLabel, QStatusBar
 
 
 class AppStatusBar(QStatusBar):

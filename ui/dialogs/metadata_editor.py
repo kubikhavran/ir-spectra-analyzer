@@ -1,4 +1,5 @@
 """Dialog for editing spectrum metadata fields."""
+
 from __future__ import annotations
 
 from PySide6.QtWidgets import QDialog, QDialogButtonBox, QFormLayout, QLineEdit, QTextEdit

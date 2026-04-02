@@ -6,6 +6,7 @@ Zodpovědnost:
 - Statistické funkce pro spektrální analýzu
 - Pomocné funkce pro peak fitting
 """
+
 from __future__ import annotations
 
 import numpy as np

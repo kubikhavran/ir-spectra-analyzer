@@ -9,6 +9,7 @@ Zodpovědnost:
 Poznámka: PyQtGraph zpracovává nativní pan.
 Tato třída přidává custom pan módy.
 """
+
 from __future__ import annotations
 
 from PySide6.QtCore import QObject

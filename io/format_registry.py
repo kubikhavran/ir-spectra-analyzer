@@ -15,6 +15,7 @@ Plánované (v0.2+):
 - .jdx / .dx (JCAMP-DX)
 - .csv (tabulková data)
 """
+
 from __future__ import annotations
 
 from pathlib import Path
@@ -41,6 +42,7 @@ class FormatRegistry:
     def _register_defaults(self) -> None:
         """Register built-in format readers."""
         from io.spa_reader import SPAReader  # noqa: PLC0415
+
         self.register(".spa", SPAReader())
 
     def register(self, extension: str, reader: SpectralReader) -> None:
@@ -68,8 +70,5 @@ class FormatRegistry:
         reader = self._readers.get(ext)
         if reader is None:
             supported = ", ".join(sorted(self._readers.keys()))
-            raise ValueError(
-                f"Unsupported file format '{ext}'. "
-                f"Supported formats: {supported}"
-            )
+            raise ValueError(f"Unsupported file format '{ext}'. Supported formats: {supported}")
         return reader.read(filepath)

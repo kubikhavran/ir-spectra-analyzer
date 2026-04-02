@@ -6,6 +6,7 @@ Zodpovědnost:
 - Area normalizace (integral = 1)
 - Peak normalizace (maximum = 1)
 """
+
 from __future__ import annotations
 
 import numpy as np

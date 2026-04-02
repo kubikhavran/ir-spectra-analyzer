@@ -14,6 +14,7 @@ Architektura:
     ├── loads Settings (storage/settings.py)
     └── manages Project lifecycle (core/project.py)
 """
+
 from __future__ import annotations
 
 from storage.database import Database
@@ -39,4 +40,5 @@ class Application:
     def _init_main_window(self) -> None:
         """Create and configure the main application window."""
         from ui.main_window import MainWindow  # noqa: PLC0415
+
         self._main_window = MainWindow(db=self._db, settings=self._settings)

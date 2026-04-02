@@ -8,6 +8,7 @@ Zodpovědnost:
 
 Závislost: openpyxl
 """
+
 from __future__ import annotations
 
 from pathlib import Path
@@ -36,17 +37,66 @@ class XLSXExporter:
         from openpyxl.styles import Font  # noqa: PLC0415
 
         wb = openpyxl.Workbook()
-        ws = wb.active
-        ws.title = "IR Peaks"  # type: ignore[union-attr]
 
-        headers = ["Position (cm⁻¹)", "Intensity", "Label", "Vibration", "Notes"]
-        for col, header in enumerate(headers, start=1):
-            cell = ws.cell(row=1, column=col, value=header)  # type: ignore[union-attr]
+        # Create Peaks sheet
+        peaks_ws = wb.active
+        peaks_ws.title = "Peaks"
+
+        # Peaks headers
+        peaks_headers = ["Position (cm⁻¹)", "Intensity", "Label", "Vibration"]
+        for col, header in enumerate(peaks_headers, start=1):
+            cell = peaks_ws.cell(row=1, column=col, value=header)
             cell.font = Font(bold=True)
 
+        # Peaks data
         for row, peak in enumerate(peaks, start=2):
-            ws.cell(row=row, column=1, value=round(peak.position, 2))  # type: ignore[union-attr]
-            ws.cell(row=row, column=2, value=round(peak.intensity, 4))  # type: ignore[union-attr]
-            ws.cell(row=row, column=3, value=peak.label)  # type: ignore[union-attr]
+            peaks_ws.cell(row=row, column=1, value=round(peak.position, 2))
+            peaks_ws.cell(row=row, column=2, value=round(peak.intensity, 4))
+            peaks_ws.cell(row=row, column=3, value=peak.display_label)
+            # Vibration column: show label when a vibration preset is assigned
+            vibration_name = peak.label if peak.vibration_id is not None else ""
+            peaks_ws.cell(row=row, column=4, value=vibration_name)
+
+        # Auto-adjust column widths for Peaks sheet (outside row loop — O(n) not O(n²))
+        for col in peaks_ws.columns:
+            max_length = 0
+            column = col[0].column_letter
+            for cell in col:
+                try:
+                    if len(str(cell.value)) > max_length:
+                        max_length = len(str(cell.value))
+                except (AttributeError, TypeError):
+                    pass
+            peaks_ws.column_dimensions[column].width = max_length + 2
+
+        # Create Spectrum sheet if spectrum is provided
+        if spectrum is not None:
+            spectrum_ws = wb.create_sheet("Spectrum")
+
+            # Spectrum headers
+            spectrum_headers = ["Wavenumber (cm⁻¹)", "Intensity"]
+            for col, header in enumerate(spectrum_headers, start=1):
+                cell = spectrum_ws.cell(row=1, column=col, value=header)
+                cell.font = Font(bold=True)
+
+            # Spectrum data
+            for row, (wn, intensity) in enumerate(
+                zip(spectrum.wavenumbers, spectrum.intensities, strict=True), start=2
+            ):
+                spectrum_ws.cell(row=row, column=1, value=round(wn, 2))
+                spectrum_ws.cell(row=row, column=2, value=round(intensity, 6))
+
+            # Auto-adjust column widths for Spectrum sheet
+            for col in spectrum_ws.columns:
+                max_length = 0
+                column = col[0].column_letter
+                for cell in col:
+                    try:
+                        if len(str(cell.value)) > max_length:
+                            max_length = len(str(cell.value))
+                    except (AttributeError, TypeError):
+                        pass
+                adjusted_width = max_length + 2
+                spectrum_ws.column_dimensions[column].width = adjusted_width
 
         wb.save(output_path)

@@ -5,6 +5,7 @@ Zodpovědnost:
 - Normalizace a resampling spektra před porovnáváním
 - Zajišťuje, že všechna porovnávaná spektra mají stejnou osu
 """
+
 from __future__ import annotations
 
 import numpy as np

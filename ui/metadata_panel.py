@@ -6,9 +6,10 @@ Zodpovědnost:
 - Synchronizace s Project.metadata objektem
 - Read-only zobrazení dat extrahovaných ze SPA souboru
 """
+
 from __future__ import annotations
 
-from PySide6.QtWidgets import QWidget, QFormLayout, QLineEdit, QLabel
+from PySide6.QtWidgets import QFormLayout, QLabel, QLineEdit, QWidget
 
 from core.metadata import SpectrumMetadata
 

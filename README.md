@@ -6,14 +6,17 @@ Professional desktop software for IR spectrum analysis and interpretation.
 
 IR Spectra Analyzer is a Python-based desktop application for analytical chemists working with infrared spectroscopy data. It provides a professional workflow for loading OMNIC `.spa` files, identifying and annotating spectral peaks, assigning vibration bands, and generating PDF analysis reports.
 
-## Features (v0.1.0 — in development)
+## Features (v0.2.0 — current)
 
-- **SPA File Import** — Robust OMNIC `.spa` reader with SpectroChemPy + binary fallback
-- **Interactive Spectrum Viewer** — High-performance PyQtGraph viewer with zoom, pan, cursor readout
-- **Peak Picking** — Automatic detection (SciPy) and manual click-to-add mode
-- **Vibration Assignment** — Built-in 12 common IR vibration bands, user-extensible
-- **PDF Export** — Publication-quality analysis reports with annotated spectrum and peak table
-- **CSV / XLSX Export** — Peak tables for downstream data processing
+- **SPA File Import** — Custom binary OMNIC `.spa` reader (16-byte directory, type-27 metadata extraction)
+- **Interactive Spectrum Viewer** — OMNIC-like PyQtGraph viewer: white background, inverted X-axis, in-ticks, tool modes (Select/Pan/Zoom/Add Peak)
+- **Peak Picking** — Automatic SciPy detection and manual click-to-add mode
+- **Vibration Assignment** — 12 default IR vibration presets; filter, highlight matching, assign by double-click
+- **Baseline Correction** — Rubber-band (lower convex hull) algorithm, undoable
+- **Undo / Redo** — Full `QUndoStack` covering peak add/delete/assign and baseline correction (Ctrl+Z / Ctrl+Y)
+- **Project Files** — Save and load full project state (spectrum + peaks + assignments + corrected spectrum) as `.irproj` JSON
+- **PDF Export** — Publication-quality reports with OMNIC-like spectrum image and peak table
+- **CSV / XLSX Export** — Peaks table and raw spectrum data export; format selection dialog
 
 ## Architecture
 
@@ -86,10 +89,10 @@ ir-spectra-analyzer/
 
 | Version | Name | Status |
 |---------|------|--------|
-| 0.1.0 | Basic Viewer + Manual Interpretation | 🔄 In Progress |
-| 0.2.0 | Professional Workflow (Undo/Redo, project files) | ⏳ Planned |
-| 0.3.0 | Spectral Database Matching | ⏳ Planned |
-| 0.4.0 | Chemistry + Advanced Reporting (RDKit) | ⏳ Planned |
+| 0.1.0 | Basic Viewer + Manual Interpretation | ✅ Done |
+| 0.2.0 | Professional Workflow (Undo/Redo, project files, baseline) | ✅ Done |
+| 0.3.0 | Spectral Database Matching | ✅ Done |
+| 0.4.0 | Chemistry + Advanced Reporting (RDKit) | 🔄 Next |
 
 ## License
 

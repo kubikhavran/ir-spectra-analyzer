@@ -13,6 +13,7 @@ Formát .irproj:
 
 Plánováno pro v0.2.0.
 """
+
 from __future__ import annotations
 
 from pathlib import Path

@@ -6,6 +6,7 @@ Zodpovědnost:
 - Fonty pro UI a vědecké popisky
 - Qt stylesheet pro celou aplikaci
 """
+
 from __future__ import annotations
 
 # Dark theme colors (Catppuccin Mocha inspired)

@@ -7,6 +7,7 @@ Zodpovědnost:
 - Filtrování předvoleb dle spektrálního rozsahu
 - Kategorizace vibrací (stretch, bend, etc.)
 """
+
 from __future__ import annotations
 
 from dataclasses import dataclass
@@ -25,6 +26,7 @@ class VibrationPreset:
         color: Hex color for UI display.
         db_id: Database row ID.
     """
+
     name: str
     typical_range_min: float
     typical_range_max: float

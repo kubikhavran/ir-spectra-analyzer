@@ -1,4 +1,5 @@
 """Tests for automatic peak detection."""
+
 from __future__ import annotations
 
 import numpy as np
@@ -33,9 +34,8 @@ def test_detect_peaks_sorted_descending() -> None:
     from processing.peak_detection import detect_peaks
 
     wavenumbers = np.linspace(400.0, 4000.0, 3601)
-    intensities = (
-        np.exp(-((wavenumbers - 1000.0) ** 2) / (2 * 10.0**2))
-        + np.exp(-((wavenumbers - 3000.0) ** 2) / (2 * 10.0**2))
+    intensities = np.exp(-((wavenumbers - 1000.0) ** 2) / (2 * 10.0**2)) + np.exp(
+        -((wavenumbers - 3000.0) ** 2) / (2 * 10.0**2)
     )
 
     peaks = detect_peaks(wavenumbers, intensities, prominence=0.1)
