@@ -5,11 +5,11 @@ Test XLSXExporter — testování exportu do Excel formátu.
 from __future__ import annotations
 
 import tempfile
-from io.xlsx_exporter import XLSXExporter
 from pathlib import Path
 
 from core.peak import Peak
 from core.spectrum import Spectrum
+from file_io.xlsx_exporter import XLSXExporter
 
 
 class TestXLSXExporter:

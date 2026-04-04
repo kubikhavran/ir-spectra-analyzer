@@ -124,22 +124,22 @@ def test_main_window_load_spectrum_updates_widget(qtbot, tmp_path):
     spa_file = tmp_path / "test.spa"
     spa_file.write_bytes(b"\x00" * 16)
 
-    # _load_spectrum uses a local `from io.format_registry import FormatRegistry`.
+    # _load_spectrum uses a local `from file_io.format_registry import FormatRegistry`.
     # Inject a fake module into sys.modules so the import resolves to our mock.
-    fake_fr_mod = types.ModuleType("io.format_registry")
+    fake_fr_mod = types.ModuleType("file_io.format_registry")
     mock_registry_cls = MagicMock()
     mock_registry_cls.return_value.read.return_value = spectrum
     fake_fr_mod.FormatRegistry = mock_registry_cls
 
-    original = sys.modules.get("io.format_registry")
-    sys.modules["io.format_registry"] = fake_fr_mod
+    original = sys.modules.get("file_io.format_registry")
+    sys.modules["file_io.format_registry"] = fake_fr_mod
     try:
         window._load_spectrum(str(spa_file))
     finally:
         if original is None:
-            sys.modules.pop("io.format_registry", None)
+            sys.modules.pop("file_io.format_registry", None)
         else:
-            sys.modules["io.format_registry"] = original
+            sys.modules["file_io.format_registry"] = original
 
     assert window._spectrum_widget._spectrum is not None
 
@@ -356,3 +356,123 @@ def test_main_window_save_and_open_project(qtbot, tmp_path):
     assert window._project.name == "Test"
     assert len(window._project.peaks) == 1
     assert window._project.peaks[0].vibration_id == 99
+
+
+def test_export_dialog_defaults_to_all_report_sections_enabled(qtbot):
+    """The main export dialog should default to PDF with all report sections enabled."""
+    from reporting.pdf_generator import ReportOptions
+    from ui.dialogs.export_dialog import ExportDialog
+
+    dialog = ExportDialog()
+    qtbot.addWidget(dialog)
+
+    assert dialog.selected_format == "pdf"
+    assert dialog.report_options == ReportOptions()
+
+
+def test_main_window_on_export_passes_report_options_from_dialog(qtbot, monkeypatch):
+    """Interactive export should pass the dialog's report options into PDF export."""
+    from core.project import Project
+    from reporting.pdf_generator import ReportOptions
+    from ui.main_window import MainWindow
+
+    window = MainWindow(db=_make_mock_db(), settings=_make_mock_settings())
+    qtbot.addWidget(window)
+    window._project = Project(name="Test", spectrum=_make_spectrum())
+
+    selected_options = ReportOptions(
+        include_structures=False,
+        include_peak_table=False,
+        include_metadata=True,
+    )
+    captured: dict[str, object] = {"options": None, "preset_manager": None, "remembered": False}
+
+    class _FakeDialog:
+        Accepted = 1
+
+        def __init__(self, parent=None, *, preset_manager=None) -> None:
+            self._parent = parent
+            captured["preset_manager"] = preset_manager
+
+        def exec(self) -> int:
+            return self.Accepted
+
+        @property
+        def selected_format(self) -> str:
+            return "pdf"
+
+        @property
+        def report_options(self) -> ReportOptions:
+            return selected_options
+
+        def remember_selected_preset(self) -> None:
+            captured["remembered"] = True
+
+    monkeypatch.setattr("ui.dialogs.export_dialog.ExportDialog", _FakeDialog)
+    monkeypatch.setattr(
+        window, "_export_pdf", lambda options=None: captured.__setitem__("options", options) or True
+    )
+
+    window._on_export()
+
+    assert captured["options"] == selected_options
+    assert captured["preset_manager"] is window._report_preset_manager
+    assert captured["remembered"] is True
+
+
+def test_main_window_export_pdf_uses_default_report_builder(qtbot, tmp_path):
+    """Calling _export_pdf without explicit options should keep the default report path."""
+    from unittest.mock import MagicMock, patch
+
+    from core.project import Project
+    from ui.main_window import MainWindow
+
+    window = MainWindow(db=_make_mock_db(), settings=_make_mock_settings())
+    qtbot.addWidget(window)
+    window._project = Project(name="Test", spectrum=_make_spectrum())
+    output_path = tmp_path / "report.pdf"
+    builder = MagicMock()
+
+    with (
+        patch(
+            "ui.main_window.QFileDialog.getSaveFileName",
+            return_value=(str(output_path), "PDF Files (*.pdf)"),
+        ),
+        patch("reporting.report_builder.ReportBuilder", return_value=builder),
+    ):
+        window._export_pdf()
+
+    builder.build.assert_called_once()
+    builder.build_with_options.assert_not_called()
+
+
+def test_main_window_export_pdf_uses_selected_report_options(qtbot, tmp_path):
+    """Calling _export_pdf with options should route through build_with_options."""
+    from unittest.mock import MagicMock, patch
+
+    from core.project import Project
+    from reporting.pdf_generator import ReportOptions
+    from ui.main_window import MainWindow
+
+    window = MainWindow(db=_make_mock_db(), settings=_make_mock_settings())
+    qtbot.addWidget(window)
+    window._project = Project(name="Test", spectrum=_make_spectrum())
+    output_path = tmp_path / "report.pdf"
+    builder = MagicMock()
+    options = ReportOptions(
+        include_structures=False,
+        include_peak_table=False,
+        include_metadata=False,
+    )
+
+    with (
+        patch(
+            "ui.main_window.QFileDialog.getSaveFileName",
+            return_value=(str(output_path), "PDF Files (*.pdf)"),
+        ),
+        patch("reporting.report_builder.ReportBuilder", return_value=builder),
+    ):
+        window._export_pdf(options)
+
+    builder.build.assert_not_called()
+    builder.build_with_options.assert_called_once_with(window._project, output_path, options)

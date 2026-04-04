@@ -94,6 +94,74 @@ def test_report_builder_build_with_options(tmp_path: Path) -> None:
     assert out.stat().st_size > 1000
 
 
+def test_pdf_generator_omits_peak_table_when_disabled(tmp_path: Path, monkeypatch) -> None:
+    """Peak table section should not be appended when disabled in ReportOptions."""
+    from reporting.pdf_generator import PDFGenerator, ReportOptions
+
+    project = _make_project()
+    project.peaks.append(Peak(position=1500.0, intensity=0.6))
+    called = False
+    original = PDFGenerator._append_peak_table_section
+
+    def _spy(self, *args, **kwargs) -> None:
+        nonlocal called
+        called = True
+        return original(self, *args, **kwargs)
+
+    monkeypatch.setattr(PDFGenerator, "_append_peak_table_section", _spy)
+
+    out = tmp_path / "report_without_peak_table.pdf"
+    PDFGenerator().generate(project, out, options=ReportOptions(include_peak_table=False))
+
+    assert out.exists()
+    assert not called
+
+
+def test_pdf_generator_omits_metadata_when_disabled(tmp_path: Path, monkeypatch) -> None:
+    """Metadata section should not be appended when disabled in ReportOptions."""
+    from reporting.pdf_generator import PDFGenerator, ReportOptions
+
+    project = _make_project()
+    called = False
+    original = PDFGenerator._append_metadata_section
+
+    def _spy(self, *args, **kwargs) -> None:
+        nonlocal called
+        called = True
+        return original(self, *args, **kwargs)
+
+    monkeypatch.setattr(PDFGenerator, "_append_metadata_section", _spy)
+
+    out = tmp_path / "report_without_metadata.pdf"
+    PDFGenerator().generate(project, out, options=ReportOptions(include_metadata=False))
+
+    assert out.exists()
+    assert not called
+
+
+def test_pdf_generator_omits_structures_when_disabled(tmp_path: Path, monkeypatch) -> None:
+    """Structure section should not be appended when disabled in ReportOptions."""
+    from reporting.pdf_generator import PDFGenerator, ReportOptions
+
+    project = _make_project()
+    project.peaks.append(Peak(position=1500.0, intensity=0.6, smiles="C"))
+    called = False
+    original = PDFGenerator._append_structure_section
+
+    def _spy(self, *args, **kwargs) -> None:
+        nonlocal called
+        called = True
+        return original(self, *args, **kwargs)
+
+    monkeypatch.setattr(PDFGenerator, "_append_structure_section", _spy)
+
+    out = tmp_path / "report_without_structures.pdf"
+    PDFGenerator().generate(project, out, options=ReportOptions(include_structures=False))
+
+    assert out.exists()
+    assert not called
+
+
 def test_spectrum_renderer_render_to_bytes() -> None:
     """render_to_bytes returns non-empty PNG bytes."""
     from reporting.spectrum_renderer import SpectrumRenderer

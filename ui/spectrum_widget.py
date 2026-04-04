@@ -21,7 +21,54 @@ from PySide6.QtCore import Qt, Signal
 from PySide6.QtWidgets import QVBoxLayout, QWidget
 
 from core.peak import Peak
-from core.spectrum import Spectrum
+from core.spectrum import Spectrum, SpectralUnit
+
+
+class _DraggableLabel(pg.TextItem):
+    """TextItem with a live OMNIC-style leader line.
+
+    The leader goes vertically from the peak apex to a fixed elbow point
+    (directly above/below the peak at the initial label height), then
+    diagonally to wherever the label has been dragged.
+    At the default position the diagonal segment has zero length, so only
+    a clean vertical tick is visible — matching OMNIC appearance.
+    """
+
+    def __init__(self, peak_x: float, peak_y: float, elbow_y: float, **kwargs) -> None:
+        super().__init__(**kwargs)
+        self._peak_x = peak_x
+        self._peak_y = peak_y
+        self._elbow_y = elbow_y  # fixed; stays at initial label height above/below apex
+        self._leader: pg.PlotCurveItem | None = None
+
+    def set_leader(self, leader: pg.PlotCurveItem) -> None:
+        """Attach the leader line item and draw initial position."""
+        self._leader = leader
+        self._update_leader()
+
+    def _update_leader(self) -> None:
+        """Recompute leader: vertical from apex to elbow, diagonal from elbow to label."""
+        if self._leader is None:
+            return
+        lx = self.pos().x()
+        ly = self.pos().y()
+        px = self._peak_x
+        py = self._peak_y
+        ey = self._elbow_y
+        self._leader.setData(
+            x=np.array([px, px, lx], dtype=float),
+            y=np.array([py, ey, ly], dtype=float),
+        )
+
+    def mouseDragEvent(self, ev) -> None:  # noqa: N802
+        """Handle PyQtGraph drag events: move label and update leader."""
+        if ev.button() != Qt.MouseButton.LeftButton:
+            ev.ignore()
+            return
+        ev.accept()
+        delta = self.mapToParent(ev.pos()) - self.mapToParent(ev.lastPos())
+        self.setPos(self.pos() + delta)
+        self._update_leader()
 
 
 class SpectrumWidget(QWidget):
@@ -29,6 +76,7 @@ class SpectrumWidget(QWidget):
 
     peak_clicked = Signal(float, float)  # (wavenumber, intensity)
     cursor_moved = Signal(float, float)  # (wavenumber, intensity_at_cursor)
+    peak_selected_in_viewer = Signal(object)  # emits Peak instance
 
     def __init__(self, parent=None) -> None:
         super().__init__(parent)
@@ -131,24 +179,50 @@ class SpectrumWidget(QWidget):
             self._plot_widget.removeItem(item)
         self._peak_items.clear()
 
-        # Draw new peak annotations
-        for peak in peaks:
-            # Dashed vertical line at peak position
-            line = pg.InfiniteLine(
-                pos=peak.position,
-                angle=90,
-                pen=pg.mkPen("r", width=1, style=Qt.PenStyle.DashLine),
-            )
-            self._plot_widget.addItem(line)
-            self._peak_items.append(line)
+        if not peaks:
+            return
 
-            # Text label above the peak
-            label = pg.TextItem(
-                text=peak.display_label,
-                color="r",
-                anchor=(0.5, 1.0),
+        # Determine peak direction: transmittance/reflectance peaks are dips (low y),
+        # absorbance peaks are maxima (high y). Labels go in opposite directions.
+        _dip_units = (SpectralUnit.TRANSMITTANCE, SpectralUnit.REFLECTANCE, SpectralUnit.SINGLE_BEAM)
+        peaks_are_dips = self._spectrum is not None and self._spectrum.y_unit in _dip_units
+
+        # Initial label offset: 6 % of y-range, direction depends on peak orientation
+        if self._spectrum is not None:
+            y_span = float(np.ptp(self._spectrum.intensities))
+        else:
+            y_span = 1.0
+        if y_span == 0:
+            y_span = 1.0
+
+        if peaks_are_dips:
+            label_offset = -y_span * 0.065  # labels below dips
+            anchor = (1, 0.5)              # text extends downward from anchor
+        else:
+            label_offset = y_span * 0.065   # labels above maxima
+            anchor = (0, 0.5)              # text extends upward from anchor
+
+        leader_pen = pg.mkPen((0, 0, 0), width=0.8)
+
+        for peak in peaks:
+            # Diagonal leader line: from peak apex to label, managed by the label
+            leader = pg.PlotCurveItem(pen=leader_pen)
+            self._plot_widget.addItem(leader)
+            self._peak_items.append(leader)
+
+            # Draggable rotated label — owns the leader and updates it on drag
+            elbow_y = peak.intensity + label_offset
+            label = _DraggableLabel(
+                peak_x=peak.position,
+                peak_y=peak.intensity,
+                elbow_y=elbow_y,
+                text=f"{peak.position:.1f}",
+                color=(0, 0, 0),
+                angle=90,
+                anchor=anchor,
             )
-            label.setPos(peak.position, peak.intensity)
+            label.setPos(peak.position, elbow_y)
+            label.set_leader(leader)
             self._plot_widget.addItem(label)
             self._peak_items.append(label)
 
@@ -174,10 +248,7 @@ class SpectrumWidget(QWidget):
             self._overlay_curves.append(curve)
 
     def _on_mouse_clicked(self, event) -> None:
-        """Handle mouse click on the plot scene for peak picking."""
-        if not self._add_peak_mode:
-            return
-
+        """Handle mouse click on the plot scene for peak picking or selection."""
         pos = event.scenePos()
         plot_item = self._plot_widget.getPlotItem()
         vb = plot_item.vb
@@ -187,8 +258,15 @@ class SpectrumWidget(QWidget):
 
         mouse_point = vb.mapSceneToView(pos)
         wavenumber = mouse_point.x()
-        intensity = self._intensity_at(wavenumber)
-        self.peak_clicked.emit(wavenumber, intensity)
+
+        if self._add_peak_mode:
+            intensity = self._intensity_at(wavenumber)
+            self.peak_clicked.emit(wavenumber, intensity)
+        elif self._peaks:
+            # Select nearest peak within 30 cm⁻¹
+            closest = min(self._peaks, key=lambda p: abs(p.position - wavenumber))
+            if abs(closest.position - wavenumber) <= 30.0:
+                self.peak_selected_in_viewer.emit(closest)
 
     def _on_mouse_moved(self, pos) -> None:
         """Handle mouse move on the plot scene for cursor position."""

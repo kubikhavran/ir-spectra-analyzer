@@ -36,7 +36,14 @@ class PeakTableWidget(QWidget):
             ["Position (cm⁻¹)", "Intensity", "Label", "Vibration"]
         )
         self._table.horizontalHeader().setStretchLastSection(True)
+        self._table.setSelectionBehavior(self._table.SelectionBehavior.SelectRows)
+        self._table.itemSelectionChanged.connect(self._on_selection_changed)
         layout.addWidget(self._table)
+
+    def _on_selection_changed(self) -> None:
+        row = self._table.currentRow()
+        if 0 <= row < len(self._peaks):
+            self.peak_selected.emit(self._peaks[row])
 
     def set_peaks(self, peaks: list[Peak]) -> None:
         """Populate the table with peaks.
@@ -59,3 +66,18 @@ class PeakTableWidget(QWidget):
         if 0 <= row < len(self._peaks):
             return self._peaks[row]
         return None
+
+    def select_peak(self, peak: Peak) -> None:
+        """Programmatically select the row matching the given peak."""
+        for row in range(self._table.rowCount()):
+            item = self._table.item(row, 0)
+            if item is None:
+                continue
+            try:
+                pos = float(item.text())
+            except ValueError:
+                continue
+            if abs(pos - peak.position) < 0.1:
+                self._table.selectRow(row)
+                self._table.scrollToItem(item)
+                return

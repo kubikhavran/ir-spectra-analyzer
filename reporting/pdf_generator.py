@@ -42,10 +42,14 @@ class ReportOptions:
 
     Attributes:
         include_structures: If True, include molecular structure images for peaks with SMILES.
+        include_peak_table: If True, include the peak assignments table.
+        include_metadata: If True, include the project/spectrum metadata table.
         dpi: Resolution for the spectrum image (default 150).
     """
 
     include_structures: bool = True
+    include_peak_table: bool = True
+    include_metadata: bool = True
     dpi: int = 150
 
 
@@ -156,13 +160,83 @@ class PDFGenerator:
 
         story = []
 
-        # --- 1. Header block ---
+        self._append_header_section(
+            story,
+            project,
+            spectrum,
+            title_style,
+            subtitle_style,
+        )
+
+        if options.include_metadata:
+            self._append_metadata_section(
+                story,
+                project,
+                spectrum,
+                key_style,
+                val_style,
+            )
+
+        self._append_spectrum_section(
+            story,
+            spectrum.wavenumbers,
+            spectrum.intensities,
+            project.peaks,
+            caption_style,
+            dpi=options.dpi,
+            y_unit=spectrum.y_unit,
+        )
+        sorted_peaks = sorted(project.peaks, key=lambda p: p.position, reverse=True)
+        if options.include_peak_table and sorted_peaks:
+            self._append_peak_table_section(
+                story,
+                sorted_peaks,
+                section_style,
+                table_header_style,
+                table_cell_style,
+                table_cell_right,
+            )
+        if options.include_structures and sorted_peaks:
+            self._append_structure_section(
+                story,
+                sorted_peaks,
+                section_style,
+                table_cell_style,
+            )
+
+        doc = SimpleDocTemplate(
+            str(output_path),
+            pagesize=A4,
+            leftMargin=_MARGIN,
+            rightMargin=_MARGIN,
+            topMargin=_MARGIN,
+            bottomMargin=_MARGIN + 0.5 * cm,
+        )
+        doc.build(story, onFirstPage=_footer, onLaterPages=_footer)
+
+    def _append_header_section(
+        self,
+        story: list,
+        project: Project,
+        spectrum,
+        title_style: ParagraphStyle,
+        subtitle_style: ParagraphStyle,
+    ) -> None:
+        """Append the report header section."""
         filename = spectrum.source_path.name if spectrum.source_path else "—"
         story.append(Paragraph(project.name, title_style))
         story.append(Paragraph(filename, subtitle_style))
         story.append(HRFlowable(width="100%", thickness=1, color=colors.black, spaceAfter=6))
 
-        # --- 2. Metadata table ---
+    def _append_metadata_section(
+        self,
+        story: list,
+        project: Project,
+        spectrum,
+        key_style: ParagraphStyle,
+        val_style: ParagraphStyle,
+    ) -> None:
+        """Append the metadata table section if rows are available."""
         meta_rows = []
 
         def _add_row(key: str, value: str | None) -> None:
@@ -187,29 +261,42 @@ class PDFGenerator:
         )
         _add_row("Points", str(spectrum.n_points))
 
-        if meta_rows:
-            key_col_w = 4 * cm
-            val_col_w = _TEXT_W - key_col_w
-            meta_table = Table(meta_rows, colWidths=[key_col_w, val_col_w])
-            meta_table.setStyle(
-                TableStyle(
-                    [
-                        ("VALIGN", (0, 0), (-1, -1), "TOP"),
-                        ("TOPPADDING", (0, 0), (-1, -1), 2),
-                        ("BOTTOMPADDING", (0, 0), (-1, -1), 2),
-                    ]
-                )
-            )
-            story.append(meta_table)
-            story.append(Spacer(1, 0.3 * cm))
+        if not meta_rows:
+            return
 
-        # --- 3. Spectrum image ---
+        key_col_w = 4 * cm
+        val_col_w = _TEXT_W - key_col_w
+        meta_table = Table(meta_rows, colWidths=[key_col_w, val_col_w])
+        meta_table.setStyle(
+            TableStyle(
+                [
+                    ("VALIGN", (0, 0), (-1, -1), "TOP"),
+                    ("TOPPADDING", (0, 0), (-1, -1), 2),
+                    ("BOTTOMPADDING", (0, 0), (-1, -1), 2),
+                ]
+            )
+        )
+        story.append(meta_table)
+        story.append(Spacer(1, 0.3 * cm))
+
+    def _append_spectrum_section(
+        self,
+        story: list,
+        wavenumbers,
+        intensities,
+        peaks,
+        caption_style: ParagraphStyle,
+        *,
+        dpi: int,
+        y_unit,
+    ) -> None:
+        """Append the rendered spectrum image section."""
         png_bytes = SpectrumRenderer().render_to_bytes(
-            spectrum.wavenumbers,
-            spectrum.intensities,
-            project.peaks,
-            dpi=150,
-            y_unit=spectrum.y_unit,
+            wavenumbers,
+            intensities,
+            peaks,
+            dpi=dpi,
+            y_unit=y_unit,
         )
         img_buf = io.BytesIO(png_bytes)
         img_height = _TEXT_W * (7 / 16)
@@ -218,100 +305,105 @@ class PDFGenerator:
         story.append(Paragraph("Figure 1 \u2014 IR spectrum", caption_style))
         story.append(Spacer(1, 0.4 * cm))
 
-        # --- 4. Peaks table ---
-        if project.peaks:
-            story.append(Paragraph("Peak assignments", section_style))
+    def _append_peak_table_section(
+        self,
+        story: list,
+        sorted_peaks,
+        section_style: ParagraphStyle,
+        table_header_style: ParagraphStyle,
+        table_cell_style: ParagraphStyle,
+        table_cell_right: ParagraphStyle,
+    ) -> None:
+        """Append the peak assignments table."""
+        story.append(Paragraph("Peak assignments", section_style))
 
-            col_pos_w = 2.5 * cm
-            col_int_w = 2.5 * cm
-            col_fwhm_w = 2.5 * cm
-            col_assign_w = _TEXT_W - col_pos_w - col_int_w - col_fwhm_w
+        col_pos_w = 2.5 * cm
+        col_int_w = 2.5 * cm
+        col_fwhm_w = 2.5 * cm
+        col_assign_w = _TEXT_W - col_pos_w - col_int_w - col_fwhm_w
 
-            header_row = [
-                Paragraph("Position (cm\u207b\u00b9)", table_header_style),
-                Paragraph("Intensity", table_header_style),
-                Paragraph("FWHM (cm\u207b\u00b9)", table_header_style),
-                Paragraph("Assignment", table_header_style),
-            ]
+        header_row = [
+            Paragraph("Position (cm\u207b\u00b9)", table_header_style),
+            Paragraph("Intensity", table_header_style),
+            Paragraph("FWHM (cm\u207b\u00b9)", table_header_style),
+            Paragraph("Assignment", table_header_style),
+        ]
 
-            sorted_peaks = sorted(project.peaks, key=lambda p: p.position, reverse=True)
-
-            data_rows = []
-            for peak in sorted_peaks:
-                fwhm_str = f"{peak.fwhm:.2f}" if peak.fwhm is not None else "\u2014"
-                data_rows.append(
-                    [
-                        Paragraph(f"{peak.position:.2f}", table_cell_right),
-                        Paragraph(f"{peak.intensity:.4f}", table_cell_right),
-                        Paragraph(fwhm_str, table_cell_right),
-                        Paragraph(peak.display_label, table_cell_style),
-                    ]
-                )
-
-            table_data = [header_row] + data_rows
-            peaks_table = Table(
-                table_data,
-                colWidths=[col_pos_w, col_int_w, col_fwhm_w, col_assign_w],
-            )
-
-            ts = TableStyle(
+        data_rows = []
+        for peak in sorted_peaks:
+            fwhm_str = f"{peak.fwhm:.2f}" if peak.fwhm is not None else "\u2014"
+            data_rows.append(
                 [
-                    ("BACKGROUND", (0, 0), (-1, 0), colors.HexColor("#E8E8E8")),
-                    ("VALIGN", (0, 0), (-1, -1), "TOP"),
-                    ("TOPPADDING", (0, 0), (-1, -1), 3),
-                    ("BOTTOMPADDING", (0, 0), (-1, -1), 3),
-                    ("GRID", (0, 0), (-1, -1), 0.25, colors.lightgrey),
+                    Paragraph(f"{peak.position:.2f}", table_cell_right),
+                    Paragraph(f"{peak.intensity:.4f}", table_cell_right),
+                    Paragraph(fwhm_str, table_cell_right),
+                    Paragraph(peak.display_label, table_cell_style),
                 ]
             )
-            # Alternating row backgrounds for data rows
-            for i, _ in enumerate(data_rows):
-                row_idx = i + 1  # skip header
-                if i % 2 == 1:
-                    ts.add("BACKGROUND", (0, row_idx), (-1, row_idx), colors.HexColor("#F5F5F5"))
-            peaks_table.setStyle(ts)
-            story.append(peaks_table)
 
-            # --- 5. Molecular structures ---
-            if options.include_structures:
-                peaks_with_smiles = [p for p in sorted_peaks if p.smiles]
-                if peaks_with_smiles:
-                    struct_rows = []
-                    for peak in peaks_with_smiles:
-                        png_bytes = render_smiles_to_png(peak.smiles, size=(105, 105))
-                        if png_bytes is None:
-                            continue
-                        left_text = (
-                            f"Position: {peak.position:.2f} cm\u207b\u00b9<br/>"
-                            f"Assignment: {peak.display_label}"
-                        )
-                        mol_img = Image(io.BytesIO(png_bytes), width=3.5 * cm, height=3.5 * cm)
-                        struct_rows.append([Paragraph(left_text, table_cell_style), mol_img])
-                    if struct_rows:
-                        story.append(Spacer(1, 0.4 * cm))
-                        story.append(Paragraph("Molecular structures", section_style))
-                        left_col_w = _TEXT_W - 4 * cm
-                        right_col_w = 4 * cm
-                        struct_table = Table(
-                            struct_rows,
-                            colWidths=[left_col_w, right_col_w],
-                        )
-                        struct_table.setStyle(
-                            TableStyle(
-                                [
-                                    ("VALIGN", (0, 0), (-1, -1), "TOP"),
-                                    ("TOPPADDING", (0, 0), (-1, -1), 4),
-                                    ("BOTTOMPADDING", (0, 0), (-1, -1), 4),
-                                ]
-                            )
-                        )
-                        story.append(struct_table)
-
-        doc = SimpleDocTemplate(
-            str(output_path),
-            pagesize=A4,
-            leftMargin=_MARGIN,
-            rightMargin=_MARGIN,
-            topMargin=_MARGIN,
-            bottomMargin=_MARGIN + 0.5 * cm,
+        table_data = [header_row] + data_rows
+        peaks_table = Table(
+            table_data,
+            colWidths=[col_pos_w, col_int_w, col_fwhm_w, col_assign_w],
         )
-        doc.build(story, onFirstPage=_footer, onLaterPages=_footer)
+
+        ts = TableStyle(
+            [
+                ("BACKGROUND", (0, 0), (-1, 0), colors.HexColor("#E8E8E8")),
+                ("VALIGN", (0, 0), (-1, -1), "TOP"),
+                ("TOPPADDING", (0, 0), (-1, -1), 3),
+                ("BOTTOMPADDING", (0, 0), (-1, -1), 3),
+                ("GRID", (0, 0), (-1, -1), 0.25, colors.lightgrey),
+            ]
+        )
+        for i, _ in enumerate(data_rows):
+            row_idx = i + 1
+            if i % 2 == 1:
+                ts.add("BACKGROUND", (0, row_idx), (-1, row_idx), colors.HexColor("#F5F5F5"))
+        peaks_table.setStyle(ts)
+        story.append(peaks_table)
+
+    def _append_structure_section(
+        self,
+        story: list,
+        sorted_peaks,
+        section_style: ParagraphStyle,
+        table_cell_style: ParagraphStyle,
+    ) -> None:
+        """Append the molecular structures section for peaks with SMILES."""
+        peaks_with_smiles = [peak for peak in sorted_peaks if peak.smiles]
+        if not peaks_with_smiles:
+            return
+
+        struct_rows = []
+        for peak in peaks_with_smiles:
+            png_bytes = render_smiles_to_png(peak.smiles, size=(105, 105))
+            if png_bytes is None:
+                continue
+            left_text = (
+                f"Position: {peak.position:.2f} cm\u207b\u00b9<br/>Assignment: {peak.display_label}"
+            )
+            mol_img = Image(io.BytesIO(png_bytes), width=3.5 * cm, height=3.5 * cm)
+            struct_rows.append([Paragraph(left_text, table_cell_style), mol_img])
+
+        if not struct_rows:
+            return
+
+        story.append(Spacer(1, 0.4 * cm))
+        story.append(Paragraph("Molecular structures", section_style))
+        left_col_w = _TEXT_W - 4 * cm
+        right_col_w = 4 * cm
+        struct_table = Table(
+            struct_rows,
+            colWidths=[left_col_w, right_col_w],
+        )
+        struct_table.setStyle(
+            TableStyle(
+                [
+                    ("VALIGN", (0, 0), (-1, -1), "TOP"),
+                    ("TOPPADDING", (0, 0), (-1, -1), 4),
+                    ("BOTTOMPADDING", (0, 0), (-1, -1), 4),
+                ]
+            )
+        )
+        story.append(struct_table)

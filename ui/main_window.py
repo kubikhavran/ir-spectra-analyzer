@@ -25,6 +25,7 @@ from PySide6.QtWidgets import (
     QMessageBox,
 )
 
+from app.report_presets import ReportPresetManager
 from storage.database import Database
 from storage.settings import Settings
 from ui.metadata_panel import MetadataPanel
@@ -52,6 +53,7 @@ class MainWindow(QMainWindow):
         self._undo_stack = QUndoStack(self)
         self._last_search_refs: list = []  # cached from last _on_match_spectrum call
         self._molecule_widget: MoleculeWidget
+        self._report_preset_manager = ReportPresetManager(settings)
         self._setup_ui()
 
     def _setup_ui(self) -> None:
@@ -107,6 +109,8 @@ class MainWindow(QMainWindow):
         batch_export_action.triggered.connect(self._on_batch_export_pdf)
         batch_project_action = database_menu.addAction("Batch Generate Projects...")
         batch_project_action.triggered.connect(self._on_batch_generate_projects)
+        batch_project_pdf_action = database_menu.addAction("Batch Export Project PDFs...")
+        batch_project_pdf_action.triggered.connect(self._on_batch_export_project_pdfs)
 
         help_menu = menu_bar.addMenu("&Help")
         about_action = help_menu.addAction("&About")
@@ -125,6 +129,8 @@ class MainWindow(QMainWindow):
             self._toolbar._export_action.triggered.connect(self._on_export)
         if self._toolbar._detect_action is not None:
             self._toolbar._detect_action.triggered.connect(self._on_detect_peaks)
+        if self._toolbar._clear_peaks_action is not None:
+            self._toolbar._clear_peaks_action.triggered.connect(self._on_clear_peaks)
         self._toolbar.correct_baseline.connect(self._on_correct_baseline)
         self._toolbar.match_spectrum.connect(self._on_match_spectrum)
 
@@ -216,6 +222,7 @@ class MainWindow(QMainWindow):
     def _connect_signals(self) -> None:
         """Wire up inter-component signals."""
         self._spectrum_widget.peak_clicked.connect(self._on_peak_clicked)
+        self._spectrum_widget.peak_selected_in_viewer.connect(self._on_peak_selected_in_viewer)
         self._peak_table.peak_selected.connect(self._on_peak_selected)
         self._vibration_panel.preset_selected.connect(self._on_preset_selected)
         self._match_results_panel.candidate_selected.connect(self._on_match_candidate_selected)
@@ -229,7 +236,7 @@ class MainWindow(QMainWindow):
             self,
             "Open IR Spectrum",
             "",
-            "OMNIC SPA Files (*.spa);;All Files (*)",
+            "OMNIC SPA Files (*.spa *.SPA);;All Files (*)",
         )
         if path:
             self._load_spectrum(path)
@@ -309,11 +316,11 @@ class MainWindow(QMainWindow):
 
     def _load_spectrum(self, path: str) -> None:
         """Load a spectrum file and update the UI."""
-        from io.format_registry import FormatRegistry  # noqa: PLC0415
         from pathlib import Path  # noqa: PLC0415
 
         from core.metadata import SpectrumMetadata  # noqa: PLC0415
         from core.project import Project  # noqa: PLC0415
+        from file_io.format_registry import FormatRegistry  # noqa: PLC0415
 
         try:
             registry = FormatRegistry()
@@ -383,10 +390,21 @@ class MainWindow(QMainWindow):
         if self._project is None or self._project.spectrum is None:
             self.statusBar().showMessage("No spectrum loaded")
             return
+        from core.spectrum import SpectralUnit  # noqa: PLC0415
         from processing.peak_detection import detect_peaks  # noqa: PLC0415
 
-        spectrum = self._project.spectrum
-        peaks = detect_peaks(spectrum.wavenumbers, spectrum.intensities)
+        spectrum = self._project.corrected_spectrum or self._project.spectrum
+        _dip_units = (SpectralUnit.TRANSMITTANCE, SpectralUnit.REFLECTANCE, SpectralUnit.SINGLE_BEAM)
+        invert = spectrum.y_unit in _dip_units
+        if invert:
+            prominence = 1.0  # dip-type spectra span 0-100 range
+        elif spectrum.y_unit == SpectralUnit.BASELINE_CORRECTED:
+            prominence = 1.0  # corrected signal in %T-scale (0-100 range)
+        else:
+            prominence = 0.05  # absorbance — peaks in 0-2 range, skip minor noise
+        peaks = detect_peaks(
+            spectrum.wavenumbers, spectrum.intensities, invert=invert, prominence=prominence
+        )
         # Wrap all additions in a macro so it's a single Ctrl+Z
         self._undo_stack.beginMacro("Detect peaks")
         from core.commands import AddPeakCommand, DeletePeakCommand  # noqa: PLC0415
@@ -407,13 +425,16 @@ class MainWindow(QMainWindow):
             return
 
         from core.commands import CorrectBaselineCommand  # noqa: PLC0415
-        from core.spectrum import Spectrum  # noqa: PLC0415
+        from core.spectrum import SpectralUnit, Spectrum  # noqa: PLC0415
         from processing.baseline import rubber_band_baseline  # noqa: PLC0415
 
         source_spectrum = self._project.spectrum
+        _dip_units = (SpectralUnit.TRANSMITTANCE, SpectralUnit.REFLECTANCE, SpectralUnit.SINGLE_BEAM)
+        use_upper_hull = source_spectrum.y_unit in _dip_units
         corrected_intensities = rubber_band_baseline(
             source_spectrum.wavenumbers,
             source_spectrum.intensities,
+            upper=use_upper_hull,
         )
 
         corrected_spectrum = Spectrum(
@@ -422,7 +443,7 @@ class MainWindow(QMainWindow):
             title=source_spectrum.title,
             source_path=source_spectrum.source_path,
             acquired_at=source_spectrum.acquired_at,
-            y_unit=source_spectrum.y_unit,
+            y_unit=SpectralUnit.BASELINE_CORRECTED,
             x_unit=source_spectrum.x_unit,
             comments=source_spectrum.comments,
             extra_metadata=dict(source_spectrum.extra_metadata),
@@ -442,20 +463,21 @@ class MainWindow(QMainWindow):
 
         from ui.dialogs.export_dialog import ExportDialog  # noqa: PLC0415
 
-        dialog = ExportDialog(self)
+        dialog = ExportDialog(self, preset_manager=self._report_preset_manager)
         if dialog.exec() != ExportDialog.Accepted:
             return
 
         format_choice = dialog.selected_format
 
         if format_choice == "pdf":
-            self._export_pdf()
+            if self._export_pdf(dialog.report_options):
+                dialog.remember_selected_preset()
         elif format_choice == "csv":
             self._export_csv()
         elif format_choice == "xlsx":
             self._export_xlsx()
 
-    def _export_pdf(self) -> None:
+    def _export_pdf(self, report_options=None) -> bool:
         """Export the current project to a PDF report."""
         path, _ = QFileDialog.getSaveFileName(
             self,
@@ -464,17 +486,23 @@ class MainWindow(QMainWindow):
             "PDF Files (*.pdf)",
         )
         if not path:
-            return
+            return False
 
         from pathlib import Path  # noqa: PLC0415
 
-        from reporting.pdf_generator import PDFGenerator  # noqa: PLC0415
+        from reporting.report_builder import ReportBuilder  # noqa: PLC0415
 
         try:
-            PDFGenerator().generate(self._project, Path(path))
+            builder = ReportBuilder()
+            if report_options is None:
+                builder.build(self._project, Path(path))
+            else:
+                builder.build_with_options(self._project, Path(path), report_options)
             self.statusBar().showMessage(f"PDF exported: {Path(path).name}")
+            return True
         except Exception as e:  # noqa: BLE001
             QMessageBox.critical(self, "Export Error", f"Failed to export PDF:\n{e}")
+            return False
 
     def _export_csv(self) -> None:
         """Export peaks to a CSV file."""
@@ -487,8 +515,9 @@ class MainWindow(QMainWindow):
         if not path:
             return
 
-        from io.csv_exporter import CSVExporter  # noqa: PLC0415
         from pathlib import Path  # noqa: PLC0415
+
+        from file_io.csv_exporter import CSVExporter  # noqa: PLC0415
 
         try:
             spectrum = self._project.corrected_spectrum or self._project.spectrum
@@ -508,8 +537,9 @@ class MainWindow(QMainWindow):
         if not path:
             return
 
-        from io.xlsx_exporter import XLSXExporter  # noqa: PLC0415
         from pathlib import Path  # noqa: PLC0415
+
+        from file_io.xlsx_exporter import XLSXExporter  # noqa: PLC0415
 
         try:
             spectrum = self._project.corrected_spectrum or self._project.spectrum
@@ -525,6 +555,29 @@ class MainWindow(QMainWindow):
         )
         self._vibration_panel.highlight_for_peak(peak.position)
         self._molecule_widget.set_smiles(peak.smiles)
+
+    def _on_peak_selected_in_viewer(self, peak) -> None:
+        """Select peak in table and highlight presets when user clicks a peak in the chart."""
+        self._peak_table.select_peak(peak)
+        self._vibration_panel.highlight_for_peak(peak.position)
+        self._molecule_widget.set_smiles(peak.smiles)
+        self.statusBar().showMessage(
+            f"Peak: {peak.position:.2f} cm\u207b\u00b9  |  {peak.intensity:.4f}"
+        )
+
+    def _on_clear_peaks(self) -> None:
+        """Remove all peaks from the project (undoable as a single macro)."""
+        if self._project is None or not self._project.peaks:
+            return
+        from core.commands import DeletePeakCommand  # noqa: PLC0415
+
+        self._undo_stack.beginMacro("Clear peaks")
+        for peak in list(self._project.peaks):
+            self._undo_stack.push(DeletePeakCommand(self._project, peak))
+        self._undo_stack.endMacro()
+        self._peak_table.set_peaks(self._project.peaks)
+        self._spectrum_widget.set_peaks(self._project.peaks)
+        self.statusBar().showMessage("Peaks cleared")
 
     def _on_preset_selected(self, preset) -> None:
         """Assign the selected vibration preset to the currently active peak."""
@@ -605,7 +658,7 @@ class MainWindow(QMainWindow):
             self,
             "Import Reference Spectrum",
             "",
-            "OMNIC SPA Files (*.spa);;All Files (*)",
+            "OMNIC SPA Files (*.spa *.SPA);;All Files (*)",
         )
         if not path:
             return
@@ -661,7 +714,7 @@ class MainWindow(QMainWindow):
         """Open the batch PDF export dialog."""
         from ui.dialogs.batch_pdf_export_dialog import BatchPDFExportDialog  # noqa: PLC0415
 
-        dlg = BatchPDFExportDialog(parent=self)
+        dlg = BatchPDFExportDialog(parent=self, preset_manager=self._report_preset_manager)
         dlg.exec()
 
     def _on_batch_generate_projects(self) -> None:
@@ -671,6 +724,15 @@ class MainWindow(QMainWindow):
         )
 
         dlg = BatchProjectGenerationDialog(parent=self)
+        dlg.exec()
+
+    def _on_batch_export_project_pdfs(self) -> None:
+        """Open the batch project PDF export dialog."""
+        from ui.dialogs.batch_project_pdf_export_dialog import (  # noqa: PLC0415
+            BatchProjectPDFExportDialog,
+        )
+
+        dlg = BatchProjectPDFExportDialog(parent=self, preset_manager=self._report_preset_manager)
         dlg.exec()
 
     def _on_about(self) -> None:

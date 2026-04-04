@@ -28,6 +28,7 @@ class SpectralUnit(Enum):
     TRANSMITTANCE = "Transmittance"
     REFLECTANCE = "Reflectance"
     SINGLE_BEAM = "Single Beam"
+    BASELINE_CORRECTED = "Baseline Corrected"
 
 
 class XAxisUnit(Enum):

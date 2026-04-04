@@ -166,6 +166,34 @@ def test_batch_project_generator_detects_peaks_when_enabled(tmp_path, monkeypatc
     assert loaded.peaks[1].position == 2918.0
 
 
+def test_batch_project_generator_skip_mode_skips_existing_output(tmp_path, monkeypatch):
+    """overwrite_mode='skip' should skip an existing project target."""
+    generator = BatchProjectGenerator()
+    input_folder = tmp_path / "input"
+    output_folder = tmp_path / "output"
+    input_folder.mkdir()
+    output_folder.mkdir()
+    spa_file = input_folder / "sample.spa"
+    spa_file.write_bytes(b"spa")
+    existing_project = output_folder / "sample.irproj"
+    existing_project.write_text("existing", encoding="utf-8")
+
+    monkeypatch.setattr(generator, "_read_spectrum", lambda path: _make_spectrum(path))
+
+    def _should_not_save(project, output_path: Path) -> None:
+        raise AssertionError("Project generation should be skipped when output already exists")
+
+    monkeypatch.setattr(generator, "_save_project", _should_not_save)
+
+    summary = generator.generate_folder(input_folder, output_folder, overwrite_mode="skip")
+
+    assert summary.generated == 0
+    assert summary.skipped == 1
+    assert summary.results[0].status == BatchProjectStatus.SKIPPED
+    assert summary.results[0].output_path == existing_project
+    assert summary.results[0].reason == "output file already exists"
+
+
 def test_batch_project_generation_dialog_handles_missing_folders_safely(qtbot):
     """The dialog should show friendly messages when required folders are missing."""
     dlg = BatchProjectGenerationDialog()
@@ -201,7 +229,7 @@ def test_batch_project_generation_dialog_renders_summary_results(qtbot, tmp_path
 
     class _FakeGenerator:
         def generate_folder(
-            self, input_folder, output_folder, *, detect_peaks
+            self, input_folder, output_folder, *, detect_peaks, overwrite_mode
         ) -> BatchProjectSummary:
             return summary
 
@@ -226,16 +254,16 @@ def test_batch_project_generation_dialog_renders_summary_results(qtbot, tmp_path
 
 
 def test_batch_project_generation_dialog_passes_detect_peaks_option(qtbot, tmp_path):
-    """The dialog should pass the auto-detect checkbox state into the generator."""
+    """The dialog should pass auto-detect and overwrite options into the generator."""
 
     class _FakeGenerator:
         def __init__(self) -> None:
-            self.received: tuple[str, str, bool] | None = None
+            self.received: tuple[str, str, bool, str] | None = None
 
         def generate_folder(
-            self, input_folder, output_folder, *, detect_peaks
+            self, input_folder, output_folder, *, detect_peaks, overwrite_mode
         ) -> BatchProjectSummary:
-            self.received = (input_folder, output_folder, detect_peaks)
+            self.received = (input_folder, output_folder, detect_peaks, overwrite_mode)
             return BatchProjectSummary(
                 input_folder=Path(input_folder),
                 output_folder=Path(output_folder),
@@ -251,6 +279,7 @@ def test_batch_project_generation_dialog_passes_detect_peaks_option(qtbot, tmp_p
     dlg._input_folder_edit.setText(str(tmp_path / "input"))
     dlg._output_folder_edit.setText(str(tmp_path / "output"))
     dlg._detect_peaks_checkbox.setChecked(True)
+    dlg._overwrite_mode_combo.setCurrentIndex(1)
 
     dlg._on_generate()
 
@@ -258,4 +287,5 @@ def test_batch_project_generation_dialog_passes_detect_peaks_option(qtbot, tmp_p
         str(tmp_path / "input"),
         str(tmp_path / "output"),
         True,
+        "overwrite",
     )

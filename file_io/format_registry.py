@@ -41,7 +41,7 @@ class FormatRegistry:
 
     def _register_defaults(self) -> None:
         """Register built-in format readers."""
-        from io.spa_reader import SPAReader  # noqa: PLC0415
+        from file_io.spa_reader import SPAReader  # noqa: PLC0415
 
         self.register(".spa", SPAReader())
 

@@ -57,7 +57,7 @@ class SPAReader:
 
         # Stage 2: Custom binary parser
         try:
-            from io.spa_binary import SPABinaryReader  # noqa: PLC0415
+            from file_io.spa_binary import SPABinaryReader  # noqa: PLC0415
 
             return SPABinaryReader().read(filepath)
         except Exception:  # noqa: BLE001

@@ -14,7 +14,7 @@
 
 ---
 
-## Aktuální verze: 0.4.0 (In Progress — Chemie + Pokročilý Reporting)
+## Aktuální verze: 0.4.0 (COMPLETE — Chemie + Pokročilý Reporting)
 
 ## Roadmap
 
@@ -23,11 +23,112 @@
 | 0.1.0 | Základní Viewer + Ruční Interpretace | ✅ Done | MVP — načtení SPA, zobrazení spektra, peak picking, export PDF |
 | 0.2.0 | Profesionální Workflow | ✅ Done | Undo/Redo, baseline, projekt soubory, XLSX export |
 | 0.3.0 | Databázové Porovnávání | ✅ Done | Spectral matching, similarity algoritmy |
-| 0.4.0 | Chemie + Pokročilý Reporting | 🔄 In Progress | RDKit, reporty s molekulami, reference library UI, batch workflow |
+| 0.4.0 | Chemie + Pokročilý Reporting | ✅ Done | RDKit, reporty s molekulami, reference library UI, batch workflow |
+| 0.5.0 | Qualität — Typen, Umbenennung, Smoothing UI | 📋 Planned | Typy, přejmenování, Smoothing UI |
 
 ---
 
 ## Dokončené milestones
+
+### ✅ 2026-04-03 — New SPA fixtures validated; test suite extended to 258 tests
+- 7 nových SPA souborů přidáno do `tests/fixtures/` (různé instrumenty, různé y_unit)
+- Všechny nové soubory parsují bez chyby; baseline correction, peak detection a PDF render funkční pro všechny
+- Zjištěná anomálie: `atrcor.spa` má v SPA headeru `y_unit='Absorbance'` ale hodnoty 0–99.5 — zřejmě chybná metadata v souboru (pravděpodobně %T nebo single-beam data), zůstává otevřenou položkou
+- `tests/test_spa_reader.py`: Nicolet-iS10-specifické testy přesunuty na novou `_NICOLET_IS10_FILES` submnožinu; obecné testy rozšířeny o `test_real_spa_y_unit_is_valid` a `test_real_spa_acquired_at_is_datetime_or_none` (kompatibilní se všemi SPA soubory); dolní hranice plausible check snížena 400 → 350 cm⁻¹
+- `conftest.py`: přidáno `os.environ.setdefault("QT_QPA_PLATFORM", "offscreen")` — Qt testy nyní spolehlivě headless bez závislosti na pořadí importů
+- `tests/test_main_window.py`: opravena chybná mock key `"io.format_registry"` → `"file_io.format_registry"` (přehlédnuto při rename)
+- 258 testů passing, 3 skipped (RDKit)
+
+### ✅ 2026-04-03 — Technical debt: `io/` renamed to `file_io/`, stdlib collision eliminated
+- Adresář `io/` přejmenován na `file_io/` — eliminuje stínění stdlib `io` modulu
+- `conftest.py`: odstraněn `_ProjectPackageFinder` meta-path hack (již nepotřebný)
+- `app/runtime_imports.py`: odstraněn/zjednodušen runtime meta-path bootstrap
+- `io/__init__.py` → `file_io/__init__.py`: odstraněny re-exporty `_io` symbolů (ReportLab nyní najde stdlib `io` normálně)
+- `pyproject.toml`, `CLAUDE.md`, `AGENTS.md`: aktualizovány poznámky o pojmenování
+- Low-priority todo item označen jako Done
+- 191 testů collected, 155 non-UI testů passing (3 skipped RDKit), UI testy v pořádku importují
+
+### ✅ 2026-04-03 — v0.4.0 COMPLETE — Chemie + Pokročilý Reporting
+- RDKit integrace: `chemistry/structure_renderer.py`, `MoleculeWidget`, SMILES → PNG, Peak.smiles field, project serializer roundtrip
+- Pokročilý PDF report: `ReportOptions`, molekulové struktury v PDF, `ReportBuilder.build_with_options()`
+- Reference library management UI: `ReferenceLibraryDialog`, rename/delete/preview
+- Batch processing: `ReferenceImportService`, `BatchPDFExporter`, `BatchProjectGenerator`, `BatchProjectPDFExporter`, `OutputPathPolicy`, batch dialogy, auto peak detection option, named report presets shared across all export surfaces
+- Baseline correction unit-aware + BASELINE_CORRECTED labeling: upper hull pro %T, lower hull pro Absorbance, SpectralUnit.BASELINE_CORRECTED, renderer autoscale, serializer roundtrip
+- 189 testů passing, 3 skipped (RDKit not installed)
+
+### ✅ 2026-04-03 — Corrected spectra now carry explicit BASELINE_CORRECTED unit (labeling/rendering fix)
+- **Bug**: After baseline correction, `corrected_spectrum.y_unit` remained `TRANSMITTANCE`, causing misleading axis labels and forced 0–110 %T scaling on a signal that is no longer raw transmittance.
+- **Fix**: Added `BASELINE_CORRECTED = "Baseline Corrected"` to `SpectralUnit` enum (`core/spectrum.py`).
+- **Fix**: `ui/main_window.py._on_correct_baseline` now stamps `y_unit=SpectralUnit.BASELINE_CORRECTED` on the corrected spectrum for both Absorbance and %T inputs.
+- **Fix**: `reporting/spectrum_renderer.py` already falls through to the autoscale `else` branch for `BASELINE_CORRECTED` — no forced 0–110 range, correct Y-axis label via `.value`.
+- **Fix**: `ui/spectrum_widget.py` already uses `spectrum.y_unit.value` for the left axis label — shows "Baseline Corrected" automatically.
+- **Fix**: `storage/project_serializer.py` round-trips `y_unit` via string `.value` — `BASELINE_CORRECTED` survives save/load.
+- **Fix**: `ui/main_window.py._on_detect_peaks` now uses `prominence=1.0` for `BASELINE_CORRECTED` spectra (same as raw %T) — prevents returning thousands of spurious peaks on a 0–100 scale signal.
+- **Tests** (`tests/test_baseline.py`): 8 new tests — upper hull %T dispatch, absorbance BASELINE_CORRECTED unit, serializer roundtrip, renderer autoscales, widget label, prominence dispatch for BASELINE_CORRECTED.
+- **Manually validated** on `0min-1-97C.SPA`: raw %T unit unchanged; corrected unit = 'Baseline Corrected'; corrected range 0.000–63.552; renderer produces valid PNG with autoscale; raw %T renderer still uses 0–110 ylim.
+- 189 tests passing, 3 skipped (RDKit not installed)
+
+### ✅ 2026-04-02 — Baseline correction now unit-aware (upper hull for %T, lower hull for Absorbance)
+- **Bug**: `rubber_band_baseline()` používala lower convex hull unconditionally. Pro %T spektra lower hull sleduje dna absorpčních pásů (minima v %T), ne skutečný baseline při ~100%T. Výsledek byl inverzní a vědecky chybný.
+- **Fix**: `processing/baseline.py` — refaktorováno: přidán interní `_convex_hull_baseline(wn, y, *, upper: bool)` helper; `rubber_band_baseline()` má nový parametr `upper: bool = False`
+  - `upper=False` (default, Absorbance): `y − lower_hull` → absorpční peaky kladné nad nulovým baseline ✓
+  - `upper=True` (%Transmittance): `upper_hull − y` → absorpční dips konvertovány na kladné peaky nad nulovým baseline ✓
+  - Oba módy produkují "peaks pointing up" z nulového baseline — konzistentní pro spectral matching
+- **Fix**: `ui/main_window.py._on_correct_baseline` — automaticky volí `upper=True` pro `SpectralUnit.TRANSMITTANCE`
+- `tests/test_baseline.py`: 3 existující testy zachovány + 6 nových (flat %T → zero, Gaussian dip → positive, mid-region not anchored to dip bottoms, all non-negative, upper vs lower direction, UI dispatch)
+- **Ověřeno na reálném SPA** (0min-1-97C.SPA, %T): flat region 1800-2700 cm⁻¹ ≈ 4.3 (residual z diskrétní aproximace, akceptovatelné); absorpční pásy jsou kladné (max 63.5%T); top absorpční pásy ve správných pozicích (691, 768, 997, 1222, 1452 cm⁻¹)
+- 184 testů passing, 3 skipped (RDKit not installed)
+
+### ✅ 2026-04-02 — QA audit + critical bugfix — peak detection inverted for %Transmittance data
+- **Bug**: `detect_peaks()` hledala lokální maxima (`signal.find_peaks`) bez ohledu na typ osy Y. Pro %T spektra jsou absorpční pásy minima (%T klesá), ne maxima → detekce vracela 2276 šumových bumps místo ~40-70 reálných pásů
+- **Fix**: `processing/peak_detection.py` — přidán parametr `invert: bool = False`; při `invert=True` se hledají minima (`-intensities`), ale `Peak.intensity` drží původní hodnotu (ne invertovanou)
+- **Fix**: `ui/main_window.py._on_detect_peaks` — detekce nyní: (a) používá `corrected_spectrum or spectrum` (opravena druhá chyba: ignorování baseline korekce), (b) předává `invert=True` a `prominence=1.0` pro %T data
+- `tests/test_peak_detection.py`: přidány 2 nové testy pro `invert=True` workflow
+- **Ověřeno na reálném SPA**: 71 smysluplných IR pásů (C-H stretch @3018/2966/2922 cm⁻¹ atd.) místo 2276 šumových bodů
+- 178 testů passing, 3 skipped (RDKit not installed)
+
+### ✅ 2026-04-03 — Bugfix pass — runtime `.SPA` loading and viewer display
+- Root cause reprodukován mimo pytest: běžící aplikace nepřebírala pytest workaround pro kolizi lokálního balíku `io/` se standardním Python `io`, takže runtime importy jako `io.format_registry`, `io.csv_exporter` a `io.xlsx_exporter` mohly selhat i když testy procházely
+- `app/runtime_imports.py`: přidán malý runtime import bootstrap pro projektový `io` package; `main.py` a `app/application.py` ho instalují ještě před workflow importy
+- `ui/main_window.py`: file dialogy pro SPA nyní přijímají `*.spa` i `*.SPA`, takže reálné fixture soubory jsou viditelné i bez přepnutí na "All Files"
+- Manuálně ověřeno na `tests/fixtures/0min-1-97C.SPA`: `FormatRegistry().read()` vrací 55 587 bodů a `MainWindow._load_spectrum()` skutečně naplní viewer křivku i status bar
+- `tests/test_runtime_imports.py`: nové regresní testy přes čistý subprocess bez `conftest.py`, aby se runtime import bug už neschoval za pytest bootstrap
+- 176 testů passing, 3 skipped (RDKit not installed)
+
+### ✅ 2026-04-03 — v0.4.0 post-batch step — Named report presets across export surfaces
+- `app/report_presets.py` + `storage/settings.py`: přidána jednoduchá persistence pojmenovaných report presetů (`include_metadata`, `include_peak_table`, `include_structures`, `dpi`) a last-used preset bez zavádění druhého option systému
+- `ui/report_options_widget.py`: nový sdílený kompaktní widget s preset comboboxem, akcemi "Save Preset..." / "Delete Preset" a stávajícími report checkboxy
+- `ui/dialogs/export_dialog.py`, `ui/dialogs/batch_pdf_export_dialog.py`, `ui/dialogs/batch_project_pdf_export_dialog.py`: všechny PDF export surface teď používají stejný preset source a stejný `ReportOptions` workflow
+- `ui/main_window.py`: single interactive PDF export si pamatuje poslední použitý named preset po úspěšném exportu; batch PDF cesty dělají totéž po dokončení exportu
+- `tests/test_report_presets.py` + rozšíření `tests/test_main_window.py`: coverage pro save/load/delete presetů, sdílený preset source napříč export dialogy a UI propagation checkbox stavů
+- 174 testů passing, 3 skipped (RDKit not installed)
+- Poznámka: exportní UI zůstává kompaktní — preset výběr je jen jedna rychlá vrstva nad existujícími checkboxy, bez dalšího konfiguračního wizardu
+
+### ✅ 2026-04-03 — v0.4.0 post-batch step — Consistent report options across export surfaces
+- `ui/dialogs/export_dialog.py`: single interactive export nyní sbírá `ReportOptions` (`include_metadata`, `include_peak_table`, `include_structures`) místo implicitního PDF defaultu bez UI kontroly
+- `ui/main_window.py`: single-project PDF export propouští zvolené `ReportOptions` do existující `ReportBuilder` pipeline
+- `app/batch_pdf_export.py` + `ui/dialogs/batch_pdf_export_dialog.py`: batch export z raw `.spa` nyní používá stejný `ReportOptions` model jako batch export ze saved `.irproj`
+- `tests/test_main_window.py` + `tests/test_batch_pdf_export.py`: doplněny testy pro option propagation, defaulty a stabilní export při všech sekcích zapnutých
+- 168 testů passing, 3 skipped (RDKit not installed)
+- Poznámka: report-content controls jsou teď konzistentní napříč single exportem, batch exportem ze `.spa` i batch exportem ze `.irproj`
+
+### ✅ 2026-04-03 — v0.4.0 post-batch step — Report options for batch project PDF export
+- `reporting/pdf_generator.py`: `ReportOptions` rozšířeny o `include_peak_table` a `include_metadata`; PDF pipeline nyní respektuje `include_structures`, `include_peak_table`, `include_metadata` a `dpi` bez zavedení druhého report systému
+- `app/batch_project_pdf_export.py`: batch export saved `.irproj` projektů nyní přijímá a propouští `ReportOptions` do existující `ReportBuilder` / `PDFGenerator` pipeline
+- `ui/dialogs/batch_project_pdf_export_dialog.py`: přidány checkboxy "Include metadata", "Include peak table" a "Include structures" pro konzistentní batch report export
+- `tests/test_pdf_generator.py` + `tests/test_batch_project_pdf_export.py`: doplněny testy pro vypínání report sekcí a pro option propagation z dialogu do exporteru
+- 163 testů passing, 3 skipped (RDKit not installed)
+- Poznámka: batch export finálních reportů ze saved projektů teď umí konzistentně řídit obsah reportu bez ručního exportu po jednom souboru
+
+### ✅ 2026-04-03 — v0.4.0 post-batch step — Batch PDF export from saved projects
+- `app/batch_project_pdf_export.py`: nový `BatchProjectPDFExporter` + strukturované výsledky (`BatchProjectPDFResult`, `BatchProjectPDFSummary`) pro export PDF reportů ze složky `.irproj` souborů
+- `app/output_path_policy.py`: sjednocená overwrite politika pro batch outputy — `skip`, `overwrite`, `rename`
+- `app/batch_pdf_export.py` + `app/batch_project_generation.py`: refactor na sdílený helper, takže batch outputy už nepřepisují soubory potichu
+- `ui/dialogs/batch_project_pdf_export_dialog.py`: nový dialog pro batch export PDF ze saved projektů; `ui/dialogs/batch_pdf_export_dialog.py` + `ui/dialogs/batch_project_generation_dialog.py` doplněny o overwrite mode selector
+- `ui/main_window.py`: `&Database` menu rozšířeno o "Batch Export Project PDFs..."
+- `tests/test_batch_project_pdf_export.py`: 10 nových testů pro exporter, overwrite modes a dialog; existující batch export/generation testy rozšířeny o overwrite policy wiring
+- 159 testů passing, 3 skipped (RDKit not installed)
+- Poznámka: tímto se uzavírá nejdůležitější mezera mezi saved `.irproj` workflow a finálním batch reportingem
 
 ### ✅ 2026-04-03 — v0.4.0 post-batch step — Batch project generation
 - `app/batch_project_generation.py`: nový `BatchProjectGenerator` + strukturované výsledky (`BatchProjectResult`, `BatchProjectSummary`) pro generování trvalých `.irproj` souborů ze složky `.spa` souborů
@@ -157,8 +258,8 @@
 - Podporuje Variant A a B layoutu parametrového bloku, graceful fallback s `UserWarning`
 - Validace offsetů, sanity check počtu sekcí, ascending order normalizace
 - `tests/test_spa_reader.py`: 4 nové testy se syntetickým SPA blobem (5/5 passing)
-- `conftest.py`: meta-path finder workaround pro `io/` package collision se stdlib
-- Known risk: `io/` package name stíní stdlib `io` modul — doporučeno přejmenovat na `file_io/` v budoucnu
+- `conftest.py`: meta-path finder workaround pro `io/` package collision se stdlib (odstraněn v 2026-04-03 po přejmenování na `file_io/`)
+- Note: `io/` package byl přejmenován na `file_io/` v 2026-04-03 — stdlib kolize eliminována
 
 ### ✅ 2026-04-01 — Initial project setup
 - Vytvořen GitHub repozitář (private): https://github.com/kubikhavran/ir-spectra-analyzer
@@ -214,7 +315,7 @@
 ### 📋 Todo — Nízká priorita (přetaženo)
 - [ ] PyInstaller packaging script pro Windows .exe
 - [ ] "Page N of M" v PDF footer (ReportLab two-pass pattern)
-- [ ] `io/` → `file_io/` přejmenování (eliminuje stdlib name collision)
+- [x] `io/` → `file_io/` přejmenování (eliminuje stdlib name collision) — ✅ Done 2026-04-03
 
 ---
 

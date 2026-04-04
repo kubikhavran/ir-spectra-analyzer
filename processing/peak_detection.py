@@ -25,6 +25,7 @@ def detect_peaks(
     prominence: float = 0.01,
     min_width: float = 2.0,
     height: float | None = None,
+    invert: bool = False,
 ) -> list[Peak]:
     """Detect peaks in IR spectrum using scipy.signal.find_peaks.
 
@@ -34,15 +35,19 @@ def detect_peaks(
         prominence: Minimum peak prominence relative to surrounding baseline.
         min_width: Minimum peak width in data points.
         height: Minimum peak height. If None, no height constraint.
+        invert: If True, detect minima instead of maxima (use for %Transmittance
+            data where absorption bands are dips, not peaks).
 
     Returns:
         List of detected Peak objects sorted by position descending (IR convention).
+        Peak intensities always reflect the original (non-inverted) signal values.
     """
     kwargs: dict = {"prominence": prominence, "width": min_width}
     if height is not None:
         kwargs["height"] = height
 
-    peak_indices, _ = signal.find_peaks(intensities, **kwargs)
+    search_signal = -intensities if invert else intensities
+    peak_indices, _ = signal.find_peaks(search_signal, **kwargs)
 
     peaks = [
         Peak(position=float(wavenumbers[idx]), intensity=float(intensities[idx]))

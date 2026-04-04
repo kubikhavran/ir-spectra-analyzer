@@ -17,8 +17,11 @@ Architektura:
 
 from __future__ import annotations
 
+from app.runtime_imports import install_project_imports
 from storage.database import Database
 from storage.settings import Settings
+
+install_project_imports()
 
 
 class Application:

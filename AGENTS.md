@@ -17,7 +17,7 @@ Desktop scientific application for IR spectrum analysis.
 - **Language:** Python 3.11+
 - **GUI:** PySide6 (Qt 6) + PyQtGraph (interactive spectrum viewer)
 - **Numerics:** NumPy + SciPy (peak detection, baseline, smoothing)
-- **SPA parser:** custom `io/spa_binary.py` — dual-mode (OMNIC binary + compact synthetic)
+- **SPA parser:** custom `file_io/spa_binary.py` — dual-mode (OMNIC binary + compact synthetic)
 - **Persistence:** SQLite (`storage/database.py`) + JSON (`storage/settings.py`)
 - **PDF reporting:** ReportLab + Matplotlib (OMNIC-like static render)
 - **Formatter:** ruff | **Linter:** mypy (strict) | **Tests:** pytest + pytest-qt
@@ -27,7 +27,7 @@ Desktop scientific application for IR spectrum analysis.
 v0.3.0 is fully shipped. The next target is **v0.4.0 — Chemistry + Advanced Reporting**.
 
 ### What is implemented
-- `io/spa_binary.py` — full OMNIC SPA binary parser (16-byte directory, type-3 intensities, type-27 metadata text extraction for y_unit/acquired_at/resolution)
+- `file_io/spa_binary.py` — full OMNIC SPA binary parser (16-byte directory, type-3 intensities, type-27 metadata text extraction for y_unit/acquired_at/resolution)
 - `ui/spectrum_widget.py` — PyQtGraph viewer: OMNIC-like white background, inverted X-axis, in-ticks, peak annotations, `set_tool_mode()` wired to ViewBox mouse modes
 - `ui/main_window.py` — QDockWidget layout, toolbar wiring, peak detection, export, project save/load, undo stack (cleared on file/project load)
 - `ui/toolbar.py` — Select/Pan/Zoom/Add Peak modes, Detect Peaks, Correct Baseline, Export
@@ -37,7 +37,7 @@ v0.3.0 is fully shipped. The next target is **v0.4.0 — Chemistry + Advanced Re
 - `processing/baseline.py` — `rubber_band_baseline()` (lower convex hull), `polynomial_baseline()` (existing)
 - `processing/peak_detection.py` — SciPy find_peaks with prominence threshold
 - `storage/project_serializer.py` — JSON `.irproj` save/load (spectrum + corrected_spectrum + peaks + metadata)
-- `io/xlsx_exporter.py` — Peaks sheet + Spectrum sheet, openpyxl
+- `file_io/xlsx_exporter.py` — Peaks sheet + Spectrum sheet, openpyxl
 - `reporting/pdf_generator.py` — ReportLab A4 report (header + metadata table + spectrum image + peaks table + footer)
 - `reporting/spectrum_renderer.py` — Matplotlib OMNIC-like render (%T and Absorbance modes)
 
@@ -63,7 +63,7 @@ v0.3.0 is fully shipped. The next target is **v0.4.0 — Chemistry + Advanced Re
 main.py                  Entry point (QApplication setup)
 app/application.py       Lifecycle — wires Database, Settings, MainWindow together
 core/                    Domain models: Spectrum, Peak, Project, VibrationPreset, SpectrumMetadata
-io/                      SPABinaryReader, CSVExporter, XLSXExporter (stub), FormatRegistry
+file_io/                 SPABinaryReader, CSVExporter, XLSXExporter, FormatRegistry
 processing/              Pure functions: peak_detection, baseline (stub), smoothing, normalization
 storage/                 SQLite (12 default vibration presets), JSON settings
 ui/                      PySide6 GUI: MainWindow, SpectrumWidget, panels, toolbar, dialogs
@@ -78,12 +78,11 @@ tests/                   pytest suite (73 tests), fixtures/ has 3 real Nicolet i
 1. `ui/` layer NEVER performs I/O or calculations — delegates to `core/` via Qt signals
 2. `processing/` is purely functional — input: numpy arrays, output: numpy arrays, zero state
 3. `core/project.py` is single source of truth — holds spectrum + peaks + metadata
-4. `io/format_registry.py` is plug-in architecture — add formats without touching other code
+4. `file_io/format_registry.py` is plug-in architecture — add formats without touching other code
 5. `storage/database.py` uses SQLite — no ORM, plain `sqlite3`
 
 ## Known technical debt
 
-- `io/` package name shadows stdlib `io`. Workaround in `conftest.py` (meta_path finder) + `io/__init__.py` (re-exports `_io` symbols). Clean fix: rename to `file_io/` — deferred to v0.2.0.
 - PDF footer shows "Page N" only — "Page N of M" needs two-pass ReportLab pattern.
 
 ## How to work on this project

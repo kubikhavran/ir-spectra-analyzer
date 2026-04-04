@@ -24,6 +24,8 @@ class Settings:
         "theme": "dark",
         "auto_detect_peaks": True,
         "peak_prominence": 0.01,
+        "report_presets": [],
+        "report_last_used_preset": None,
     }
 
     def __init__(self, settings_path: Path = SETTINGS_PATH) -> None:

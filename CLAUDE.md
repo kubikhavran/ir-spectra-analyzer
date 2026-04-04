@@ -25,7 +25,7 @@ Tento projekt je desktopový vědecký software pro analýzu IR spekter (Python 
 | GUI | PySide6 (Qt 6) |
 | Spektrální viewer | PyQtGraph |
 | Numerika | NumPy + SciPy |
-| SPA parser | vlastní `io/spa_binary.py` (dual-mode OMNIC + compact) |
+| SPA parser | vlastní `file_io/spa_binary.py` (dual-mode OMNIC + compact) |
 | Persistence | SQLite (`storage/database.py`) + JSON (`storage/settings.py`) |
 | PDF reporting | ReportLab + Matplotlib (OMNIC-like render) |
 | Formatter/Linter | ruff + mypy (strict) |
@@ -36,14 +36,14 @@ Tento projekt je desktopový vědecký software pro analýzu IR spekter (Python 
 1. **UI vrstva (ui/) NIKDY neprovádí výpočty ani I/O** — deleguje na core modely přes Qt signály
 2. **Processing (processing/) je čistě funkcionální** — vstup: numpy arrays, výstup: numpy arrays, žádný stav
 3. **Project (core/project.py) je single source of truth** — drží spektrum + peaky + metadata
-4. **FormatRegistry (io/format_registry.py) je plug-in architektura** — nové formáty bez změny zbytku
+4. **FormatRegistry (file_io/format_registry.py) je plug-in architektura** — nové formáty bez změny zbytku
 
 ## Aktuální stav (verze 0.3.0 — COMPLETE)
 
 v0.3.0 je kompletní. 112 testů passing. Detaily viz `PROJECT_STATE.md`.
 
 **Co je implementováno (celkem):**
-- SPA binary parser (`io/spa_binary.py`) — dual-mode OMNIC/compact, type-27 metadata extraction
+- SPA binary parser (`file_io/spa_binary.py`) — dual-mode OMNIC/compact, type-27 metadata extraction
 - PyQtGraph spektrální viewer s OMNIC vizuálním stylem + tool modes + overlay křivky (`set_overlay_spectra()`)
 - MainWindow s kompletním QDockWidget layout — VibrationPanel, PeakTable, MetadataPanel, MatchResultsPanel
 - Toolbar: tool modes, Detect Peaks, Correct Baseline, Export, Match Spectrum
@@ -64,15 +64,8 @@ V pořadí priority (viz `PROJECT_STATE.md` pro detaily):
 
 ## Technické poznámky pro agenty
 
-### io/ package naming conflict
-`io/` stíní stdlib `io`. Obcházeno přes:
-- `conftest.py`: `sys.meta_path` finder který dává prioritu projektu
-- `io/__init__.py`: re-exportuje `_io` C extension symboly pro ReportLab
-
-Technický dluh: přejmenovat na `file_io/` v budoucnu (v0.2.0 nízká priorita).
-
 ### SPA parser dual-mode
-`io/spa_binary.py` detekuje OMNIC magic `b"Spectral Data File"` na bytech 0-17:
+`file_io/spa_binary.py` detekuje OMNIC magic `b"Spectral Data File"` na bytech 0-17:
 - **OMNIC mode**: 16-byte directory entries od offsetu 288, fixed params na 564/576/580, type-27 text blok pro metadata
 - **Compact mode**: 12-byte entries, pro syntetické testovací bloby
 

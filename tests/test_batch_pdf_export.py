@@ -17,6 +17,7 @@ from app.batch_pdf_export import (  # noqa: E402
 )
 from core.peak import Peak  # noqa: E402
 from core.spectrum import SpectralUnit, Spectrum  # noqa: E402
+from reporting.pdf_generator import ReportOptions  # noqa: E402
 from ui.dialogs.batch_pdf_export_dialog import BatchPDFExportDialog  # noqa: E402
 
 
@@ -60,7 +61,12 @@ def test_batch_pdf_exporter_exports_one_successful_file(tmp_path, monkeypatch):
 
     monkeypatch.setattr(exporter, "_read_spectrum", lambda path: _make_spectrum(path))
 
-    def _fake_export(project, output_path: Path) -> None:
+    def _fake_export(
+        project,
+        output_path: Path,
+        *,
+        report_options: ReportOptions | None = None,
+    ) -> None:
         output_path.write_bytes(b"%PDF-FAKE")
 
     monkeypatch.setattr(exporter, "_export_project", _fake_export)
@@ -93,7 +99,12 @@ def test_batch_pdf_exporter_continues_after_one_failure(tmp_path, monkeypatch):
             raise ValueError("Broken SPA")
         return _make_spectrum(path)
 
-    def _fake_export(project, output_path: Path) -> None:
+    def _fake_export(
+        project,
+        output_path: Path,
+        *,
+        report_options: ReportOptions | None = None,
+    ) -> None:
         output_path.write_bytes(b"%PDF-FAKE")
 
     monkeypatch.setattr(exporter, "_read_spectrum", _fake_read)
@@ -133,7 +144,12 @@ def test_batch_pdf_exporter_detects_peaks_when_enabled(tmp_path, monkeypatch):
 
     captured: dict[str, object] = {}
 
-    def _fake_export(project, output_path: Path) -> None:
+    def _fake_export(
+        project,
+        output_path: Path,
+        *,
+        report_options: ReportOptions | None = None,
+    ) -> None:
         captured["peaks"] = tuple(project.peaks)
         output_path.write_bytes(b"%PDF-FAKE")
 
@@ -143,6 +159,39 @@ def test_batch_pdf_exporter_detects_peaks_when_enabled(tmp_path, monkeypatch):
 
     assert captured["peaks"] == detected
     assert summary.results[0].detected_peaks == detected
+
+
+def test_batch_pdf_exporter_skip_mode_skips_existing_output(tmp_path, monkeypatch):
+    """overwrite_mode='skip' should skip an existing PDF target."""
+    exporter = BatchPDFExporter()
+    input_folder = tmp_path / "input"
+    output_folder = tmp_path / "output"
+    input_folder.mkdir()
+    output_folder.mkdir()
+    spa_file = input_folder / "sample.spa"
+    spa_file.write_bytes(b"spa")
+    existing_pdf = output_folder / "sample.pdf"
+    existing_pdf.write_bytes(b"old")
+
+    monkeypatch.setattr(exporter, "_read_spectrum", lambda path: _make_spectrum(path))
+
+    def _should_not_export(
+        project,
+        output_path: Path,
+        *,
+        report_options: ReportOptions | None = None,
+    ) -> None:
+        raise AssertionError("Export should be skipped when output already exists")
+
+    monkeypatch.setattr(exporter, "_export_project", _should_not_export)
+
+    summary = exporter.export_folder(input_folder, output_folder, overwrite_mode="skip")
+
+    assert summary.exported == 0
+    assert summary.skipped == 1
+    assert summary.results[0].status == BatchPDFStatus.SKIPPED
+    assert summary.results[0].output_path == existing_pdf
+    assert summary.results[0].reason == "output file already exists"
 
 
 def test_batch_pdf_export_dialog_handles_missing_folders_safely(qtbot):
@@ -183,7 +232,9 @@ def test_batch_pdf_export_dialog_renders_summary_results(qtbot, tmp_path):
     )
 
     class _FakeExporter:
-        def export_folder(self, input_folder, output_folder, *, detect_peaks) -> BatchPDFSummary:
+        def export_folder(
+            self, input_folder, output_folder, *, detect_peaks, report_options, overwrite_mode
+        ) -> BatchPDFSummary:
             return summary
 
         def scan_folder(self, folder: Path) -> list[Path]:
@@ -205,15 +256,57 @@ def test_batch_pdf_export_dialog_renders_summary_results(qtbot, tmp_path):
     assert "Exported: 1 | Skipped: 1 | Failed: 1" in dlg._summary_label.text()
 
 
+def test_batch_pdf_exporter_passes_report_options(tmp_path, monkeypatch):
+    """Batch `.spa` exporter should forward report options to the shared report pipeline."""
+
+    class _FakeReportBuilder:
+        def __init__(self) -> None:
+            self.received_options: ReportOptions | None = None
+
+        def build(self, project, output_path: Path) -> None:
+            raise AssertionError("build() should not be used when report options are provided")
+
+        def build_with_options(self, project, output_path: Path, options: ReportOptions) -> None:
+            self.received_options = options
+            output_path.write_bytes(b"%PDF-FAKE")
+
+    report_builder = _FakeReportBuilder()
+    exporter = BatchPDFExporter(report_builder=report_builder)
+    input_folder = tmp_path / "input"
+    output_folder = tmp_path / "output"
+    input_folder.mkdir()
+    spa_file = input_folder / "sample.spa"
+    spa_file.write_bytes(b"spa")
+    monkeypatch.setattr(exporter, "_read_spectrum", lambda path: _make_spectrum(path))
+    options = ReportOptions(
+        include_structures=False,
+        include_peak_table=False,
+        include_metadata=False,
+    )
+
+    summary = exporter.export_folder(input_folder, output_folder, report_options=options)
+
+    assert summary.exported == 1
+    assert report_builder.received_options == options
+
+
 def test_batch_pdf_export_dialog_passes_detect_peaks_option(qtbot, tmp_path):
-    """The dialog should pass the auto-detect checkbox state into the exporter."""
+    """The dialog should pass report options, auto-detect, and overwrite mode into the exporter."""
 
     class _FakeExporter:
         def __init__(self) -> None:
-            self.received: tuple[str, str, bool] | None = None
+            self.received: tuple[str, str, bool, ReportOptions, str] | None = None
 
-        def export_folder(self, input_folder, output_folder, *, detect_peaks) -> BatchPDFSummary:
-            self.received = (input_folder, output_folder, detect_peaks)
+        def export_folder(
+            self, input_folder, output_folder, *, detect_peaks, report_options, overwrite_mode
+        ) -> BatchPDFSummary:
+            self.received = (
+                input_folder,
+                output_folder,
+                detect_peaks,
+                report_options,
+                overwrite_mode,
+            )
             return BatchPDFSummary(
                 input_folder=Path(input_folder),
                 output_folder=Path(output_folder),
@@ -229,6 +322,10 @@ def test_batch_pdf_export_dialog_passes_detect_peaks_option(qtbot, tmp_path):
     dlg._input_folder_edit.setText(str(tmp_path / "input"))
     dlg._output_folder_edit.setText(str(tmp_path / "output"))
     dlg._detect_peaks_checkbox.setChecked(True)
+    dlg._include_metadata_checkbox.setChecked(False)
+    dlg._include_peak_table_checkbox.setChecked(False)
+    dlg._include_structures_checkbox.setChecked(True)
+    dlg._overwrite_mode_combo.setCurrentIndex(2)
 
     dlg._on_export()
 
@@ -236,4 +333,10 @@ def test_batch_pdf_export_dialog_passes_detect_peaks_option(qtbot, tmp_path):
         str(tmp_path / "input"),
         str(tmp_path / "output"),
         True,
+        ReportOptions(
+            include_structures=True,
+            include_peak_table=False,
+            include_metadata=False,
+        ),
+        "rename",
     )

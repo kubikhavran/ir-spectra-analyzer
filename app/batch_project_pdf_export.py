@@ -1,4 +1,4 @@
-"""Application-layer bulk PDF export helpers for folders of spectra."""
+"""Application-layer batch PDF export for saved project files."""
 
 from __future__ import annotations
 
@@ -7,16 +7,14 @@ from enum import StrEnum
 from pathlib import Path
 
 from app.output_path_policy import resolve_output_path
-from app.reference_import import detect_peaks_for_spectrum
-from core.peak import Peak
 from core.project import Project
-from core.spectrum import Spectrum
 from reporting.pdf_generator import ReportOptions
 from reporting.report_builder import ReportBuilder
+from storage.project_serializer import ProjectSerializer
 
 
-class BatchPDFStatus(StrEnum):
-    """Outcome of processing a single file during a batch PDF export."""
+class BatchProjectPDFStatus(StrEnum):
+    """Outcome of processing a single file during batch project PDF export."""
 
     EXPORTED = "exported"
     SKIPPED = "skipped"
@@ -24,49 +22,53 @@ class BatchPDFStatus(StrEnum):
 
 
 @dataclass(frozen=True)
-class BatchPDFResult:
-    """Result of attempting to export one source file to PDF."""
+class BatchProjectPDFResult:
+    """Result of attempting to export one project file to PDF."""
 
     path: Path
-    status: BatchPDFStatus
+    status: BatchProjectPDFStatus
     reason: str = ""
     output_path: Path | None = None
-    detected_peaks: tuple[Peak, ...] = ()
 
 
 @dataclass(frozen=True)
-class BatchPDFSummary:
-    """Structured summary for a completed batch PDF export run."""
+class BatchProjectPDFSummary:
+    """Structured summary for a completed batch project PDF export run."""
 
     input_folder: Path
     output_folder: Path
-    results: tuple[BatchPDFResult, ...]
+    results: tuple[BatchProjectPDFResult, ...]
 
     @property
     def total_found(self) -> int:
-        """Total number of `.spa` files discovered in the input folder."""
+        """Total number of `.irproj` files discovered in the input folder."""
         return len(self.results)
 
     @property
     def exported(self) -> int:
-        """Count of successfully exported reports."""
-        return sum(result.status == BatchPDFStatus.EXPORTED for result in self.results)
+        """Count of successfully exported project PDFs."""
+        return sum(result.status == BatchProjectPDFStatus.EXPORTED for result in self.results)
 
     @property
     def skipped(self) -> int:
-        """Count of skipped exports."""
-        return sum(result.status == BatchPDFStatus.SKIPPED for result in self.results)
+        """Count of skipped project PDF exports."""
+        return sum(result.status == BatchProjectPDFStatus.SKIPPED for result in self.results)
 
     @property
     def failed(self) -> int:
-        """Count of failed exports."""
-        return sum(result.status == BatchPDFStatus.FAILED for result in self.results)
+        """Count of failed project PDF exports."""
+        return sum(result.status == BatchProjectPDFStatus.FAILED for result in self.results)
 
 
-class BatchPDFExporter:
-    """Service for exporting PDF reports for all `.spa` files in a folder."""
+class BatchProjectPDFExporter:
+    """Service for exporting PDF reports from saved `.irproj` files."""
 
-    def __init__(self, report_builder: ReportBuilder | None = None) -> None:
+    def __init__(
+        self,
+        serializer: ProjectSerializer | None = None,
+        report_builder: ReportBuilder | None = None,
+    ) -> None:
+        self._serializer = serializer or ProjectSerializer()
         self._report_builder = report_builder or ReportBuilder()
 
     def export_folder(
@@ -74,25 +76,24 @@ class BatchPDFExporter:
         input_folder: str | Path,
         output_folder: str | Path,
         *,
-        detect_peaks: bool = False,
         report_options: ReportOptions | None = None,
         overwrite_mode: str = "skip",
-    ) -> BatchPDFSummary:
-        """Export PDF reports for all `.spa` files in the input folder."""
+    ) -> BatchProjectPDFSummary:
+        """Export PDF reports for all `.irproj` files in the input folder."""
         input_path = Path(input_folder)
         output_path = Path(output_folder)
         files = self.scan_folder(input_path)
         self._ensure_output_folder(output_path)
 
-        results: list[BatchPDFResult] = []
+        results: list[BatchProjectPDFResult] = []
         for file_path in files:
             pdf_path = self._output_path_for(file_path, output_path)
             action, resolved_path = resolve_output_path(pdf_path, overwrite_mode)
             if action == "skip":
                 results.append(
-                    BatchPDFResult(
+                    BatchProjectPDFResult(
                         path=file_path,
-                        status=BatchPDFStatus.SKIPPED,
+                        status=BatchProjectPDFStatus.SKIPPED,
                         reason="output file already exists",
                         output_path=pdf_path,
                     )
@@ -103,18 +104,13 @@ class BatchPDFExporter:
                 raise AssertionError("resolve_output_path returned no destination for write action")
 
             try:
-                spectrum = self._read_spectrum(file_path)
-                project = self._project_from_spectrum(
-                    file_path,
-                    spectrum,
-                    detect_peaks=detect_peaks,
-                )
+                project = self._load_project(file_path)
                 self._export_project(project, resolved_path, report_options=report_options)
             except Exception as exc:  # noqa: BLE001
                 results.append(
-                    BatchPDFResult(
+                    BatchProjectPDFResult(
                         path=file_path,
-                        status=BatchPDFStatus.FAILED,
+                        status=BatchProjectPDFStatus.FAILED,
                         reason=self._format_error(exc),
                         output_path=resolved_path,
                     )
@@ -122,47 +118,32 @@ class BatchPDFExporter:
                 continue
 
             results.append(
-                BatchPDFResult(
+                BatchProjectPDFResult(
                     path=file_path,
-                    status=BatchPDFStatus.EXPORTED,
+                    status=BatchProjectPDFStatus.EXPORTED,
                     output_path=resolved_path,
-                    detected_peaks=tuple(project.peaks),
                 )
             )
 
-        return BatchPDFSummary(
+        return BatchProjectPDFSummary(
             input_folder=input_path,
             output_folder=output_path,
             results=tuple(results),
         )
 
     def scan_folder(self, folder: Path) -> list[Path]:
-        """Return non-recursive `.spa` files from a folder, sorted by filename."""
+        """Return non-recursive `.irproj` files from a folder, sorted by filename."""
         if not folder.exists():
             raise FileNotFoundError(f"Input folder not found: {folder}")
         if not folder.is_dir():
             raise NotADirectoryError(f"Input folder is not a directory: {folder}")
         return sorted(
-            path for path in folder.iterdir() if path.is_file() and path.suffix.lower() == ".spa"
+            path for path in folder.iterdir() if path.is_file() and path.suffix.lower() == ".irproj"
         )
 
-    def _read_spectrum(self, path: Path) -> Spectrum:
-        """Read a spectrum using the application's registered file-import pipeline."""
-        from file_io.format_registry import FormatRegistry  # noqa: PLC0415
-
-        return FormatRegistry().read(path)
-
-    def _project_from_spectrum(
-        self,
-        path: Path,
-        spectrum: Spectrum,
-        *,
-        detect_peaks: bool = False,
-    ) -> Project:
-        """Create a minimal Project suitable for PDF report export."""
-        name = spectrum.title.strip() or path.stem
-        peaks = list(detect_peaks_for_spectrum(spectrum)) if detect_peaks else []
-        return Project(name=name, spectrum=spectrum, peaks=peaks)
+    def _load_project(self, path: Path) -> Project:
+        """Load a saved project using the normal serializer pipeline."""
+        return self._serializer.load(path)
 
     def _export_project(
         self,
@@ -171,7 +152,7 @@ class BatchPDFExporter:
         *,
         report_options: ReportOptions | None = None,
     ) -> None:
-        """Render and save a PDF report for a single project."""
+        """Render and save a PDF report for a single loaded project."""
         if report_options is None:
             self._report_builder.build(project, output_path)
             return
@@ -179,7 +160,7 @@ class BatchPDFExporter:
 
     @staticmethod
     def _output_path_for(source_path: Path, output_folder: Path) -> Path:
-        """Return the PDF destination path for a given input spectrum file."""
+        """Return the PDF destination path for a given input project file."""
         return output_folder / f"{source_path.stem}.pdf"
 
     @staticmethod

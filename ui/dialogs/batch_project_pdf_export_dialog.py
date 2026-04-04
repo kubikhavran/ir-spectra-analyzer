@@ -1,11 +1,10 @@
-"""Dialog for bulk PDF export from a folder of `.spa` files."""
+"""Dialog for bulk PDF export from saved `.irproj` files."""
 
 from __future__ import annotations
 
 from pathlib import Path
 
 from PySide6.QtWidgets import (
-    QCheckBox,
     QComboBox,
     QDialog,
     QFileDialog,
@@ -19,28 +18,28 @@ from PySide6.QtWidgets import (
     QVBoxLayout,
 )
 
-from app.batch_pdf_export import BatchPDFExporter, BatchPDFSummary
+from app.batch_project_pdf_export import BatchProjectPDFExporter, BatchProjectPDFSummary
 from app.output_path_policy import OVERWRITE_MODE_OPTIONS
 from app.report_presets import ReportPresetManager
 from reporting.pdf_generator import ReportOptions
 from ui.report_options_widget import ReportOptionsWidget
 
 
-class BatchPDFExportDialog(QDialog):
-    """Dialog for exporting PDF reports in bulk from a folder of spectra."""
+class BatchProjectPDFExportDialog(QDialog):
+    """Dialog for exporting PDF reports from saved `.irproj` files."""
 
     def __init__(
         self,
-        exporter: BatchPDFExporter | None = None,
+        exporter: BatchProjectPDFExporter | None = None,
         parent=None,
         *,
         preset_manager: ReportPresetManager | None = None,
     ) -> None:
         super().__init__(parent)
-        self._exporter = exporter or BatchPDFExporter()
+        self._exporter = exporter or BatchProjectPDFExporter()
         self._preset_manager = preset_manager
-        self.setWindowTitle("Batch Export PDF Reports")
-        self.setMinimumSize(820, 540)
+        self.setWindowTitle("Batch Export Project PDFs")
+        self.setMinimumSize(860, 560)
         self._setup_ui()
 
     def _setup_ui(self) -> None:
@@ -50,7 +49,7 @@ class BatchPDFExportDialog(QDialog):
         input_layout = QHBoxLayout()
         self._input_folder_edit = QLineEdit()
         self._input_folder_edit.setReadOnly(True)
-        self._input_folder_edit.setPlaceholderText("Choose a folder containing .spa files")
+        self._input_folder_edit.setPlaceholderText("Choose a folder containing .irproj files")
         browse_input_button = QPushButton("Browse Input...")
         browse_input_button.clicked.connect(self._on_browse_input)
         input_layout.addWidget(QLabel("Input:"))
@@ -69,13 +68,14 @@ class BatchPDFExportDialog(QDialog):
         output_layout.addWidget(browse_output_button)
         root_layout.addLayout(output_layout)
 
-        self._summary_label = QLabel("Choose input and output folders, then click Export.")
-        self._summary_label.setWordWrap(True)
-        root_layout.addWidget(self._summary_label)
-
-        self._detect_peaks_checkbox = QCheckBox("Auto-detect peaks")
-        self._detect_peaks_checkbox.setChecked(False)
-        root_layout.addWidget(self._detect_peaks_checkbox)
+        overwrite_layout = QHBoxLayout()
+        self._overwrite_mode_combo = QComboBox()
+        for label, value in OVERWRITE_MODE_OPTIONS:
+            self._overwrite_mode_combo.addItem(label, value)
+        overwrite_layout.addWidget(QLabel("When output exists:"))
+        overwrite_layout.addWidget(self._overwrite_mode_combo)
+        overwrite_layout.addStretch()
+        root_layout.addLayout(overwrite_layout)
 
         self._report_options_widget = ReportOptionsWidget(
             preset_manager=self._preset_manager,
@@ -89,14 +89,9 @@ class BatchPDFExportDialog(QDialog):
         self._include_structures_checkbox = self._report_options_widget._include_structures_checkbox
         root_layout.addWidget(self._report_options_widget)
 
-        overwrite_layout = QHBoxLayout()
-        self._overwrite_mode_combo = QComboBox()
-        for label, value in OVERWRITE_MODE_OPTIONS:
-            self._overwrite_mode_combo.addItem(label, value)
-        overwrite_layout.addWidget(QLabel("When output exists:"))
-        overwrite_layout.addWidget(self._overwrite_mode_combo)
-        overwrite_layout.addStretch()
-        root_layout.addLayout(overwrite_layout)
+        self._summary_label = QLabel("Choose input and output folders, then click Export.")
+        self._summary_label.setWordWrap(True)
+        root_layout.addWidget(self._summary_label)
 
         self._results_table = QTableWidget(0, 4)
         self._results_table.setHorizontalHeaderLabels(["File", "Status", "Reason", "Output PDF"])
@@ -128,8 +123,8 @@ class BatchPDFExportDialog(QDialog):
         root_layout.addLayout(buttons_layout)
 
     def _on_browse_input(self) -> None:
-        """Open a folder picker for the source spectra folder."""
-        folder = QFileDialog.getExistingDirectory(self, "Select Folder with SPA Files")
+        """Open a folder picker for the saved-project folder."""
+        folder = QFileDialog.getExistingDirectory(self, "Select Folder with Project Files")
         if folder:
             self._set_input_folder(Path(folder))
 
@@ -140,7 +135,7 @@ class BatchPDFExportDialog(QDialog):
             self._set_output_folder(Path(folder))
 
     def _set_input_folder(self, folder: Path) -> None:
-        """Store the selected input folder and show how many `.spa` files were found."""
+        """Store the selected input folder and show how many `.irproj` files were found."""
         self._input_folder_edit.setText(str(folder))
         self._results_table.setRowCount(0)
         self._update_export_button_state()
@@ -153,10 +148,10 @@ class BatchPDFExportDialog(QDialog):
 
         if files:
             self._summary_label.setText(
-                f"Found {len(files)} .spa file(s) in the selected input folder."
+                f"Found {len(files)} .irproj file(s) in the selected input folder."
             )
         else:
-            self._summary_label.setText("No .spa files found in the selected input folder.")
+            self._summary_label.setText("No .irproj files found in the selected input folder.")
 
     def _set_output_folder(self, folder: Path) -> None:
         """Store the selected output folder."""
@@ -164,7 +159,7 @@ class BatchPDFExportDialog(QDialog):
         self._results_table.setRowCount(0)
         self._update_export_button_state()
         if self._input_folder_edit.text().strip():
-            self._summary_label.setText("Ready to export PDF reports.")
+            self._summary_label.setText("Ready to export project PDFs.")
 
     def _update_export_button_state(self) -> None:
         """Enable Export only when both input and output folders are selected."""
@@ -173,7 +168,7 @@ class BatchPDFExportDialog(QDialog):
         self._export_button.setEnabled(has_input and has_output)
 
     def _on_export(self) -> None:
-        """Run the batch PDF export for the selected folders."""
+        """Run batch project-PDF export for the selected folders."""
         input_text = self._input_folder_edit.text().strip()
         if not input_text:
             self._summary_label.setText("No input folder selected.")
@@ -188,7 +183,6 @@ class BatchPDFExportDialog(QDialog):
             summary = self._exporter.export_folder(
                 input_text,
                 output_text,
-                detect_peaks=self._detect_peaks_checkbox.isChecked(),
                 report_options=self._current_report_options(),
                 overwrite_mode=str(self._overwrite_mode_combo.currentData()),
             )
@@ -204,7 +198,7 @@ class BatchPDFExportDialog(QDialog):
         """Return the report content options selected in the dialog."""
         return self._report_options_widget.report_options()
 
-    def _populate_results(self, summary: BatchPDFSummary) -> None:
+    def _populate_results(self, summary: BatchProjectPDFSummary) -> None:
         """Render batch export results into the table and summary label."""
         self._results_table.setRowCount(0)
         for result in summary.results:
@@ -217,6 +211,6 @@ class BatchPDFExportDialog(QDialog):
             self._results_table.setItem(row, 3, QTableWidgetItem(output_text))
 
         self._summary_label.setText(
-            f"Total .spa files found: {summary.total_found}\n"
+            f"Total .irproj files found: {summary.total_found}\n"
             f"Exported: {summary.exported} | Skipped: {summary.skipped} | Failed: {summary.failed}"
         )

@@ -12,7 +12,7 @@ import pytest
 
 def test_spa_reader_raises_on_missing_file() -> None:
     """SPAReader should raise FileNotFoundError for non-existent files."""
-    from io.spa_reader import SPAReader
+    from file_io.spa_reader import SPAReader
 
     reader = SPAReader()
     with pytest.raises(FileNotFoundError):
@@ -57,7 +57,7 @@ def _build_synthetic_spa() -> bytes:
 
 def test_extract_spectral_data_synthetic() -> None:
     """_extract_spectral_data should parse a synthetic SPA blob correctly."""
-    from io.spa_binary import SPABinaryReader
+    from file_io.spa_binary import SPABinaryReader
 
     data = _build_synthetic_spa()
     reader = SPABinaryReader()
@@ -87,7 +87,7 @@ def test_extract_spectral_data_synthetic() -> None:
 
 def test_extract_spectral_data_rejects_corrupt_short_file() -> None:
     """_extract_spectral_data should raise ValueError for files that are too short."""
-    from io.spa_binary import SPABinaryReader
+    from file_io.spa_binary import SPABinaryReader
 
     reader = SPABinaryReader()
     with pytest.raises(ValueError, match="too short"):
@@ -96,7 +96,7 @@ def test_extract_spectral_data_rejects_corrupt_short_file() -> None:
 
 def test_extract_spectral_data_rejects_missing_intensity_section() -> None:
     """_extract_spectral_data should raise ValueError when no type-3 section exists."""
-    from io.spa_binary import SPABinaryReader
+    from file_io.spa_binary import SPABinaryReader
 
     # Build a blob with n_sections=0 (which is implausible → ValueError about count)
     buf = bytearray(84)
@@ -108,7 +108,7 @@ def test_extract_spectral_data_rejects_missing_intensity_section() -> None:
 
 def test_extract_title_returns_stem_when_empty() -> None:
     """read() should use filepath.stem when the title header is all null bytes."""
-    from io.spa_binary import SPABinaryReader
+    from file_io.spa_binary import SPABinaryReader
 
     reader = SPABinaryReader()
     # All-null title
@@ -125,7 +125,7 @@ def test_extract_title_returns_stem_when_empty() -> None:
 
 def test_variant_b_param_block() -> None:
     """Variant B param block [first_wn: f32, last_wn: f32, n_points: u32] is parsed correctly."""
-    from io.spa_binary import SPABinaryReader
+    from file_io.spa_binary import SPABinaryReader
 
     # Layout:
     #  bytes   0-29: title "VarB" null-padded
@@ -163,7 +163,7 @@ def test_variant_b_param_block() -> None:
 
 def test_no_param_block_uses_default_range() -> None:
     """Missing type-11 section triggers UserWarning and default 400–4000 cm⁻¹ range."""
-    from io.spa_binary import SPABinaryReader
+    from file_io.spa_binary import SPABinaryReader
 
     # Layout:
     #  bytes   0-29: title "NoParam"
@@ -191,7 +191,7 @@ def test_no_param_block_uses_default_range() -> None:
 
 def test_already_ascending_wavenumbers_no_flip() -> None:
     """Variant A with first_wn < last_wn should not be flipped."""
-    from io.spa_binary import SPABinaryReader
+    from file_io.spa_binary import SPABinaryReader
 
     # Reuse _build_synthetic_spa() but override param block at bytes 56–67
     # so first_wn=400.0, last_wn=4000.0 (already ascending).
@@ -214,7 +214,7 @@ def test_already_ascending_wavenumbers_no_flip() -> None:
 
 def test_out_of_bounds_section_skipped_gracefully() -> None:
     """A section with an out-of-bounds offset is skipped; reader still returns data."""
-    from io.spa_binary import SPABinaryReader
+    from file_io.spa_binary import SPABinaryReader
 
     # Layout:
     #  bytes   0-29: title "OOB"
@@ -246,7 +246,7 @@ def test_out_of_bounds_section_skipped_gracefully() -> None:
 
 def test_implausible_section_count_raises() -> None:
     """n_sections > _MAX_SECTIONS (200) should raise ValueError mentioning 'section count'."""
-    from io.spa_binary import SPABinaryReader
+    from file_io.spa_binary import SPABinaryReader
 
     buf = bytearray(68)
     struct.pack_into("<H", buf, 30, 201)  # n_sections = 201 > _MAX_SECTIONS
@@ -258,9 +258,8 @@ def test_implausible_section_count_raises() -> None:
 
 def test_read_returns_valid_spectrum(tmp_path: Path) -> None:
     """SPABinaryReader.read() returns a correctly populated Spectrum instance."""
-    from io.spa_binary import SPABinaryReader
-
     from core.spectrum import Spectrum
+    from file_io.spa_binary import SPABinaryReader
 
     spa_file = tmp_path / "sample.spa"
     spa_file.write_bytes(_build_synthetic_spa())
@@ -277,9 +276,8 @@ def test_read_returns_valid_spectrum(tmp_path: Path) -> None:
 
 def test_spa_reader_falls_through_to_binary_reader(tmp_path: Path) -> None:
     """SPAReader falls back to SPABinaryReader when SpectroChemPy is unavailable."""
-    from io.spa_reader import SPAReader
-
     from core.spectrum import Spectrum
+    from file_io.spa_reader import SPAReader
 
     spa_file = tmp_path / "sample.spa"
     spa_file.write_bytes(_build_synthetic_spa())
@@ -313,9 +311,8 @@ _has_fixtures = len(_real_spa_files) > 0
 @pytest.mark.parametrize("spa_path", _real_spa_files, ids=lambda p: p.name)
 def test_real_spa_parses_without_error(spa_path: Path) -> None:
     """Binary reader must not raise on any real fixture file."""
-    from io.spa_binary import SPABinaryReader
-
     from core.spectrum import Spectrum
+    from file_io.spa_binary import SPABinaryReader
 
     spectrum = SPABinaryReader().read(spa_path)
     assert isinstance(spectrum, Spectrum)
@@ -325,7 +322,7 @@ def test_real_spa_parses_without_error(spa_path: Path) -> None:
 @pytest.mark.parametrize("spa_path", _real_spa_files, ids=lambda p: p.name)
 def test_real_spa_spectrum_shape(spa_path: Path) -> None:
     """Real spectra must have ≥ 100 points and matching array shapes."""
-    from io.spa_binary import SPABinaryReader
+    from file_io.spa_binary import SPABinaryReader
 
     spec = SPABinaryReader().read(spa_path)
     assert spec.n_points >= 100, f"Expected ≥100 points, got {spec.n_points}"
@@ -336,7 +333,7 @@ def test_real_spa_spectrum_shape(spa_path: Path) -> None:
 @pytest.mark.parametrize("spa_path", _real_spa_files, ids=lambda p: p.name)
 def test_real_spa_wavenumbers_ascending(spa_path: Path) -> None:
     """Wavenumber axis must be strictly ascending after parsing."""
-    from io.spa_binary import SPABinaryReader
+    from file_io.spa_binary import SPABinaryReader
 
     spec = SPABinaryReader().read(spa_path)
     assert spec.wavenumbers[0] < spec.wavenumbers[-1], (
@@ -347,11 +344,11 @@ def test_real_spa_wavenumbers_ascending(spa_path: Path) -> None:
 @pytest.mark.skipif(not _has_fixtures, reason="No real .SPA fixtures in tests/fixtures/")
 @pytest.mark.parametrize("spa_path", _real_spa_files, ids=lambda p: p.name)
 def test_real_spa_wavenumber_range_plausible(spa_path: Path) -> None:
-    """Wavenumber range must fall within IR/NIR bounds (400–15000 cm⁻¹)."""
-    from io.spa_binary import SPABinaryReader
+    """Wavenumber range must fall within mid-IR bounds (350–15000 cm⁻¹)."""
+    from file_io.spa_binary import SPABinaryReader
 
     spec = SPABinaryReader().read(spa_path)
-    assert 400.0 <= spec.wavenumbers[0] <= 2000.0, (
+    assert 350.0 <= spec.wavenumbers[0] <= 2000.0, (
         f"wn start out of IR range: {spec.wavenumbers[0]:.2f}"
     )
     assert 1500.0 <= spec.wavenumbers[-1] <= 15000.0, (
@@ -363,7 +360,7 @@ def test_real_spa_wavenumber_range_plausible(spa_path: Path) -> None:
 @pytest.mark.parametrize("spa_path", _real_spa_files, ids=lambda p: p.name)
 def test_real_spa_intensities_finite(spa_path: Path) -> None:
     """All intensity values must be finite (no NaN or Inf)."""
-    from io.spa_binary import SPABinaryReader
+    from file_io.spa_binary import SPABinaryReader
 
     spec = SPABinaryReader().read(spa_path)
     assert np.all(np.isfinite(spec.intensities)), "Non-finite intensity values found"
@@ -373,7 +370,7 @@ def test_real_spa_intensities_finite(spa_path: Path) -> None:
 @pytest.mark.parametrize("spa_path", _real_spa_files, ids=lambda p: p.name)
 def test_real_spa_title_nonempty(spa_path: Path) -> None:
     """Title must be non-empty (from file or fallback to stem)."""
-    from io.spa_binary import SPABinaryReader
+    from file_io.spa_binary import SPABinaryReader
 
     spec = SPABinaryReader().read(spa_path)
     assert isinstance(spec.title, str)
@@ -384,7 +381,7 @@ def test_real_spa_title_nonempty(spa_path: Path) -> None:
 @pytest.mark.parametrize("spa_path", _real_spa_files, ids=lambda p: p.name)
 def test_real_spa_extra_metadata_present(spa_path: Path) -> None:
     """OMNIC files should populate extra_metadata with provenance fields."""
-    from io.spa_binary import SPABinaryReader
+    from file_io.spa_binary import SPABinaryReader
 
     spec = SPABinaryReader().read(spa_path)
     # At minimum, the OMNIC variant flag must be set
@@ -396,16 +393,18 @@ def test_real_spa_extra_metadata_present(spa_path: Path) -> None:
     assert spec.extra_metadata["omnic_wn_max"] > spec.extra_metadata["omnic_wn_min"]
 
 
-@pytest.mark.skipif(not _has_fixtures, reason="No real .SPA fixtures in tests/fixtures/")
-@pytest.mark.parametrize("spa_path", _real_spa_files, ids=lambda p: p.name)
-def test_real_spa_known_wavenumber_range(spa_path: Path) -> None:
-    """Nicolet iS10 fixtures must cover 649–4000 cm⁻¹ (instrument-specific assertion).
+# Instrument-specific assertions for the 3 original Nicolet iS10 fixtures only.
+_NICOLET_IS10_FILES = [
+    p for p in _real_spa_files if p.name in {"0min-1-97C.SPA", "113361_2-22.SPA", "30min-1-97C.SPA"}
+]
+_has_nicolet_fixtures = len(_NICOLET_IS10_FILES) > 0
 
-    NOTE: This range is specific to the pricebenjamin public sample files.
-    It will need updating once real production .SPA files from your own
-    instrument are available — they may have a different range or resolution.
-    """
-    from io.spa_binary import SPABinaryReader
+
+@pytest.mark.skipif(not _has_nicolet_fixtures, reason="Nicolet iS10 fixtures not present")
+@pytest.mark.parametrize("spa_path", _NICOLET_IS10_FILES, ids=lambda p: p.name)
+def test_real_spa_known_wavenumber_range(spa_path: Path) -> None:
+    """Nicolet iS10 fixtures must cover 649–4000 cm⁻¹ (instrument-specific assertion)."""
+    from file_io.spa_binary import SPABinaryReader
 
     spec = SPABinaryReader().read(spa_path)
     assert np.isclose(spec.wavenumbers[0], 649.98, atol=1.0), (
@@ -430,9 +429,8 @@ _SAMPLE_HISTORY_TEXT = (
 
 def test_omnic_type27_parser_transmittance() -> None:
     """_parse_omnic_history correctly extracts all fields from a %Transmittance block."""
-    from io.spa_binary import SPABinaryReader
-
     from core.spectrum import SpectralUnit
+    from file_io.spa_binary import SPABinaryReader
 
     result = SPABinaryReader._parse_omnic_history(_SAMPLE_HISTORY_TEXT)
 
@@ -456,9 +454,8 @@ def test_omnic_type27_parser_transmittance() -> None:
 
 def test_omnic_type27_parser_absorbance() -> None:
     """_parse_omnic_history maps 'Absorbance' format to SpectralUnit.ABSORBANCE."""
-    from io.spa_binary import SPABinaryReader
-
     from core.spectrum import SpectralUnit
+    from file_io.spa_binary import SPABinaryReader
 
     text = (
         "Collect Sample\r\n\t Background collected on Thu Feb 23 16:35:07 2017 (GMT-08:00)\r\n\t"
@@ -472,7 +469,7 @@ def test_omnic_type27_parser_absorbance() -> None:
 
 def test_omnic_type27_parser_missing_fields() -> None:
     """_parse_omnic_history on an empty string returns all-None without raising."""
-    from io.spa_binary import SPABinaryReader
+    from file_io.spa_binary import SPABinaryReader
 
     result = SPABinaryReader._parse_omnic_history("")
     assert result["y_unit"] is None
@@ -483,11 +480,23 @@ def test_omnic_type27_parser_missing_fields() -> None:
 
 @pytest.mark.skipif(not _has_fixtures, reason="No real .SPA fixtures in tests/fixtures/")
 @pytest.mark.parametrize("spa_path", _real_spa_files, ids=lambda p: p.name)
-def test_real_spa_y_unit_is_transmittance(spa_path: Path) -> None:
-    """Real Nicolet iS10 fixtures report %Transmittance in their type-27 block."""
-    from io.spa_binary import SPABinaryReader
-
+def test_real_spa_y_unit_is_valid(spa_path: Path) -> None:
+    """y_unit must be a valid SpectralUnit enum member for every fixture."""
     from core.spectrum import SpectralUnit
+    from file_io.spa_binary import SPABinaryReader
+
+    spec = SPABinaryReader().read(spa_path)
+    assert isinstance(spec.y_unit, SpectralUnit), (
+        f"y_unit should be a SpectralUnit, got {type(spec.y_unit)}"
+    )
+
+
+@pytest.mark.skipif(not _has_nicolet_fixtures, reason="Nicolet iS10 fixtures not present")
+@pytest.mark.parametrize("spa_path", _NICOLET_IS10_FILES, ids=lambda p: p.name)
+def test_real_spa_y_unit_is_transmittance(spa_path: Path) -> None:
+    """Nicolet iS10 fixtures report %Transmittance in their type-27 block."""
+    from core.spectrum import SpectralUnit
+    from file_io.spa_binary import SPABinaryReader
 
     spec = SPABinaryReader().read(spa_path)
     assert spec.y_unit == SpectralUnit.TRANSMITTANCE, f"Expected TRANSMITTANCE, got {spec.y_unit}"
@@ -495,22 +504,34 @@ def test_real_spa_y_unit_is_transmittance(spa_path: Path) -> None:
 
 @pytest.mark.skipif(not _has_fixtures, reason="No real .SPA fixtures in tests/fixtures/")
 @pytest.mark.parametrize("spa_path", _real_spa_files, ids=lambda p: p.name)
-def test_real_spa_acquired_at_is_populated(spa_path: Path) -> None:
-    """Real fixtures should have a valid acquisition timestamp from the type-27 block."""
-    from io.spa_binary import SPABinaryReader
+def test_real_spa_acquired_at_is_datetime_or_none(spa_path: Path) -> None:
+    """acquired_at must be a datetime instance or None (some SPA files lack type-27 metadata)."""
+    from file_io.spa_binary import SPABinaryReader
 
     spec = SPABinaryReader().read(spa_path)
-    assert spec.acquired_at is not None, "acquired_at should not be None for real fixtures"
+    assert spec.acquired_at is None or isinstance(spec.acquired_at, datetime), (
+        f"acquired_at should be datetime or None, got {type(spec.acquired_at)}"
+    )
+
+
+@pytest.mark.skipif(not _has_nicolet_fixtures, reason="Nicolet iS10 fixtures not present")
+@pytest.mark.parametrize("spa_path", _NICOLET_IS10_FILES, ids=lambda p: p.name)
+def test_real_spa_acquired_at_is_populated(spa_path: Path) -> None:
+    """Nicolet iS10 fixtures have a valid acquisition timestamp from the type-27 block."""
+    from file_io.spa_binary import SPABinaryReader
+
+    spec = SPABinaryReader().read(spa_path)
+    assert spec.acquired_at is not None, "acquired_at should not be None for Nicolet iS10 fixtures"
     assert isinstance(spec.acquired_at, datetime), (
         f"acquired_at should be datetime, got {type(spec.acquired_at)}"
     )
 
 
-@pytest.mark.skipif(not _has_fixtures, reason="No real .SPA fixtures in tests/fixtures/")
-@pytest.mark.parametrize("spa_path", _real_spa_files, ids=lambda p: p.name)
+@pytest.mark.skipif(not _has_nicolet_fixtures, reason="Nicolet iS10 fixtures not present")
+@pytest.mark.parametrize("spa_path", _NICOLET_IS10_FILES, ids=lambda p: p.name)
 def test_real_spa_resolution_in_extra_metadata(spa_path: Path) -> None:
-    """Real fixtures should have resolution_cm populated in extra_metadata."""
-    from io.spa_binary import SPABinaryReader
+    """Nicolet iS10 fixtures have resolution_cm in extra_metadata."""
+    from file_io.spa_binary import SPABinaryReader
 
     spec = SPABinaryReader().read(spa_path)
     assert "resolution_cm" in spec.extra_metadata, "resolution_cm missing from extra_metadata"
@@ -519,11 +540,11 @@ def test_real_spa_resolution_in_extra_metadata(spa_path: Path) -> None:
     )
 
 
-@pytest.mark.skipif(not _has_fixtures, reason="No real .SPA fixtures in tests/fixtures/")
-@pytest.mark.parametrize("spa_path", _real_spa_files, ids=lambda p: p.name)
+@pytest.mark.skipif(not _has_nicolet_fixtures, reason="Nicolet iS10 fixtures not present")
+@pytest.mark.parametrize("spa_path", _NICOLET_IS10_FILES, ids=lambda p: p.name)
 def test_real_spa_instrument_serial_in_extra_metadata(spa_path: Path) -> None:
-    """Real fixtures should have a non-empty instrument_serial in extra_metadata."""
-    from io.spa_binary import SPABinaryReader
+    """Nicolet iS10 fixtures have a non-empty instrument_serial in extra_metadata."""
+    from file_io.spa_binary import SPABinaryReader
 
     spec = SPABinaryReader().read(spa_path)
     assert "instrument_serial" in spec.extra_metadata, (

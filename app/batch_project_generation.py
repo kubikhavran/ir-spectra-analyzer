@@ -6,6 +6,7 @@ from dataclasses import dataclass
 from enum import StrEnum
 from pathlib import Path
 
+from app.output_path_policy import resolve_output_path
 from app.reference_import import detect_peaks_for_spectrum
 from core.project import Project
 from core.spectrum import Spectrum
@@ -72,6 +73,7 @@ class BatchProjectGenerator:
         output_folder: str | Path,
         *,
         detect_peaks: bool = False,
+        overwrite_mode: str = "skip",
     ) -> BatchProjectSummary:
         """Generate project files for all `.spa` files in the input folder."""
         input_path = Path(input_folder)
@@ -82,6 +84,21 @@ class BatchProjectGenerator:
         results: list[BatchProjectResult] = []
         for file_path in files:
             project_path = self._output_path_for(file_path, output_path)
+            action, resolved_path = resolve_output_path(project_path, overwrite_mode)
+            if action == "skip":
+                results.append(
+                    BatchProjectResult(
+                        path=file_path,
+                        status=BatchProjectStatus.SKIPPED,
+                        reason="output file already exists",
+                        output_path=project_path,
+                    )
+                )
+                continue
+
+            if resolved_path is None:
+                raise AssertionError("resolve_output_path returned no destination for write action")
+
             try:
                 spectrum = self._read_spectrum(file_path)
                 project = self._project_from_spectrum(
@@ -89,13 +106,14 @@ class BatchProjectGenerator:
                     spectrum,
                     detect_peaks=detect_peaks,
                 )
-                self._save_project(project, project_path)
+                self._save_project(project, resolved_path)
             except Exception as exc:  # noqa: BLE001
                 results.append(
                     BatchProjectResult(
                         path=file_path,
                         status=BatchProjectStatus.FAILED,
                         reason=self._format_error(exc),
+                        output_path=resolved_path,
                     )
                 )
                 continue
@@ -104,7 +122,7 @@ class BatchProjectGenerator:
                 BatchProjectResult(
                     path=file_path,
                     status=BatchProjectStatus.GENERATED,
-                    output_path=project_path,
+                    output_path=resolved_path,
                     peak_count=len(project.peaks),
                 )
             )
@@ -127,7 +145,7 @@ class BatchProjectGenerator:
 
     def _read_spectrum(self, path: Path) -> Spectrum:
         """Read a spectrum using the application's registered file-import pipeline."""
-        from io.format_registry import FormatRegistry  # noqa: PLC0415
+        from file_io.format_registry import FormatRegistry  # noqa: PLC0415
 
         return FormatRegistry().read(path)
 

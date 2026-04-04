@@ -20,12 +20,14 @@ class MainToolbar(QToolBar):
     tool_mode_changed = Signal(str)  # emits: "select", "zoom", "pan", "add_peak"
     correct_baseline = Signal()
     match_spectrum = Signal()
+    clear_peaks = Signal()
 
     def __init__(self, parent=None) -> None:
         super().__init__("Main Toolbar", parent)
         self._open_action: QAction | None = None
         self._export_action: QAction | None = None
         self._detect_action: QAction | None = None
+        self._clear_peaks_action: QAction | None = None
         self._correct_baseline_action: QAction | None = None
         self._match_action: QAction | None = None
         self._setup_actions()
@@ -81,6 +83,10 @@ class MainToolbar(QToolBar):
         # Peak detection
         self._detect_action = QAction("Detect Peaks", self)
         self.addAction(self._detect_action)
+
+        self._clear_peaks_action = QAction("Clear Peaks", self)
+        self.addAction(self._clear_peaks_action)
+        self._clear_peaks_action.triggered.connect(self.clear_peaks)
 
         self.addSeparator()
 

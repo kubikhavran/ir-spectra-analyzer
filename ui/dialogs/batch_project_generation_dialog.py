@@ -6,6 +6,7 @@ from pathlib import Path
 
 from PySide6.QtWidgets import (
     QCheckBox,
+    QComboBox,
     QDialog,
     QFileDialog,
     QHBoxLayout,
@@ -19,6 +20,7 @@ from PySide6.QtWidgets import (
 )
 
 from app.batch_project_generation import BatchProjectGenerator, BatchProjectSummary
+from app.output_path_policy import OVERWRITE_MODE_OPTIONS
 
 
 class BatchProjectGenerationDialog(QDialog):
@@ -60,6 +62,15 @@ class BatchProjectGenerationDialog(QDialog):
         self._detect_peaks_checkbox = QCheckBox("Auto-detect peaks")
         self._detect_peaks_checkbox.setChecked(False)
         root_layout.addWidget(self._detect_peaks_checkbox)
+
+        overwrite_layout = QHBoxLayout()
+        self._overwrite_mode_combo = QComboBox()
+        for label, value in OVERWRITE_MODE_OPTIONS:
+            self._overwrite_mode_combo.addItem(label, value)
+        overwrite_layout.addWidget(QLabel("When output exists:"))
+        overwrite_layout.addWidget(self._overwrite_mode_combo)
+        overwrite_layout.addStretch()
+        root_layout.addLayout(overwrite_layout)
 
         self._summary_label = QLabel("Choose input and output folders, then click Generate.")
         self._summary_label.setWordWrap(True)
@@ -164,6 +175,7 @@ class BatchProjectGenerationDialog(QDialog):
                 input_text,
                 output_text,
                 detect_peaks=self._detect_peaks_checkbox.isChecked(),
+                overwrite_mode=str(self._overwrite_mode_combo.currentData()),
             )
         except (FileNotFoundError, NotADirectoryError) as exc:
             self._summary_label.setText(str(exc))

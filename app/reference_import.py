@@ -184,7 +184,7 @@ class ReferenceImportService:
 
     def _read_spectrum(self, path: Path) -> Spectrum:
         """Read a spectrum using the application's registered file-import pipeline."""
-        from io.format_registry import FormatRegistry  # noqa: PLC0415
+        from file_io.format_registry import FormatRegistry  # noqa: PLC0415
 
         return FormatRegistry().read(path)
 
