@@ -71,6 +71,28 @@ def test_molecule_editor_dialog_creates(qtbot):
     assert dlg is not None
 
 
+def test_draw_tab_shows_loading_label_when_jsme_unavailable(qtbot, monkeypatch):
+    """When _ensure_jsme_cached returns None, the Draw tab shows a fallback label."""
+    import ui.dialogs.molecule_editor_dialog as med_module
+    from ui.dialogs.molecule_editor_dialog import MoleculeEditorDialog
+
+    monkeypatch.setattr(med_module, "_ensure_jsme_cached", lambda: None)
+
+    dlg = MoleculeEditorDialog()
+    qtbot.addWidget(dlg)
+
+    # Draw tab (index 0) should contain the fallback label
+    draw_tab = dlg._tabs.widget(0)
+    fallback_labels = draw_tab.findChildren(
+        __import__("PySide6.QtWidgets", fromlist=["QLabel"]).QLabel,
+        "jsme_fallback_label",
+    )
+    assert len(fallback_labels) == 1
+    assert "SMILES tab" in fallback_labels[0].text()
+    # The web view should not have been created
+    assert dlg._web_view is None
+
+
 def test_molecule_editor_dialog_with_initial_smiles(qtbot):
     """MoleculeEditorDialog accepts an initial SMILES."""
     from ui.dialogs.molecule_editor_dialog import MoleculeEditorDialog

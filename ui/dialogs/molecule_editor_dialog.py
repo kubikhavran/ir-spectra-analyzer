@@ -2,17 +2,20 @@
 MoleculeEditorDialog — Dialog for editing molecular structures.
 
 Provides two tabs:
-  - Draw: JSME visual structure editor (requires internet for CDN load)
+  - Draw: JSME visual structure editor (downloaded once to local cache)
   - SMILES: text-based input with live RDKit preview
 """
 
 from __future__ import annotations
 
 import json
+import urllib.request
+from pathlib import Path
 
-from PySide6.QtCore import QEventLoop, QObject, Qt, QUrl, Signal, Slot
+from PySide6.QtCore import QEventLoop, QObject, Qt, QTimer, QUrl, Signal, Slot
 from PySide6.QtGui import QImage, QPixmap
 from PySide6.QtWebChannel import QWebChannel
+from PySide6.QtWebEngineCore import QWebEngineSettings
 from PySide6.QtWebEngineWidgets import QWebEngineView
 from PySide6.QtWidgets import (
     QDialog,
@@ -28,20 +31,24 @@ from PySide6.QtWidgets import (
 )
 
 # ---------------------------------------------------------------------------
-# JSME HTML template
+# JSME local cache helpers
 # ---------------------------------------------------------------------------
 
-_JSME_HTML = """\
+_JSME_CACHE_DIR = Path.home() / ".ir-spectra-analyzer" / "jsme"
+_JSME_JS = _JSME_CACHE_DIR / "JSME.nocache.js"
+_JSME_CDN = "https://unpkg.com/jsme-editor/dist/JSME.nocache.js"
+
+_JSME_HTML_TEMPLATE = """\
 <!DOCTYPE html>
 <html>
 <head>
 <meta charset="utf-8">
 <style>
-  body { margin: 0; padding: 8px; background: #f5f5f5; }
+  html, body { margin: 0; padding: 0; width: 100%; height: 100%; background: #ffffff; }
   #jsme_container { width: 100%; }
 </style>
 <script src="qrc:///qtwebchannel/qwebchannel.js"></script>
-<script src="https://jsme-editor.github.io/dist/JSME.nocache.js"></script>
+<script src="JSME.nocache.js"></script>
 </head>
 <body>
 <div id="jsme_container"></div>
@@ -54,7 +61,7 @@ new QWebChannel(qt.webChannelTransport, function(channel) {
 });
 
 function jsmeOnLoad() {
-    jsmeApplet = new JSApplet.JSME("jsme_container", "560px", "440px", {
+    jsmeApplet = new JSApplet.JSME("jsme_container", "100%", "480px", {
         "options": "query,autoez,zoomrestricted,nopastemolfile"
     });
     jsmeApplet.setCallBack("AfterStructureModified", function() {
@@ -82,6 +89,31 @@ function sendSMILES() {
 </body>
 </html>
 """
+
+
+def _ensure_jsme_cached() -> Path | None:
+    """Download JSME to local cache if not present. Returns path or None on failure."""
+    if _JSME_JS.exists():
+        return _JSME_JS
+    try:
+        _JSME_CACHE_DIR.mkdir(parents=True, exist_ok=True)
+        with urllib.request.urlopen(_JSME_CDN, timeout=10) as resp:  # noqa: S310
+            _JSME_JS.write_bytes(resp.read())
+        return _JSME_JS
+    except Exception:  # noqa: BLE001
+        return None
+
+
+def _write_jsme_html() -> Path | None:
+    """Write the JSME HTML loader file next to the cached JS. Returns path or None."""
+    html_dir = _JSME_CACHE_DIR / "html"
+    try:
+        html_dir.mkdir(parents=True, exist_ok=True)
+        html_path = html_dir / "editor.html"
+        html_path.write_text(_JSME_HTML_TEMPLATE, encoding="utf-8")
+        return html_path
+    except Exception:  # noqa: BLE001
+        return None
 
 
 # ---------------------------------------------------------------------------
@@ -116,7 +148,7 @@ class _JSBridge(QObject):
 class MoleculeEditorDialog(QDialog):
     """Dialog for editing a molecular structure.
 
-    Tab 1 — Draw: JSME web-based editor (CDN, requires internet).
+    Tab 1 — Draw: JSME web-based editor (downloaded once to local cache).
     Tab 2 — SMILES: text input with live RDKit preview.
     """
 
@@ -128,6 +160,7 @@ class MoleculeEditorDialog(QDialog):
         self._initial_smiles = initial_smiles
         self._draw_smiles: str = initial_smiles  # updated by JS bridge
         self._accepted_smiles: str = ""
+        self._web_view: QWebEngineView | None = None
 
         self._build_ui()
         self._connect_signals()
@@ -164,9 +197,46 @@ class MoleculeEditorDialog(QDialog):
         vbox = QVBoxLayout(container)
         vbox.setContentsMargins(0, 0, 0, 0)
 
+        jsme_path = _ensure_jsme_cached()
+        if jsme_path is None:
+            # No JSME available — show fallback label, auto-switch to SMILES tab
+            fallback = QLabel(
+                "Could not load JSME editor. Check your internet connection and try "
+                "reopening this dialog. You can use the SMILES tab in the meantime."
+            )
+            fallback.setWordWrap(True)
+            fallback.setAlignment(Qt.AlignmentFlag.AlignTop)
+            fallback.setObjectName("jsme_fallback_label")
+            vbox.addWidget(fallback)
+            vbox.addStretch()
+            # Switch to SMILES tab after construction finishes
+            QTimer.singleShot(0, lambda: self._tabs.setCurrentIndex(1))
+            return container
+
+        html_path = _write_jsme_html()
+        if html_path is None:
+            fallback = QLabel(
+                "Could not write JSME HTML file. You can use the SMILES tab in the meantime."
+            )
+            fallback.setWordWrap(True)
+            fallback.setAlignment(Qt.AlignmentFlag.AlignTop)
+            fallback.setObjectName("jsme_fallback_label")
+            vbox.addWidget(fallback)
+            vbox.addStretch()
+            QTimer.singleShot(0, lambda: self._tabs.setCurrentIndex(1))
+            return container
+
         # Web view
         self._web_view = QWebEngineView()
         self._web_view.setSizePolicy(QSizePolicy.Policy.Expanding, QSizePolicy.Policy.Expanding)
+
+        # Allow local file to load qrc:// WebChannel resource
+        settings = self._web_view.settings()
+        settings.setAttribute(QWebEngineSettings.WebAttribute.LocalContentCanAccessFileUrls, True)
+        settings.setAttribute(
+            QWebEngineSettings.WebAttribute.LocalContentCanAccessRemoteUrls, True
+        )
+        settings.setAttribute(QWebEngineSettings.WebAttribute.JavascriptEnabled, True)
 
         # Set up web channel
         self._channel = QWebChannel()
@@ -174,8 +244,8 @@ class MoleculeEditorDialog(QDialog):
         self._channel.registerObject("pyBridge", self._js_bridge)
         self._web_view.page().setWebChannel(self._channel)
 
-        # Load the JSME HTML
-        self._web_view.setHtml(_JSME_HTML, QUrl("https://jsme-editor.github.io/"))
+        # Load the JSME HTML from local disk via file:// URL
+        self._web_view.load(QUrl.fromLocalFile(str(html_path)))
         self._web_view.loadFinished.connect(self._on_load_finished)
 
         vbox.addWidget(self._web_view)
@@ -230,7 +300,8 @@ class MoleculeEditorDialog(QDialog):
     # ------------------------------------------------------------------
 
     def _connect_signals(self) -> None:
-        self._js_bridge.smiles_received.connect(self._on_draw_smiles_updated)
+        if self._web_view is not None:
+            self._js_bridge.smiles_received.connect(self._on_draw_smiles_updated)
         self._preview_btn.clicked.connect(self._on_preview_clicked)
         self._smiles_input.returnPressed.connect(self._on_preview_clicked)
 
@@ -240,7 +311,7 @@ class MoleculeEditorDialog(QDialog):
 
     def _on_load_finished(self, ok: bool) -> None:  # noqa: FBT001
         """Load initial SMILES into JSME after page is ready."""
-        if ok and self._initial_smiles:
+        if ok and self._initial_smiles and self._web_view is not None:
             js = f"loadSMILES({json.dumps(self._initial_smiles)})"
             self._web_view.page().runJavaScript(js)
 
@@ -288,7 +359,7 @@ class MoleculeEditorDialog(QDialog):
     def _on_ok(self) -> None:
         """Collect SMILES from the active tab and accept the dialog."""
         active = self._tabs.currentIndex()
-        if active == 0:
+        if active == 0 and self._web_view is not None:
             # Draw tab — flush JS bridge synchronously, then read
             self._flush_draw_smiles()
             self._accepted_smiles = self._draw_smiles
@@ -298,6 +369,8 @@ class MoleculeEditorDialog(QDialog):
 
     def _flush_draw_smiles(self) -> None:
         """Trigger JS to send current SMILES and process events so bridge fires."""
+        if self._web_view is None:
+            return
         loop = QEventLoop()
         received: list[str] = []
 
@@ -309,8 +382,6 @@ class MoleculeEditorDialog(QDialog):
         self._web_view.page().runJavaScript("sendSMILES()")
 
         # Give it up to 500 ms to respond; fall back to cached value
-        from PySide6.QtCore import QTimer  # noqa: PLC0415
-
         QTimer.singleShot(500, loop.quit)
         loop.exec()
 
@@ -321,7 +392,7 @@ class MoleculeEditorDialog(QDialog):
     def _on_clear(self) -> None:
         """Clear the SMILES in the active tab."""
         active = self._tabs.currentIndex()
-        if active == 0:
+        if active == 0 and self._web_view is not None:
             self._web_view.page().runJavaScript("if(jsmeApplet) jsmeApplet.reset();")
             self._draw_smiles = ""
         else:

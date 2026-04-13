@@ -6,6 +6,7 @@ from pathlib import Path
 
 from PySide6.QtCore import Qt
 from PySide6.QtWidgets import (
+    QCheckBox,
     QDialog,
     QFileDialog,
     QHBoxLayout,
@@ -64,6 +65,7 @@ class ReferenceLibraryDialog(QDialog):
         self._pg = None
         self._preview_plot = None
         self._preview_curve = None
+        self._current_spectrum_curve = None
         self._preview_placeholder = None
         self.setWindowTitle("Reference Library")
         self.setMinimumSize(700, 500)
@@ -104,6 +106,12 @@ class ReferenceLibraryDialog(QDialog):
         self._preview_label.setAlignment(Qt.AlignmentFlag.AlignTop | Qt.AlignmentFlag.AlignLeft)
         self._preview_label.setWordWrap(True)
         self._create_preview_plot_widget(right_layout)
+
+        self._show_current_spectrum_cb = QCheckBox("Show current spectrum")
+        self._show_current_spectrum_cb.setEnabled(self._current_spectrum is not None)
+        self._show_current_spectrum_cb.stateChanged.connect(self._on_show_current_spectrum_toggled)
+        right_layout.addWidget(self._show_current_spectrum_cb)
+
         right_layout.addWidget(self._preview_label)
 
         self._library_label = QLabel(self._project_library_status_text())
@@ -527,6 +535,10 @@ class ReferenceLibraryDialog(QDialog):
             axis_item.setPen(pg.mkPen(color="k", width=1))
             axis_item.setTextPen(pg.mkPen(color="k"))
         self._preview_curve = self._preview_plot.plot(pen=pg.mkPen("k", width=1))
+        self._current_spectrum_curve = self._preview_plot.plot(
+            pen=pg.mkPen(color=(0, 100, 200, 160), width=1.5)
+        )
+        self._current_spectrum_curve.setVisible(False)
         self._preview_placeholder = pg.TextItem(
             "Select a row to preview",
             color="#666666",
@@ -541,17 +553,57 @@ class ReferenceLibraryDialog(QDialog):
         if self._preview_plot is None or self._preview_curve is None:
             return
         self._preview_curve.setData([], [])
+        if self._current_spectrum_curve is not None:
+            self._current_spectrum_curve.setData([], [])
+            self._current_spectrum_curve.setVisible(False)
         if self._preview_placeholder is not None:
             self._preview_placeholder.setVisible(True)
             self._preview_placeholder.setPos(2200.0, 0.5)
         self._preview_plot.setXRange(400.0, 4000.0, padding=0.0)
         self._preview_plot.setYRange(0.0, 1.0, padding=0.0)
 
+    def _on_show_current_spectrum_toggled(self) -> None:
+        """Update the current-spectrum overlay curve when the checkbox changes."""
+        ref = self._selected_ref()
+        if ref is not None:
+            self._show_reference_preview(ref)
+        elif self._current_spectrum_curve is not None:
+            self._current_spectrum_curve.setData([], [])
+            self._current_spectrum_curve.setVisible(False)
+
     def _show_reference_preview(self, ref: dict) -> None:
         """Render the selected reference spectrum into the miniature preview plot."""
+        import numpy as np  # noqa: PLC0415
+
         if self._preview_plot is None or self._preview_curve is None:
             return
         if self._preview_placeholder is not None:
             self._preview_placeholder.setVisible(False)
-        self._preview_curve.setData(x=ref["wavenumbers"], y=ref["intensities"])
+
+        show_current = (
+            self._current_spectrum is not None
+            and self._current_spectrum_curve is not None
+            and self._show_current_spectrum_cb.isChecked()
+        )
+
+        if show_current:
+            # Normalize both curves to 0–1 range for visual comparison
+            ref_y = np.asarray(ref["intensities"], dtype=float)
+            ref_max = np.max(np.abs(ref_y))
+            norm_ref_y = ref_y / ref_max if ref_max > 0 else ref_y
+            self._preview_curve.setData(x=ref["wavenumbers"], y=norm_ref_y)
+
+            cur_y = np.asarray(self._current_spectrum.intensities, dtype=float)
+            cur_max = np.max(np.abs(cur_y))
+            norm_cur_y = cur_y / cur_max if cur_max > 0 else cur_y
+            self._current_spectrum_curve.setData(
+                x=self._current_spectrum.wavenumbers, y=norm_cur_y
+            )
+            self._current_spectrum_curve.setVisible(True)
+        else:
+            self._preview_curve.setData(x=ref["wavenumbers"], y=ref["intensities"])
+            if self._current_spectrum_curve is not None:
+                self._current_spectrum_curve.setData([], [])
+                self._current_spectrum_curve.setVisible(False)
+
         self._preview_plot.autoRange()

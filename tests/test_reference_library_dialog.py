@@ -518,3 +518,54 @@ def test_show_all_clears_similarity_ranking(qtbot, db):
     assert dlg._table.item(0, 1).text() == "—"
     assert dlg._table.item(0, 2).text() == "—"
     assert dlg._search_label.text() == "Similarity search: not run yet"
+
+
+def test_show_current_spectrum_checkbox_disabled_when_no_current_spectrum(qtbot, db):
+    """The 'Show current spectrum' checkbox is disabled when current_spectrum is None."""
+    dlg = ReferenceLibraryDialog(db, current_spectrum=None)
+    qtbot.addWidget(dlg)
+    assert hasattr(dlg, "_show_current_spectrum_cb")
+    assert not dlg._show_current_spectrum_cb.isEnabled()
+
+
+def test_show_current_spectrum_checkbox_enabled_when_spectrum_provided(qtbot, db):
+    """The 'Show current spectrum' checkbox is enabled when a spectrum is provided."""
+    wn, inten = _make_arrays()
+    current = Spectrum(wavenumbers=wn, intensities=inten, title="Current")
+    dlg = ReferenceLibraryDialog(db, current_spectrum=current)
+    qtbot.addWidget(dlg)
+    assert dlg._show_current_spectrum_cb.isEnabled()
+
+
+def test_current_spectrum_curve_has_data_when_checkbox_checked(qtbot, db):
+    """When checkbox is checked and a reference is selected, _current_spectrum_curve has data."""
+    wn, inten = _make_arrays()
+    current = Spectrum(wavenumbers=wn, intensities=inten, title="Current")
+    folder = Path("/tmp/reference-library")
+    db.add_reference_spectrum(
+        name="Ref Overlay",
+        wavenumbers=wn,
+        intensities=inten,
+        source=str(folder / "ref.spa"),
+        y_unit="Absorbance",
+    )
+    dlg = ReferenceLibraryDialog(
+        db,
+        current_spectrum=current,
+        library_service=_FakeLibraryService(db, folder),
+    )
+    qtbot.addWidget(dlg)
+
+    # Check the checkbox first
+    dlg._show_current_spectrum_cb.setChecked(True)
+
+    # Select a row — triggers _show_reference_preview
+    dlg._table.selectRow(0)
+    qtbot.waitUntil(lambda: "Ref Overlay" in dlg._preview_label.text())
+
+    x_data, y_data = dlg._current_spectrum_curve.getData()
+    assert x_data is not None
+    assert len(x_data) > 0
+    assert y_data is not None
+    assert len(y_data) > 0
+    assert dlg._current_spectrum_curve.isVisible()
