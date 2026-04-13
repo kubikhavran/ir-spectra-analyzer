@@ -21,24 +21,45 @@ from PySide6.QtCore import Qt, Signal
 from PySide6.QtWidgets import QVBoxLayout, QWidget
 
 from core.peak import Peak
-from core.spectrum import Spectrum, SpectralUnit
+from core.spectrum import Spectrum
 
 
 class _DraggableLabel(pg.TextItem):
     """TextItem with a live OMNIC-style leader line.
 
-    The leader goes vertically from the peak apex to a fixed elbow point
-    (directly above/below the peak at the initial label height), then
-    diagonally to wherever the label has been dragged.
-    At the default position the diagonal segment has zero length, so only
-    a clean vertical tick is visible — matching OMNIC appearance.
+    The leader goes vertically from the peak apex almost to the label,
+    then a short diagonal segment connects to the label position.
+    The elbow is always `label_offset` away from the label toward the peak,
+    so the line extends naturally when the label is dragged up or down.
+    At the default position the diagonal segment is zero (only a vertical tick).
+
+    Label position is tracked explicitly in data coordinates (_data_x, _data_y)
+    because pg.TextItem.pos() does not reliably return data coordinates when the
+    item is inside a ViewBox — it may return scene/pixel values depending on the
+    PyQtGraph version and parent chain.
     """
 
-    def __init__(self, peak_x: float, peak_y: float, elbow_y: float, **kwargs) -> None:
+    _SIDE_LABEL_DIAGONAL_FACTOR = 0.35
+
+    def __init__(
+        self,
+        peak: Peak,
+        peak_x: float,
+        peak_y: float,
+        label_offset: float,
+        label_x: float,
+        label_y: float,
+        click_callback=None,
+        **kwargs,
+    ) -> None:
         super().__init__(**kwargs)
+        self._peak = peak
         self._peak_x = peak_x
         self._peak_y = peak_y
-        self._elbow_y = elbow_y  # fixed; stays at initial label height above/below apex
+        self._label_offset = label_offset  # signed: + above apex, - below apex
+        self._data_x = label_x  # current label x in data coordinates
+        self._data_y = label_y  # current label y in data coordinates
+        self._click_callback = click_callback
         self._leader: pg.PlotCurveItem | None = None
 
     def set_leader(self, leader: pg.PlotCurveItem) -> None:
@@ -47,18 +68,40 @@ class _DraggableLabel(pg.TextItem):
         self._update_leader()
 
     def _update_leader(self) -> None:
-        """Recompute leader: vertical from apex to elbow, diagonal from elbow to label."""
+        """Recompute leader using explicitly stored data coordinates."""
         if self._leader is None:
             return
-        lx = self.pos().x()
-        ly = self.pos().y()
+        lx = self._data_x
+        ly = self._data_y
         px = self._peak_x
         py = self._peak_y
-        ey = self._elbow_y
+        # Keep the default vertical-only appearance when the label stays centered
+        # above the peak. When the label is moved sideways, shorten the angled
+        # branch so the diagonal connector does not dominate the annotation.
+        diagonal_factor = 1.0
+        if abs(lx - px) > 1e-6:
+            diagonal_factor = self._SIDE_LABEL_DIAGONAL_FACTOR
+
+        # Elbow is `label_offset` below the label (toward peak), dynamic with drag.
+        ey = ly - (self._label_offset * diagonal_factor)
+        # Clamp: elbow must not overshoot the peak apex
+        if self._label_offset > 0:
+            ey = max(py, ey)  # absorbance: elbow stays at or above peak
+        else:
+            ey = min(py, ey)  # transmittance: elbow stays at or below peak
         self._leader.setData(
             x=np.array([px, px, lx], dtype=float),
             y=np.array([py, ey, ly], dtype=float),
         )
+
+    def mouseClickEvent(self, ev) -> None:  # noqa: N802
+        """Handle single click: notify parent so peak can be selected/assigned."""
+        if ev.button() != Qt.MouseButton.LeftButton:
+            ev.ignore()
+            return
+        ev.accept()
+        if self._click_callback is not None:
+            self._click_callback(self._peak_x)
 
     def mouseDragEvent(self, ev) -> None:  # noqa: N802
         """Handle PyQtGraph drag events: move label and update leader."""
@@ -66,8 +109,15 @@ class _DraggableLabel(pg.TextItem):
             ev.ignore()
             return
         ev.accept()
+        # mapToParent() is reliable once the item has a ViewBox parent (set via addItem).
+        # The delta in parent (ViewBox data) coordinates gives the correct movement.
         delta = self.mapToParent(ev.pos()) - self.mapToParent(ev.lastPos())
-        self.setPos(self.pos() + delta)
+        self._data_x += delta.x()
+        self._data_y += delta.y()
+        self.setPos(self._data_x, self._data_y)
+        self._peak.label_offset_x = self._data_x - self._peak_x
+        self._peak.label_offset_y = self._data_y - self._peak_y
+        self._peak.manual_placement = True
         self._update_leader()
 
 
@@ -162,7 +212,7 @@ class SpectrumWidget(QWidget):
 
         # Update Y-axis label from spectrum unit
         label_style = {"color": "#000000", "font-size": "10pt"}
-        self._plot_widget.setLabel("left", spectrum.y_unit.value, **label_style)
+        self._plot_widget.setLabel("left", spectrum.display_y_unit.value, **label_style)
 
         self._plot_widget.autoRange()
 
@@ -182,10 +232,9 @@ class SpectrumWidget(QWidget):
         if not peaks:
             return
 
-        # Determine peak direction: transmittance/reflectance peaks are dips (low y),
-        # absorbance peaks are maxima (high y). Labels go in opposite directions.
-        _dip_units = (SpectralUnit.TRANSMITTANCE, SpectralUnit.REFLECTANCE, SpectralUnit.SINGLE_BEAM)
-        peaks_are_dips = self._spectrum is not None and self._spectrum.y_unit in _dip_units
+        # Determine peak direction: dip-like spectra (%T, reflectance, mislabeled
+        # percent-style OMNIC curves) place labels below the curve.
+        peaks_are_dips = self._spectrum is not None and self._spectrum.is_dip_spectrum
 
         # Initial label offset: 6 % of y-range, direction depends on peak orientation
         if self._spectrum is not None:
@@ -197,10 +246,10 @@ class SpectrumWidget(QWidget):
 
         if peaks_are_dips:
             label_offset = -y_span * 0.065  # labels below dips
-            anchor = (1, 0.5)              # text extends downward from anchor
+            anchor = (1, 0.5)  # text extends downward from anchor
         else:
-            label_offset = y_span * 0.065   # labels above maxima
-            anchor = (0, 0.5)              # text extends upward from anchor
+            label_offset = y_span * 0.065  # labels above maxima
+            anchor = (0, 0.5)  # text extends upward from anchor
 
         leader_pen = pg.mkPen((0, 0, 0), width=0.8)
 
@@ -211,20 +260,34 @@ class SpectrumWidget(QWidget):
             self._peak_items.append(leader)
 
             # Draggable rotated label — owns the leader and updates it on drag
-            elbow_y = peak.intensity + label_offset
+            if peak.manual_placement:
+                lx = peak.position + peak.label_offset_x
+                ly = peak.intensity + peak.label_offset_y
+            else:
+                lx = peak.position
+                ly = peak.intensity + label_offset
+
             label = _DraggableLabel(
+                peak=peak,
                 peak_x=peak.position,
                 peak_y=peak.intensity,
-                elbow_y=elbow_y,
+                label_offset=ly - peak.intensity,
+                label_x=lx,
+                label_y=ly,
+                click_callback=self._on_label_clicked,
                 text=f"{peak.position:.1f}",
                 color=(0, 0, 0),
                 angle=90,
                 anchor=anchor,
             )
-            label.setPos(peak.position, elbow_y)
-            label.set_leader(leader)
+            # IMPORTANT: addItem BEFORE setPos so ViewBox is the parent when the
+            # position is stored.  Without a ViewBox parent, PyQtGraph interprets
+            # the coordinates as scene-pixel values; after addItem it re-interprets
+            # the stored value as data coordinates — giving the wrong visual position.
             self._plot_widget.addItem(label)
+            label.setPos(lx, ly)
             self._peak_items.append(label)
+            label.set_leader(leader)
 
     def set_overlay_spectra(self, spectra: list) -> None:
         """Overlay additional spectra (e.g. reference candidates) in gray.
@@ -247,6 +310,14 @@ class SpectrumWidget(QWidget):
             )
             self._overlay_curves.append(curve)
 
+    def _on_label_clicked(self, peak_x: float) -> None:
+        """Called when a peak label is directly clicked; find and select the peak."""
+        if not self._peaks:
+            return
+        closest = min(self._peaks, key=lambda p: abs(p.position - peak_x))
+        if abs(closest.position - peak_x) <= 1.0:  # exact match (label stores peak_x)
+            self.peak_selected_in_viewer.emit(closest)
+
     def _on_mouse_clicked(self, event) -> None:
         """Handle mouse click on the plot scene for peak picking or selection."""
         pos = event.scenePos()
@@ -260,6 +331,11 @@ class SpectrumWidget(QWidget):
         wavenumber = mouse_point.x()
 
         if self._add_peak_mode:
+            # Don't add a new peak if the click landed on an existing label
+            if self._peaks:
+                closest = min(self._peaks, key=lambda p: abs(p.position - wavenumber))
+                if abs(closest.position - wavenumber) <= 5.0:
+                    return  # user clicked on/near an existing label — label handles it
             intensity = self._intensity_at(wavenumber)
             self.peak_clicked.emit(wavenumber, intensity)
         elif self._peaks:
@@ -285,8 +361,9 @@ class SpectrumWidget(QWidget):
         """Return interpolated intensity at the given wavenumber."""
         if self._spectrum is None:
             return 0.0
-        return float(
-            np.interp(
-                wavenumber, self._spectrum.wavenumbers[::-1], self._spectrum.intensities[::-1]
-            )
-        )
+        x = self._spectrum.wavenumbers
+        y = self._spectrum.intensities
+        if x.size >= 2 and x[0] > x[-1]:
+            x = x[::-1]
+            y = y[::-1]
+        return float(np.interp(wavenumber, x, y))

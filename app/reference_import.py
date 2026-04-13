@@ -91,10 +91,15 @@ class ReferenceImportService:
         *,
         name: str | None = None,
         detect_peaks: bool = False,
+        prefer_filename: bool = False,
     ) -> ImportedReference:
         """Import a single spectral file into the reference library."""
         spectrum = self._read_spectrum(path)
-        reference_name = name or self._default_reference_name(path, spectrum)
+        reference_name = name or self._default_reference_name(
+            path,
+            spectrum,
+            prefer_filename=prefer_filename,
+        )
         detected_peaks = detect_peaks_for_spectrum(spectrum) if detect_peaks else ()
         description = spectrum.comments.strip()
         ref_id = self._db.add_reference_spectrum(
@@ -118,6 +123,7 @@ class ReferenceImportService:
         *,
         skip_duplicates_by_filename: bool = True,
         detect_peaks: bool = False,
+        prefer_filename: bool = False,
     ) -> BatchImportSummary:
         """Import all `.spa` files from a folder and return a structured summary."""
         files = self.scan_folder(folder)
@@ -155,7 +161,11 @@ class ReferenceImportService:
                     continue
 
             try:
-                imported = self.import_reference_file(path, detect_peaks=detect_peaks)
+                imported = self.import_reference_file(
+                    path,
+                    detect_peaks=detect_peaks,
+                    prefer_filename=prefer_filename,
+                )
             except Exception as exc:  # noqa: BLE001
                 results.append(
                     BatchImportResult(
@@ -189,8 +199,15 @@ class ReferenceImportService:
         return FormatRegistry().read(path)
 
     @staticmethod
-    def _default_reference_name(path: Path, spectrum: Spectrum) -> str:
-        """Prefer meaningful spectrum metadata, otherwise fall back to the filename stem."""
+    def _default_reference_name(
+        path: Path,
+        spectrum: Spectrum,
+        *,
+        prefer_filename: bool = False,
+    ) -> str:
+        """Return the preferred stored reference name for an imported spectrum."""
+        if prefer_filename:
+            return path.stem
         title = spectrum.title.strip()
         if title and title.casefold() != path.name.casefold():
             return title

@@ -26,6 +26,7 @@ class Settings:
         "peak_prominence": 0.01,
         "report_presets": [],
         "report_last_used_preset": None,
+        "reference_library_folder": None,
     }
 
     def __init__(self, settings_path: Path = SETTINGS_PATH) -> None:

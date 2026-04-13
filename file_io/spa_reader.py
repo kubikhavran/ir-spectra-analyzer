@@ -49,23 +49,45 @@ class SPAReader:
         if not filepath.exists():
             raise FileNotFoundError(f"SPA file not found: {filepath}")
 
+        stage1_spectrum: Spectrum | None = None
+
         # Stage 1: SpectroChemPy
         try:
-            return self._read_spectrochempy(filepath)
+            stage1_spectrum = self._read_spectrochempy(filepath)
         except Exception:  # noqa: BLE001
-            pass
+            stage1_spectrum = None
 
         # Stage 2: Custom binary parser
         try:
             from file_io.spa_binary import SPABinaryReader  # noqa: PLC0415
 
-            return SPABinaryReader().read(filepath)
+            binary_spectrum = SPABinaryReader().read(filepath)
+            if stage1_spectrum is None:
+                return binary_spectrum
+            return self._merge_binary_metadata(stage1_spectrum, binary_spectrum)
         except Exception:  # noqa: BLE001
-            pass
+            if stage1_spectrum is not None:
+                return stage1_spectrum
 
         raise SPAReadError(
             f"Failed to read '{filepath.name}' with all available parsers. "
             "The file may be corrupted or from an unsupported instrument."
+        )
+
+    def _merge_binary_metadata(self, primary: Spectrum, binary: Spectrum) -> Spectrum:
+        """Enrich the preferred spectrum payload with metadata from the binary parser."""
+        merged_extra = dict(primary.extra_metadata)
+        merged_extra.update(binary.extra_metadata)
+        return Spectrum(
+            wavenumbers=primary.wavenumbers,
+            intensities=primary.intensities,
+            title=primary.title or binary.title,
+            source_path=primary.source_path or binary.source_path,
+            acquired_at=primary.acquired_at or binary.acquired_at,
+            y_unit=binary.y_unit,
+            x_unit=primary.x_unit,
+            comments=primary.comments or binary.comments,
+            extra_metadata=merged_extra,
         )
 
     def _read_spectrochempy(self, filepath: Path) -> Spectrum:

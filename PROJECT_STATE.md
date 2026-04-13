@@ -9,7 +9,7 @@
 - **GUI:** PySide6 + PyQtGraph
 - **Repozitář:** https://github.com/kubikhavran/ir-spectra-analyzer (private)
 - **Hlavní architektura:** viz `IR_Spectral_Software_Architecture.md`
-- **Poslední aktualizace:** 2026-04-03
+- **Poslední aktualizace:** 2026-04-13
 - **Aktuálně pracuje:** nikdo
 
 ---
@@ -29,6 +29,76 @@
 ---
 
 ## Dokončené milestones
+
+### ✅ 2026-04-13 — Full manual QA pass over `reference library_1`
+- **Scope:** All 30 `.SPA` files in `tests/fixtures/reference library_1` were loaded through the real `MainWindow._load_spectrum()` workflow in offscreen GUI mode, not just through the low-level parser.
+- **Result:** All 30 spectra rendered successfully in the spectrum viewer. For every file that contained OMNIC `PEAKTABLE` data, the stored peaks appeared immediately after load with matching counts in `Spectrum.extra_metadata["annotated_peaks"]`, `Project.peaks`, and rendered plot labels.
+- **Stored peak audit:** 29/30 files contain stored OMNIC peak annotations and now show them automatically on load. The only file without stored peak annotations is `PAR1627-SE.SPA`, so it correctly opens without pre-labeled peaks.
+- **Orientation audit:** No label-orientation failures were observed. Automated QA checks over the rendered `_DraggableLabel` items confirmed correct placement for every loaded file, and the generated contact-sheet screenshots were manually reviewed. Dip-like / transmittance-style spectra consistently rendered labels on the correct side of the curve.
+- **Metadata anomaly handling:** Several files (`KLH293-Ot.SPA`, `KLH294-Ot.SPA`, `SMC113-Ot.SPA`, `SMC114-Ot.SPA`) still declare `Absorbance` in their source metadata while numerically behaving like `%T`. The new display heuristic handled these correctly during the full-library audit, showing a transmittance-style axis label and dip-oriented peak labels.
+
+### ✅ 2026-04-13 — OMNIC stored peak annotations now load automatically from `.SPA`
+- **Problem:** The app only showed peaks after `Detect Peaks` or manual picking, even when the original OMNIC `.SPA` file already contained a saved peak list. This was especially painful for the new `reference library_1` transmittance-heavy lab spectra, where OMNIC visibly showed annotated peaks but the app opened the same files as unlabeled curves.
+- **Root cause:** `file_io/spa_binary.py` only parsed the spectral parameter, intensity, and type-27 history blocks. It ignored OMNIC type-130 named blocks, including `PEAKTABLE`, which stores the original "Find Peaks" report with saved peak positions and intensities.
+- **Fix:** `SPABinaryReader` now scans type-130 named blocks, extracts `PEAKTABLE` entries from their plain-text/RTF payloads, parses `Position`/`Intensity` pairs, deduplicates them, and stores them in `Spectrum.extra_metadata["annotated_peaks"]`.
+- **Fix:** `ui/main_window.py::_load_spectrum()` now converts `annotated_peaks` into `Project.peaks` immediately after loading a spectrum, updates the peak table + viewer, and shows the stored-peak count in the status bar. Result: opening a compatible `.SPA` file now shows its original OMNIC peak marks without any extra user action.
+- **Fix:** `file_io/spa_reader.py` now merges binary-parser metadata back into the preferred SPA read result if another parser succeeds first, so saved peak tables and correct orientation metadata are not lost in environments where additional SPA tooling is installed.
+- **Fix:** `core/spectrum.py` now exposes `is_dip_spectrum` and `display_y_unit` to recognize dip-like percent-style spectra even when the source file incorrectly claims `Absorbance`. `ui/spectrum_widget.py` and `ui/main_window.py` now use this shared orientation logic for label placement, peak detection, and baseline-correction dispatch.
+- **User-visible result:** Transmittance spectra now place peak labels on the correct side of the curve, and mislabelled OMNIC files that numerically behave like `%T` also render with a transmittance-style axis label and dip-side peak annotations.
+- **Tests:** `tests/test_spa_reader.py` now verifies that a real fixture from `tests/fixtures/reference library_1/FER58-SE.SPA` exposes stored `annotated_peaks`, and that `SPAReader` preserves binary metadata when a primary parser succeeds first. `tests/test_main_window.py` now verifies automatic peak population on file load and dip-side label placement for percent-style spectra.
+- **Manual smoke validation:** Offscreen GUI smoke run performed on `FER58-SE.SPA` and `KLH293-Ot.SPA`. `FER58-SE.SPA` loaded with 29 stored peaks directly from the file. `KLH293-Ot.SPA` loaded with 40 stored peaks and rendered with transmittance-style label placement despite its misleading stored unit. Screenshots saved during validation confirmed that annotations appear immediately and on the correct side of the curve.
+
+### ✅ 2026-04-13 — Reference library is now user-selected and folder-scoped
+- **Problem:** The previous reference-library workflow still assumed a hidden bundled folder and did not match the real user expectation: pick a folder full of reference spectra and compare the currently displayed spectrum only against that folder. In practice, this also caused confusion when no root-level bundled folder existed in the workspace.
+- **Fix:** `app/reference_library_service.py` now supports an active user-selected reference-library folder, persisted via `storage/settings.py` under `reference_library_folder`. The service now scopes matching and dialog browsing only to DB entries whose `source` path belongs to the selected folder.
+- **Fix:** `ui/main_window.py` now initializes `ReferenceLibraryService` with app settings, so the chosen reference folder survives restarts and is reused automatically by `Match Spectrum`.
+- **Fix:** `ui/dialogs/reference_library_dialog.py` now includes `Choose Folder...` and `Sync Folder` actions. Choosing a folder activates it, persists it, syncs all `.spa` files from that folder into the DB, and shows only that folder's spectra in the library table.
+- **Fix:** `Match Spectrum` now gives a clearer status when no active reference folder is configured: the user is told to choose one first from `Database -> Reference Library`.
+- **Fix:** `Import File...` now behaves consistently with the folder-scoped library model: when an active folder is selected, files outside that folder are rejected with a clear summary message instead of silently importing hidden references that would not appear in the active library view.
+- **Tests:** `tests/test_reference_library_service.py` now covers selected-folder filtering and settings persistence. `tests/test_reference_library_dialog.py` now covers choosing a folder, syncing it, and rejecting imports outside the active folder.
+- **Manual smoke validation:** headless GUI workflow verified with the real fixture folder `tests/fixtures/reference library_1`: choose folder -> sync imports 30 references -> preview plot renders selected spectra -> `Find Similar to Current Spectrum` ranks 30 references -> `Match Spectrum` produces 10 results, auto-selects the top hit, and immediately shows the overlay in the main spectrum view.
+
+### ✅ 2026-04-13 — Reference-library sync, caching, and preview UX hardened
+- **Problem:** The reference-library feature worked, but bundled auto-import still only behaved correctly for an empty DB, repeated searches rebuilt every preprocessed reference vector from scratch, the library dialog still could not import a single `.spa` directly, and the right-side preview remained metadata-only.
+- **Fix:** `app/reference_library_service.py` now treats bundled-library auto-import as a sync operation, not an empty-DB fallback. `ensure_project_library_imported()` compares discovered `.spa` files against already stored DB `source` paths and still delegates to `import_project_library()` so duplicate handling stays centralized. The production discovery list now only includes `reference library_1`; the dev-only `tests/fixtures/reference library_1` fallback was removed.
+- **Fix:** `ReferenceLibraryService` now owns a shared `SearchEngine` instance, and `matching/search_engine.py` now caches preprocessed reference vectors by `(ref_id, y_unit)` with an explicit `clear_cache()` hook. Repeated searches now reuse warmed vectors instead of re-running preprocessing for the whole library every time.
+- **Fix:** `ui/main_window.py` now reuses that shared `ReferenceLibraryService` across both matching and the Reference Library dialog, so the app benefits from the warmed search cache everywhere in the workflow.
+- **Fix:** `ui/dialogs/reference_library_dialog.py` gained an `Import File...` button for direct single-/multi-file `.spa` import via the existing `ReferenceImportService`, including a compact imported/failed summary dialog.
+- **Fix:** `ReferenceLibraryDialog` now renders a mini pyqtgraph preview plot above the metadata text. The preview uses a white background, inverted IR X-axis, raw stored wavenumbers/intensities, and an explicit empty placeholder state when no row is selected.
+- **Fix:** `ui/match_results_panel.py` now auto-selects the first match row and emits `candidate_selected` immediately after `set_results()`, so the top overlay becomes visible as soon as matching completes. The panel status label also now includes a tooltip clarifying that the similarity score is an internal cosine metric and not OMNIC HQI.
+- **Fix:** `matching/quality.py` now exposes named constants for `Excellent`, `Strong`, and `Possible` thresholds instead of hard-coded literals in multiple branches.
+- **Tests:** `tests/test_reference_library_service.py` now verifies bundled sync even when the DB already contains a manually added reference. `tests/test_matching.py` now covers SearchEngine cache reuse and invalidation. `tests/test_reference_library_dialog.py` now covers direct-file import and the live spectrum preview. `tests/test_match_results_panel.py` now covers auto-selection and the HQI tooltip.
+
+### ✅ 2026-04-13 — Bundled reference-library search now works against real `.SPA` similarities
+- **Problem:** The project already had a database-backed `SearchEngine`, but the workflow was incomplete for a real bundled library. The new `tests/fixtures/reference library_1/` folder was not discoverable by the application, an empty DB produced a dead-end "import some first" message, and the original matching preprocessing over-emphasized raw baselines so many real OMNIC spectra collapsed into near-identical cosine scores.
+- **Fix:** Added `app/reference_library_service.py` as a small application-layer orchestrator for (a) discovering a bundled project library folder, (b) one-shot importing it into SQLite when the DB is empty, and (c) running similarity search through the existing `Match Results` UI path.
+- **Fix:** `ui/main_window.py::_on_match_spectrum()` now uses `ReferenceLibraryService`; on the first search it auto-imports the bundled `reference library_1` set and then immediately runs matching without forcing a separate manual import step.
+- **Fix:** `ui/dialogs/reference_library_dialog.py` now exposes the bundled-library workflow directly via a `Sync Project Library` button and a small status line, so the library can be populated/refreshed from the Reference Library UI without going through `Match Spectrum` first.
+- **Fix:** `ReferenceLibraryDialog` now also behaves like a conventional spectral-library search surface when a spectrum is loaded: `Find Similar to Current Spectrum` ranks the full library, shows similarity scores directly in the table, and `Show All` returns to the default alphabetical library view.
+- **Fix:** Added explicit hit-quality bands on top of the raw similarity score so search results read more like a conventional library workflow. Both `MatchResultsPanel` and `ReferenceLibraryDialog` now classify hits as `Excellent` (≥90%), `Strong` (≥70%), `Possible` (≥40%), or `Weak` (<40%) via a shared helper in `matching/quality.py`.
+- **Fix:** `matching/preprocessing.py` was upgraded from simple resample+peak-normalize to a more discriminative feature pipeline:
+  - aligns transmittance-like units (`Transmittance`, `Reflectance`, `Single Beam`) with absorbance-like polarity,
+  - suppresses low-frequency baseline via Savitzky-Golay smoothing,
+  - clips to positive band content,
+  - combines normalized band shape with its first derivative before cosine similarity.
+- **Fix:** `matching/search_engine.py` now propagates `y_unit` for both reference and query spectra so mixed-unit libraries can still be compared on comparable band shapes.
+- **Fix:** Bundled-library import now preserves filename-based sample IDs (e.g. `FER58-SE`) instead of replacing them with opaque embedded instrument titles, which makes ranked results readable as a practical reference finder.
+- **Tests:** Added `tests/test_reference_library_service.py` for unit-aware matching and end-to-end bundled-library auto-import. `tests/test_matching.py` now also verifies that a real fixture spectrum (`FER60-SE.SPA`) remains the top hit with a meaningful score gap instead of collapsing into a flat cluster of ~1.0 scores. `tests/test_reference_library_dialog.py` now covers missing-library state, dialog-side sync, similarity ranking, quality-band display, and resetting back to the default view. `tests/test_match_results_panel.py` now also checks the shared quality labels.
+- **Smoke validation:** Headless app workflow verified with a real query spectrum (`tests/fixtures/0min-1-97C.SPA`) — first match action auto-imported 30 bundled references, populated 10 ranked candidates in the existing Match Results panel, and returned consistent top-5 similarity results through the actual `MainWindow` path. Headless dialog workflow also verified: `Sync Project Library` imported 30 references into an empty DB and `Find Similar to Current Spectrum` ranked all 30 library records with visible similarity scores and quality bands in the Reference Library table.
+
+### ✅ 2026-04-13 — Manual peak picking fixed; labels now follow the real curve level
+- **Root cause #1:** `ui/spectrum_widget.py::_intensity_at()` vždy interpolovala přes obrácené pole `wavenumbers[::-1]`, i když reálná SPA data jsou už po loadu vzestupně seřazená. `numpy.interp()` očekává vzestupné `x`; pro ručně přidané peaky tak mohla vracet stejnou hraniční hodnotu pro různé `cm⁻¹`.
+- **Root cause #2:** viewer ignoroval projektový model `Peak.label_offset_x`, `Peak.label_offset_y` a `Peak.manual_placement`, i když tyto fieldy existují v `core/peak.py` i serializeru. `ui/spectrum_widget.py` místo toho renderovala labely přes jeden sdílený `label_offset = y_span * 0.065` pro celý graf, takže ručně přidané labely končily v jedné horizontální vrstvě.
+- **User-visible bug:** ručně přidané peaky měly často stejnou nebo téměř stejnou intenzitu v tabulce/vieweru a jejich labely se chovaly jako jednotná horní vrstva místo explicitních per-peak pozic.
+- **Fix:** `_intensity_at()` nyní detekuje směr osy X a obrací data jen pokud jsou skutečně sestupná; pro běžná vzestupná data interpoluje přímo.
+- **Fix:** `_DraggableLabel` nyní drží referenci na `Peak` model a při dragování zapisuje změny do `label_offset_x/y` + `manual_placement=True`.
+- **Fix:** `set_peaks()` respektuje `Peak.manual_placement` a renderuje label podle offsetů uložených v modelu; automatický globální offset se používá už jen pro ne-manually-placed peaky.
+- **Fix:** `ui/main_window.py::_on_peak_clicked()` vytváří ručně přidané peaky s explicitním model-driven placementem (`manual_placement=True`, nulové offsety), takže label vzniká přímo na úrovni dané křivky, ne v jednom sdíleném pásmu.
+- **Fix:** leader geometry byla jemně doladěna — při bočním odsunutí labelu se šikmá část výrazně zkrátí, ale stále zůstává zachovaný stejný princip „vertical then angled“ connectoru.
+- **QA:** ručně vizuálně ověřeno na syntetickém absorbance i transmittance spektru; leadery i label anchoring vypadají čitelně v obou polaritách. `tests/test_main_window.py` nově obsahují explicitní coverage pro kratší diagonálu a manual label anchoring pro oba směry (`label_offset > 0` i `< 0`).
+- **Tests:** `tests/test_main_window.py` rozšířeny o regresní coverage pro (a) defaultní výšku auto-placed labelu, (b) ruční peak picking s reálnou interpolovanou intenzitou, (c) model-driven manual label placement a (d) respektování uložených `label_offset_x/y`.
+- **Manual smoke validation:** spuštěna reálná aplikace nad `tests/fixtures/0min-1-97C.SPA`; ručně přidané peaky @3230 / 3068.3 / 2968.0 / 2879.7 / 2545.6 cm⁻¹ nyní nesou rozdílné intenzity `100.09 / 97.30 / 91.83 / 95.31 / 100.14` a labely už neleží v jedné horizontální vrstvě. Ověřen také load SPA, auto-detect (71 peaků), baseline correction, PDF export a save/load `.irproj`.
+- **Obsidian:** vytvořen lehký projektový dashboard v aktivním vaultu na `APPS/IR Spectra Analyzer/Project Dashboard.md` pro cross-session memory a QA log.
 
 ### ✅ 2026-04-03 — New SPA fixtures validated; test suite extended to 258 tests
 - 7 nových SPA souborů přidáno do `tests/fixtures/` (různé instrumenty, různé y_unit)
@@ -321,7 +391,7 @@
 
 ## Known Bugs & Issues
 
-*(žádné — nový projekt)*
+- Empty-state viewer po startu bez načteného spektra ukazuje generické auto-range osy (~0.1–0.9) místo explicitního placeholder stavu; je to jen UX detail, ne funkční bug.
 
 ---
 

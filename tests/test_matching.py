@@ -201,3 +201,89 @@ def test_search_engine_n_references():
     engine = SearchEngine()
     engine.load_references(refs)
     assert engine.n_references == 3
+
+
+def test_search_engine_reuses_cached_reference_vectors(monkeypatch):
+    from matching.search_engine import SearchEngine
+
+    calls: list[tuple[int, str | None]] = []
+
+    def _fake_prepare(wavenumbers, intensities, grid, y_unit=None):
+        calls.append((len(wavenumbers), None if y_unit is None else str(y_unit)))
+        return np.full_like(grid, float(len(calls)), dtype=np.float64)
+
+    monkeypatch.setattr("matching.search_engine.prepare_for_matching", _fake_prepare)
+
+    wn = np.linspace(400.0, 4000.0, 10)
+    refs = [
+        {
+            "id": 1,
+            "name": "Ref1",
+            "wavenumbers": wn,
+            "intensities": np.ones_like(wn),
+            "description": "",
+            "y_unit": "Absorbance",
+        },
+        {
+            "id": 2,
+            "name": "Ref2",
+            "wavenumbers": wn,
+            "intensities": np.ones_like(wn) * 2,
+            "description": "",
+            "y_unit": "Transmittance",
+        },
+    ]
+    engine = SearchEngine()
+
+    engine.load_references(refs)
+    assert len(calls) == 2
+
+    engine.load_references(refs)
+    assert len(calls) == 2
+
+    updated_refs = [dict(ref) for ref in refs]
+    updated_refs[1]["y_unit"] = "Absorbance"
+    engine.load_references(updated_refs)
+    assert len(calls) == 3
+
+    engine.clear_cache()
+    engine.load_references(refs)
+    assert len(calls) == 5
+
+
+def test_search_engine_real_fixture_exact_match_has_meaningful_gap():
+    """Real reference spectra should not collapse into indistinguishable near-1.0 scores."""
+    from pathlib import Path
+
+    from file_io.format_registry import FormatRegistry
+    from matching.search_engine import SearchEngine
+
+    folder = Path(__file__).resolve().parent / "fixtures/reference library_1"
+    fmt = FormatRegistry()
+    references = []
+    for idx, path in enumerate(sorted(folder.glob("*.SPA")), start=1):
+        spectrum = fmt.read(path)
+        references.append(
+            {
+                "id": idx,
+                "name": path.stem,
+                "wavenumbers": spectrum.wavenumbers,
+                "intensities": spectrum.intensities,
+                "description": "",
+                "y_unit": spectrum.y_unit.value,
+            }
+        )
+
+    query = fmt.read(folder / "FER60-SE.SPA")
+    engine = SearchEngine()
+    engine.load_references(references)
+    results = engine.search(
+        query.wavenumbers,
+        query.intensities,
+        top_n=3,
+        query_y_unit=query.y_unit,
+    )
+
+    assert results[0].name == "FER60-SE"
+    assert results[0].score == pytest.approx(1.0)
+    assert results[1].score < 0.9

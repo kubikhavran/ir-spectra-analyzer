@@ -73,6 +73,7 @@ _OMNIC_DIR_MAX_ENTRIES = 30  # walk at most this many entries
 _OMNIC_DIR_TYPE_PARAMS = 2  # spectral parameters block
 _OMNIC_DIR_TYPE_INTENSITIES = 3  # float32 intensity data
 _OMNIC_DIR_TYPE_HISTORY = 27  # acquisition history text
+_OMNIC_DIR_TYPE_NAMED_BLOCK = 130  # named metadata/report blocks (e.g. PEAKTABLE)
 # Fallback fixed offsets (used when type-2 block is absent)
 _OMNIC_N_POINTS_OFFSET = 564  # u32 LE: number of spectral points
 _OMNIC_WN_MAX_OFFSET = 576  # f32 LE: wavenumber maximum (cm⁻¹)
@@ -200,6 +201,7 @@ class SPABinaryReader:
         intensity_size: int | None = None
         history_offset: int | None = None
         history_size: int | None = None
+        named_blocks: list[tuple[int, int]] = []
 
         pos = _OMNIC_DIR_START
         for entry_idx in range(_OMNIC_DIR_MAX_ENTRIES):
@@ -226,6 +228,8 @@ class SPABinaryReader:
             elif sec_type == _OMNIC_DIR_TYPE_HISTORY and history_offset is None:
                 history_offset = sec_data_offset
                 history_size = sec_size
+            elif sec_type == _OMNIC_DIR_TYPE_NAMED_BLOCK and sec_size > 0:
+                named_blocks.append((sec_data_offset, sec_size))
 
         # --- Parse spectral parameters (type-2 block) ---
         # Type-2 layout: +0 unknown(4), +4 n_points(u32), +8 unknown(8),
@@ -361,10 +365,50 @@ class SPABinaryReader:
             # Store only a short snippet — the full text can be hundreds of bytes
             extra["omnic_history_snippet"] = hist_text[:512]
 
+        annotated_peaks = self._parse_omnic_peak_tables(data, named_blocks)
+        if annotated_peaks:
+            extra["annotated_peaks"] = annotated_peaks
+
         extra["_parsed_y_unit"] = y_unit
         extra["_parsed_acquired_at"] = acquired_at
 
         return wavenumbers, intensities, extra
+
+    def _parse_omnic_peak_tables(
+        self, data: bytes, named_blocks: list[tuple[int, int]]
+    ) -> list[dict[str, float]]:
+        """Extract stored OMNIC peak annotations from named type-130 blocks.
+
+        OMNIC stores "Find Peaks" results inside PEAKTABLE blocks. These may
+        exist in both plain-text and RTF variants, so matches are deduplicated
+        by `(position, intensity)` while preserving the original report order.
+        """
+        if not named_blocks:
+            return []
+
+        peaks: list[dict[str, float]] = []
+        seen: set[tuple[float, float]] = set()
+        for offset, size in named_blocks:
+            if offset < 0 or size <= 0 or offset + size > len(data):
+                continue
+            block = data[offset : offset + size]
+            if b"PEAKTABLE" not in block:
+                continue
+            text = block.decode("latin-1", errors="replace")
+            for match in re.finditer(
+                r"Position:\s*([-+]?\d+(?:\.\d+)?)\s*Intensity:\s*([-+]?\d+(?:\.\d+)?)",
+                text,
+            ):
+                position = float(match.group(1))
+                intensity = float(match.group(2))
+                key = (round(position, 6), round(intensity, 6))
+                if key in seen:
+                    continue
+                seen.add(key)
+                peaks.append({"position": position, "intensity": intensity})
+
+        peaks.sort(key=lambda peak: peak["position"], reverse=True)
+        return peaks
 
     @staticmethod
     def _parse_omnic_history(text: str) -> dict:

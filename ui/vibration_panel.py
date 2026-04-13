@@ -10,6 +10,7 @@ Zodpovědnost:
 from __future__ import annotations
 
 from PySide6.QtCore import Signal
+from PySide6.QtGui import QBrush, QColor
 from PySide6.QtWidgets import (
     QLabel,
     QLineEdit,
@@ -34,6 +35,7 @@ class VibrationPanel(QWidget):
     """
 
     preset_selected = Signal(object)  # emits VibrationPreset on double-click
+    preset_clicked_for_assign = Signal(object)  # emits VibrationPreset on single-click
 
     def __init__(self, parent=None) -> None:
         super().__init__(parent)
@@ -56,6 +58,7 @@ class VibrationPanel(QWidget):
 
         self._list = QListWidget()
         self._list.itemDoubleClicked.connect(self._on_item_double_clicked)
+        self._list.itemClicked.connect(self._on_item_clicked)
         layout.addWidget(self._list)
 
     def set_presets(self, presets: list[VibrationPreset]) -> None:
@@ -80,11 +83,11 @@ class VibrationPanel(QWidget):
             item = self._list.item(i)
             preset = item.data(256)  # Qt.ItemDataRole.UserRole == 256
             if preset is not None and preset.covers_wavenumber(wavenumber):
-                item.setBackground(
-                    __import__("PySide6.QtGui", fromlist=["QColor"]).QColor("#E8F5E9")
-                )
+                item.setBackground(QColor("#C8E6C9"))  # soft green, readable on any theme
+                item.setForeground(QColor("#000000"))
             else:
-                item.setBackground(__import__("PySide6.QtGui", fromlist=["QColor"]).QColor("white"))
+                item.setBackground(QBrush())  # transparent — inherits theme default
+                item.setForeground(QBrush())  # reset to theme default text color
 
     def _rebuild_list(self, filter_text: str = "") -> None:
         """Rebuild the list widget applying an optional text filter."""
@@ -103,6 +106,11 @@ class VibrationPanel(QWidget):
 
     def _apply_filter(self, text: str) -> None:
         self._rebuild_list(text)
+
+    def _on_item_clicked(self, item: QListWidgetItem) -> None:
+        preset = item.data(256)
+        if preset is not None:
+            self.preset_clicked_for_assign.emit(preset)
 
     def _on_item_double_clicked(self, item: QListWidgetItem) -> None:
         preset = item.data(256)

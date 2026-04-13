@@ -48,12 +48,16 @@ class MainWindow(QMainWindow):
         super().__init__(parent)
         self._db = db
         self._settings = settings
+        from app.reference_library_service import ReferenceLibraryService  # noqa: PLC0415
+
+        self._reference_library_service = ReferenceLibraryService(db, settings=settings)
         self._project = None
         self._recent_menu: QMenu | None = None
         self._undo_stack = QUndoStack(self)
         self._last_search_refs: list = []  # cached from last _on_match_spectrum call
         self._molecule_widget: MoleculeWidget
         self._report_preset_manager = ReportPresetManager(settings)
+        self._pending_preset = None  # preset clicked in VibrationPanel, awaiting peak click
         self._setup_ui()
 
     def _setup_ui(self) -> None:
@@ -225,6 +229,7 @@ class MainWindow(QMainWindow):
         self._spectrum_widget.peak_selected_in_viewer.connect(self._on_peak_selected_in_viewer)
         self._peak_table.peak_selected.connect(self._on_peak_selected)
         self._vibration_panel.preset_selected.connect(self._on_preset_selected)
+        self._vibration_panel.preset_clicked_for_assign.connect(self._on_preset_clicked_for_assign)
         self._match_results_panel.candidate_selected.connect(self._on_match_candidate_selected)
         self._match_results_panel.import_reference.connect(self._on_import_reference)
 
@@ -319,18 +324,26 @@ class MainWindow(QMainWindow):
         from pathlib import Path  # noqa: PLC0415
 
         from core.metadata import SpectrumMetadata  # noqa: PLC0415
+        from core.peak import Peak  # noqa: PLC0415
         from core.project import Project  # noqa: PLC0415
         from file_io.format_registry import FormatRegistry  # noqa: PLC0415
 
         try:
             registry = FormatRegistry()
             spectrum = registry.read(Path(path))
-            self._project = Project(name=Path(path).stem, spectrum=spectrum)
+            loaded_peaks = [
+                Peak(position=peak["position"], intensity=peak["intensity"])
+                for peak in spectrum.extra_metadata.get("annotated_peaks", [])
+            ]
+            loaded_peaks.sort(key=lambda peak: peak.position, reverse=True)
+            self._project = Project(name=Path(path).stem, spectrum=spectrum, peaks=loaded_peaks)
             self._undo_stack.clear()
             self._add_to_recent(path)
 
             # Update spectrum viewer
             self._spectrum_widget.set_spectrum(spectrum)
+            self._peak_table.set_peaks(self._project.peaks)
+            self._spectrum_widget.set_peaks(self._project.peaks)
 
             # Update metadata panel
             metadata = SpectrumMetadata(
@@ -364,7 +377,14 @@ class MainWindow(QMainWindow):
                 ]
                 self._vibration_panel.set_presets(presets)
 
-            self.statusBar().showMessage(f"Loaded: {Path(path).name} ({spectrum.n_points} points)")
+            base = f"Loaded: {Path(path).name} ({spectrum.n_points} points)"
+            if self._project.peaks:
+                peak_note = f"stored peaks found: {len(self._project.peaks)}"
+            elif "annotated_peaks" in spectrum.extra_metadata:
+                peak_note = "PEAKTABLE empty"
+            else:
+                peak_note = "no PEAKTABLE in source file"
+            self.statusBar().showMessage(f"{base}, {peak_note}")
         except Exception as e:  # noqa: BLE001
             QMessageBox.critical(self, "Error", f"Failed to load spectrum:\n{e}")
 
@@ -379,7 +399,13 @@ class MainWindow(QMainWindow):
         from core.commands import AddPeakCommand  # noqa: PLC0415
         from core.peak import Peak  # noqa: PLC0415
 
-        peak = Peak(position=wavenumber, intensity=intensity)
+        peak = Peak(
+            position=wavenumber,
+            intensity=intensity,
+            manual_placement=True,
+            label_offset_x=0.0,
+            label_offset_y=0.0,
+        )
         cmd = AddPeakCommand(self._project, peak)
         self._undo_stack.push(cmd)
         self._peak_table.set_peaks(self._project.peaks)
@@ -394,8 +420,7 @@ class MainWindow(QMainWindow):
         from processing.peak_detection import detect_peaks  # noqa: PLC0415
 
         spectrum = self._project.corrected_spectrum or self._project.spectrum
-        _dip_units = (SpectralUnit.TRANSMITTANCE, SpectralUnit.REFLECTANCE, SpectralUnit.SINGLE_BEAM)
-        invert = spectrum.y_unit in _dip_units
+        invert = spectrum.is_dip_spectrum
         if invert:
             prominence = 1.0  # dip-type spectra span 0-100 range
         elif spectrum.y_unit == SpectralUnit.BASELINE_CORRECTED:
@@ -429,8 +454,7 @@ class MainWindow(QMainWindow):
         from processing.baseline import rubber_band_baseline  # noqa: PLC0415
 
         source_spectrum = self._project.spectrum
-        _dip_units = (SpectralUnit.TRANSMITTANCE, SpectralUnit.REFLECTANCE, SpectralUnit.SINGLE_BEAM)
-        use_upper_hull = source_spectrum.y_unit in _dip_units
+        use_upper_hull = source_spectrum.is_dip_spectrum
         corrected_intensities = rubber_band_baseline(
             source_spectrum.wavenumbers,
             source_spectrum.intensities,
@@ -556,14 +580,36 @@ class MainWindow(QMainWindow):
         self._vibration_panel.highlight_for_peak(peak.position)
         self._molecule_widget.set_smiles(peak.smiles)
 
+    def _on_preset_clicked_for_assign(self, preset) -> None:
+        """Store preset as pending — next peak click in viewer will assign it."""
+        self._pending_preset = preset
+        self.statusBar().showMessage(
+            f'Click a peak to assign: "{preset.name}" — or double-click preset to assign to selected row'
+        )
+
     def _on_peak_selected_in_viewer(self, peak) -> None:
-        """Select peak in table and highlight presets when user clicks a peak in the chart."""
+        """Select peak in table and highlight presets when user clicks a peak in the chart.
+
+        If a preset is pending (clicked in VibrationPanel), assign it immediately.
+        """
+        status_msg = f"Peak: {peak.position:.2f} cm\u207b\u00b9  |  {peak.intensity:.4f}"
+
+        if self._pending_preset is not None and self._project is not None:
+            # Quick-assign: assign pending preset to clicked peak
+            from core.commands import AssignPresetCommand  # noqa: PLC0415
+
+            preset = self._pending_preset
+            self._pending_preset = None  # consume — next peak click won't re-assign
+            self._undo_stack.push(AssignPresetCommand(peak, preset))
+            self._peak_table.set_peaks(self._project.peaks)
+            self._spectrum_widget.set_peaks(self._project.peaks)
+            status_msg = f'Assigned "{preset.name}" to {peak.position:.1f} cm\u207b\u00b9'
+
+        # Always select in table and highlight matching vibrations
         self._peak_table.select_peak(peak)
         self._vibration_panel.highlight_for_peak(peak.position)
         self._molecule_widget.set_smiles(peak.smiles)
-        self.statusBar().showMessage(
-            f"Peak: {peak.position:.2f} cm\u207b\u00b9  |  {peak.intensity:.4f}"
-        )
+        self.statusBar().showMessage(status_msg)
 
     def _on_clear_peaks(self) -> None:
         """Remove all peaks from the project (undoable as a single macro)."""
@@ -616,25 +662,32 @@ class MainWindow(QMainWindow):
             self.statusBar().showMessage("No spectrum loaded")
             return
 
-        from matching.search_engine import SearchEngine  # noqa: PLC0415
-
         try:
-            refs = (
-                self._db.get_reference_spectra()
-                if hasattr(self._db, "get_reference_spectra")
-                else []
-            )
-            if not refs:
-                self.statusBar().showMessage("No reference spectra in database. Import some first.")
+            spectrum = self._project.corrected_spectrum or self._project.spectrum
+            outcome = self._reference_library_service.search_spectrum(spectrum, top_n=10)
+            if not outcome.references:
+                if outcome.library_folder is None:
+                    self.statusBar().showMessage(
+                        "Choose a reference library folder first in Database -> Reference Library."
+                    )
+                else:
+                    self.statusBar().showMessage(
+                        "No reference spectra available. Sync or import the selected library first."
+                    )
                 return
 
-            self._last_search_refs = refs  # cache for candidate selection overlay
-            spectrum = self._project.corrected_spectrum or self._project.spectrum
-            engine = SearchEngine()
-            engine.load_references(refs)
-            results = engine.search(spectrum.wavenumbers, spectrum.intensities, top_n=10)
-            self._match_results_panel.set_results(results)
-            self.statusBar().showMessage(f"Matched against {engine.n_references} references")
+            self._last_search_refs = list(outcome.references)
+            self._match_results_panel.set_results(list(outcome.results))
+            if outcome.imported_summary is not None and outcome.imported_summary.imported > 0:
+                self.statusBar().showMessage(
+                    "Imported "
+                    f"{outcome.imported_summary.imported} bundled references and matched "
+                    f"against {outcome.reference_count} spectra"
+                )
+            else:
+                self.statusBar().showMessage(
+                    f"Matched against {outcome.reference_count} references"
+                )
         except Exception as e:  # noqa: BLE001
             QMessageBox.critical(self, "Match Error", f"Matching failed:\n{e}")
 
@@ -698,9 +751,18 @@ class MainWindow(QMainWindow):
 
     def _on_open_reference_library(self) -> None:
         """Open the Reference Library management dialog."""
+        current_spectrum = None
+        if self._project is not None:
+            current_spectrum = self._project.corrected_spectrum or self._project.spectrum
+
         from ui.dialogs.reference_library_dialog import ReferenceLibraryDialog  # noqa: PLC0415
 
-        dlg = ReferenceLibraryDialog(self._db, parent=self)
+        dlg = ReferenceLibraryDialog(
+            self._db,
+            parent=self,
+            library_service=self._reference_library_service,
+            current_spectrum=current_spectrum,
+        )
         dlg.exec()
 
     def _on_batch_import_references(self) -> None:

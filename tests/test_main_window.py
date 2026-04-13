@@ -77,7 +77,7 @@ def test_spectrum_widget_set_spectrum(qtbot):
 def test_spectrum_widget_set_peaks(qtbot):
     """SpectrumWidget.set_peaks should not raise and should store peaks."""
     from core.peak import Peak
-    from ui.spectrum_widget import SpectrumWidget
+    from ui.spectrum_widget import SpectrumWidget, _DraggableLabel
 
     widget = SpectrumWidget()
     qtbot.addWidget(widget)
@@ -89,6 +89,204 @@ def test_spectrum_widget_set_peaks(qtbot):
     widget.set_peaks(peaks)  # must not raise
 
     assert len(widget._peaks) == 1
+    labels = [item for item in widget._peak_items if isinstance(item, _DraggableLabel)]
+    assert len(labels) == 1
+    assert labels[0]._data_y == pytest.approx(0.5 + 0.065 * np.ptp(spectrum.intensities))
+
+
+def test_spectrum_widget_places_auto_labels_below_dip_like_percent_style_spectrum(qtbot):
+    """Percent-style dip spectra should place automatic labels below the curve."""
+    from core.peak import Peak
+    from core.spectrum import SpectralUnit, Spectrum
+    from ui.spectrum_widget import SpectrumWidget, _DraggableLabel
+
+    widget = SpectrumWidget()
+    qtbot.addWidget(widget)
+
+    spectrum = Spectrum(
+        wavenumbers=np.array([400.0, 1000.0, 1600.0, 2500.0, 4000.0]),
+        intensities=np.array([99.8, 98.5, 72.0, 97.9, 100.0]),
+        title="Percent-style",
+        y_unit=SpectralUnit.ABSORBANCE,
+    )
+    widget.set_spectrum(spectrum)
+    widget.set_peaks([Peak(position=1600.0, intensity=72.0)])
+
+    assert spectrum.display_y_unit == SpectralUnit.TRANSMITTANCE
+    labels = [item for item in widget._peak_items if isinstance(item, _DraggableLabel)]
+    assert len(labels) == 1
+    assert labels[0]._data_y < 72.0
+
+
+def test_manual_peak_labels_anchor_to_each_peak_curve_level(qtbot):
+    """Manually added peaks should place labels directly at each peak's own curve level."""
+    from core.project import Project
+    from core.spectrum import Spectrum
+    from ui.main_window import MainWindow
+    from ui.spectrum_widget import _DraggableLabel
+
+    window = MainWindow(db=_make_mock_db(), settings=_make_mock_settings())
+    qtbot.addWidget(window)
+
+    wavenumbers = np.array([4000.0, 3000.0, 2000.0, 1000.0, 400.0])
+    intensities = np.array([0.2, 0.8, 0.35, 1.2, 0.1])
+    spectrum = Spectrum(wavenumbers=wavenumbers, intensities=intensities, title="Manual peaks")
+    window._project = Project(name="Manual peaks", spectrum=spectrum)
+    window._spectrum_widget.set_spectrum(spectrum)
+
+    window._on_peak_clicked(3000.0, 0.8)
+    window._on_peak_clicked(1000.0, 1.2)
+
+    labels = [
+        item for item in window._spectrum_widget._peak_items if isinstance(item, _DraggableLabel)
+    ]
+    labels_by_peak = {item._peak_x: item for item in labels}
+
+    assert labels_by_peak[3000.0]._data_y == pytest.approx(0.8)
+    assert labels_by_peak[1000.0]._data_y == pytest.approx(1.2)
+    assert labels_by_peak[3000.0]._data_y != pytest.approx(labels_by_peak[1000.0]._data_y)
+
+
+def test_spectrum_widget_honors_manual_label_offsets_from_peak_model(qtbot):
+    """Explicit peak label offsets stored in the model must drive label rendering."""
+    from core.peak import Peak
+    from ui.spectrum_widget import SpectrumWidget, _DraggableLabel
+
+    widget = SpectrumWidget()
+    qtbot.addWidget(widget)
+
+    spectrum = _make_spectrum()
+    widget.set_spectrum(spectrum)
+
+    peak = Peak(
+        position=1000.0,
+        intensity=0.5,
+        manual_placement=True,
+        label_offset_x=12.0,
+        label_offset_y=-0.2,
+    )
+    widget.set_peaks([peak])
+
+    labels = [item for item in widget._peak_items if isinstance(item, _DraggableLabel)]
+    assert len(labels) == 1
+    assert labels[0]._data_x == pytest.approx(1012.0)
+    assert labels[0]._data_y == pytest.approx(0.3)
+
+
+def test_sideways_label_uses_shorter_diagonal_segment(qtbot):
+    """Sideways label placement should keep the diagonal branch visually short."""
+    import pyqtgraph as pg
+
+    from core.peak import Peak
+    from ui.spectrum_widget import _DraggableLabel
+
+    peak = Peak(position=1500.0, intensity=80.0, manual_placement=True)
+    label = _DraggableLabel(
+        peak=peak,
+        peak_x=1500.0,
+        peak_y=80.0,
+        label_offset=20.0,
+        label_x=1450.0,
+        label_y=100.0,
+        text="1500.0",
+    )
+    leader = pg.PlotCurveItem()
+    label.set_leader(leader)
+
+    x_data, y_data = leader.getData()
+    assert x_data is not None
+    assert y_data is not None
+    assert y_data[0] == pytest.approx(80.0)
+    assert y_data[2] == pytest.approx(100.0)
+    assert y_data[1] == pytest.approx(93.0)
+    assert (y_data[2] - y_data[1]) == pytest.approx(7.0)
+
+
+def test_sideways_label_uses_shorter_diagonal_segment_for_transmittance(qtbot):
+    """The shortened diagonal should also behave correctly for dip-like spectra."""
+    import pyqtgraph as pg
+
+    from core.peak import Peak
+    from ui.spectrum_widget import _DraggableLabel
+
+    peak = Peak(position=1500.0, intensity=88.0, manual_placement=True)
+    label = _DraggableLabel(
+        peak=peak,
+        peak_x=1500.0,
+        peak_y=88.0,
+        label_offset=-20.0,
+        label_x=1550.0,
+        label_y=68.0,
+        text="1500.0",
+    )
+    leader = pg.PlotCurveItem()
+    label.set_leader(leader)
+
+    x_data, y_data = leader.getData()
+    assert x_data is not None
+    assert y_data is not None
+    assert y_data[0] == pytest.approx(88.0)
+    assert y_data[2] == pytest.approx(68.0)
+    assert y_data[1] == pytest.approx(75.0)
+    assert (y_data[1] - y_data[2]) == pytest.approx(7.0)
+
+
+def test_manual_peak_labels_anchor_to_curve_level_for_transmittance(qtbot):
+    """Manual peaks in transmittance mode should still start from each dip's own level."""
+    from core.project import Project
+    from core.spectrum import SpectralUnit, Spectrum
+    from ui.main_window import MainWindow
+    from ui.spectrum_widget import _DraggableLabel
+
+    window = MainWindow(db=_make_mock_db(), settings=_make_mock_settings())
+    qtbot.addWidget(window)
+
+    wavenumbers = np.array([4000.0, 3000.0, 2000.0, 1000.0, 400.0])
+    intensities = np.array([99.0, 81.5, 94.0, 88.2, 98.5])
+    spectrum = Spectrum(
+        wavenumbers=wavenumbers,
+        intensities=intensities,
+        title="Transmittance peaks",
+        y_unit=SpectralUnit.TRANSMITTANCE,
+    )
+    window._project = Project(name="Transmittance peaks", spectrum=spectrum)
+    window._spectrum_widget.set_spectrum(spectrum)
+
+    window._on_peak_clicked(3000.0, 81.5)
+    window._on_peak_clicked(1000.0, 88.2)
+
+    labels = [
+        item for item in window._spectrum_widget._peak_items if isinstance(item, _DraggableLabel)
+    ]
+    labels_by_peak = {item._peak_x: item for item in labels}
+
+    assert labels_by_peak[3000.0]._data_y == pytest.approx(81.5)
+    assert labels_by_peak[1000.0]._data_y == pytest.approx(88.2)
+    assert labels_by_peak[3000.0]._data_y != pytest.approx(labels_by_peak[1000.0]._data_y)
+
+
+def test_manual_peak_click_uses_interpolated_curve_intensity(qtbot):
+    """Manual peak picking should use the real curve intensity at each clicked wavenumber."""
+    from core.project import Project
+    from core.spectrum import Spectrum
+    from ui.main_window import MainWindow
+
+    window = MainWindow(db=_make_mock_db(), settings=_make_mock_settings())
+    qtbot.addWidget(window)
+
+    wavenumbers = np.array([400.0, 1000.0, 1452.0, 3000.0, 4000.0])
+    intensities = np.array([0.1, 0.81, 0.55, 0.32, 0.2])
+    spectrum = Spectrum(wavenumbers=wavenumbers, intensities=intensities, title="Interpolation")
+    window._project = Project(name="Interpolation", spectrum=spectrum)
+    window._spectrum_widget.set_spectrum(spectrum)
+
+    for x in (1000.0, 1452.0, 3000.0):
+        window._on_peak_clicked(x, window._spectrum_widget._intensity_at(x))
+
+    observed = {peak.position: peak.intensity for peak in window._project.peaks}
+    assert observed[1000.0] == pytest.approx(0.81)
+    assert observed[1452.0] == pytest.approx(0.55)
+    assert observed[3000.0] == pytest.approx(0.32)
 
 
 def test_peak_table_set_peaks(qtbot):
@@ -142,6 +340,57 @@ def test_main_window_load_spectrum_updates_widget(qtbot, tmp_path):
             sys.modules["file_io.format_registry"] = original
 
     assert window._spectrum_widget._spectrum is not None
+
+
+def test_main_window_load_spectrum_uses_stored_annotated_peaks(qtbot, tmp_path):
+    """Stored OMNIC annotated peaks should appear immediately after loading the file."""
+    import sys
+    import types
+    from unittest.mock import MagicMock
+
+    from core.spectrum import SpectralUnit, Spectrum
+    from ui.main_window import MainWindow
+
+    spectrum = Spectrum(
+        wavenumbers=np.array([400.0, 1000.0, 1700.0, 2500.0, 4000.0]),
+        intensities=np.array([99.0, 95.0, 74.5, 97.0, 100.0]),
+        title="Stored peaks",
+        y_unit=SpectralUnit.TRANSMITTANCE,
+        extra_metadata={
+            "annotated_peaks": [
+                {"position": 1700.0, "intensity": 74.5},
+                {"position": 1000.0, "intensity": 95.0},
+            ]
+        },
+    )
+
+    db = _make_mock_db()
+    settings = _make_mock_settings()
+    window = MainWindow(db=db, settings=settings)
+    qtbot.addWidget(window)
+
+    spa_file = tmp_path / "stored.spa"
+    spa_file.write_bytes(b"\x00" * 16)
+
+    fake_fr_mod = types.ModuleType("file_io.format_registry")
+    mock_registry_cls = MagicMock()
+    mock_registry_cls.return_value.read.return_value = spectrum
+    fake_fr_mod.FormatRegistry = mock_registry_cls
+
+    original = sys.modules.get("file_io.format_registry")
+    sys.modules["file_io.format_registry"] = fake_fr_mod
+    try:
+        window._load_spectrum(str(spa_file))
+    finally:
+        if original is None:
+            sys.modules.pop("file_io.format_registry", None)
+        else:
+            sys.modules["file_io.format_registry"] = original
+
+    assert window._project is not None
+    assert [peak.position for peak in window._project.peaks] == [1700.0, 1000.0]
+    assert [peak.intensity for peak in window._project.peaks] == [74.5, 95.0]
+    assert window._peak_table._table.rowCount() == 2
 
 
 def test_vibration_panel_preset_selected_signal(qtbot):

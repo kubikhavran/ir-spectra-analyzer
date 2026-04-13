@@ -9,7 +9,8 @@ Zodpovědnost:
 
 from __future__ import annotations
 
-from PySide6.QtCore import Signal
+from PySide6.QtCore import QSignalBlocker, Signal
+from PySide6.QtGui import QColor
 from PySide6.QtWidgets import (
     QHBoxLayout,
     QLabel,
@@ -19,6 +20,8 @@ from PySide6.QtWidgets import (
     QVBoxLayout,
     QWidget,
 )
+
+from matching.quality import match_quality_color, match_quality_label
 
 
 class MatchResultsPanel(QWidget):
@@ -40,6 +43,10 @@ class MatchResultsPanel(QWidget):
         header = QHBoxLayout()
         self._status_label = QLabel("No results")
         self._status_label.setStyleSheet("color: gray; font-size: 9pt;")
+        self._status_label.setToolTip(
+            "Similarity score is an internal cosine metric "
+            "(band shape + first derivative). Not equivalent to OMNIC HQI."
+        )
         header.addWidget(self._status_label)
         header.addStretch()
         self._import_btn = QPushButton("Import Reference...")
@@ -65,18 +72,16 @@ class MatchResultsPanel(QWidget):
         self._status_label.setText(f"{len(results)} candidates")
         for result in results:
             score_pct = result.score * 100
-            text = f"{result.name}  —  {score_pct:.1f}%"
+            quality = match_quality_label(result.score)
+            text = f"{result.name}  —  {score_pct:.1f}%  ({quality})"
             item = QListWidgetItem(text)
             item.setData(256, result)  # store in UserRole
-            if score_pct >= 90:
-                item.setForeground(
-                    __import__("PySide6.QtGui", fromlist=["QColor"]).QColor("#2E7D32")
-                )
-            elif score_pct >= 70:
-                item.setForeground(
-                    __import__("PySide6.QtGui", fromlist=["QColor"]).QColor("#E65100")
-                )
+            item.setForeground(QColor(match_quality_color(result.score)))
             self._list.addItem(item)
+        blocker = QSignalBlocker(self._list)
+        self._list.setCurrentRow(0)
+        del blocker
+        self.candidate_selected.emit(results[0])
 
     def _on_row_changed(self, row: int) -> None:
         if 0 <= row < len(self._results):

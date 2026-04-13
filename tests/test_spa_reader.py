@@ -293,6 +293,48 @@ def test_spa_reader_falls_through_to_binary_reader(tmp_path: Path) -> None:
     assert spectrum.n_points == 4
 
 
+def test_spa_reader_merges_binary_metadata_when_primary_parser_succeeds(tmp_path: Path) -> None:
+    """Binary metadata should enrich the preferred parser result when both succeed."""
+    from core.spectrum import SpectralUnit, Spectrum
+    from file_io.spa_reader import SPAReader
+
+    spa_file = tmp_path / "sample.spa"
+    spa_file.write_bytes(_build_synthetic_spa())
+
+    primary = Spectrum(
+        wavenumbers=np.array([400.0, 500.0, 600.0], dtype=float),
+        intensities=np.array([1.0, 2.0, 3.0], dtype=float),
+        title="Primary",
+        y_unit=SpectralUnit.ABSORBANCE,
+        extra_metadata={"primary_only": True},
+    )
+    binary = Spectrum(
+        wavenumbers=np.array([100.0, 200.0, 300.0], dtype=float),
+        intensities=np.array([9.0, 8.0, 7.0], dtype=float),
+        title="Binary",
+        source_path=spa_file,
+        y_unit=SpectralUnit.TRANSMITTANCE,
+        extra_metadata={"annotated_peaks": [{"position": 1700.0, "intensity": 75.0}]},
+    )
+
+    class _MergedReader(SPAReader):
+        def _read_spectrochempy(self, filepath: Path) -> Spectrum:
+            return primary
+
+    reader = _MergedReader()
+
+    from unittest.mock import patch
+
+    with patch("file_io.spa_binary.SPABinaryReader.read", return_value=binary):
+        spectrum = reader.read(spa_file)
+
+    assert np.allclose(spectrum.wavenumbers, primary.wavenumbers)
+    assert np.allclose(spectrum.intensities, primary.intensities)
+    assert spectrum.y_unit == SpectralUnit.TRANSMITTANCE
+    assert spectrum.extra_metadata["primary_only"] is True
+    assert spectrum.extra_metadata["annotated_peaks"] == binary.extra_metadata["annotated_peaks"]
+
+
 # ---------------------------------------------------------------------------
 # Real-file fixture tests  (Nicolet iS10, public sample data)
 # Source: github.com/pricebenjamin/SPA-file-reader
@@ -398,6 +440,7 @@ _NICOLET_IS10_FILES = [
     p for p in _real_spa_files if p.name in {"0min-1-97C.SPA", "113361_2-22.SPA", "30min-1-97C.SPA"}
 ]
 _has_nicolet_fixtures = len(_NICOLET_IS10_FILES) > 0
+_peaktable_fixture = FIXTURES_DIR / "reference library_1" / "FER58-SE.SPA"
 
 
 @pytest.mark.skipif(not _has_nicolet_fixtures, reason="Nicolet iS10 fixtures not present")
@@ -553,3 +596,19 @@ def test_real_spa_instrument_serial_in_extra_metadata(spa_path: Path) -> None:
     assert len(spec.extra_metadata["instrument_serial"]) > 0, (
         "instrument_serial should be non-empty"
     )
+
+
+@pytest.mark.skipif(not _peaktable_fixture.exists(), reason="Reference-library SPA fixture missing")
+def test_reference_library_spa_reads_stored_peak_annotations() -> None:
+    """OMNIC PEAKTABLE blocks should populate annotated_peaks for stored lab fixtures."""
+    from file_io.spa_binary import SPABinaryReader
+
+    spec = SPABinaryReader().read(_peaktable_fixture)
+    annotated_peaks = spec.extra_metadata.get("annotated_peaks")
+
+    assert annotated_peaks is not None
+    assert len(annotated_peaks) >= 20
+    positions = [peak["position"] for peak in annotated_peaks]
+    assert positions == sorted(positions, reverse=True)
+    assert any(abs(position - 1639.0) < 2.0 for position in positions)
+    assert any(abs(position - 555.0) < 2.0 for position in positions)

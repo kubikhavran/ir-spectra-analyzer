@@ -9,27 +9,72 @@ Zodpovědnost:
 from __future__ import annotations
 
 import numpy as np
+from scipy.signal import savgol_filter
 
 from processing.interpolation import resample
-from processing.normalization import peak_normalize
 
 
 def prepare_for_matching(
     wavenumbers: np.ndarray,
     intensities: np.ndarray,
     target_axis: np.ndarray,
+    y_unit: object | None = None,
 ) -> np.ndarray:
     """Preprocess spectrum for database matching.
 
-    Resamples to target axis and normalizes to peak = 1.
+    Resamples to a common axis, aligns spectral polarity, and emphasizes band shape.
 
     Args:
         wavenumbers: Original X-axis.
         intensities: Original intensities.
         target_axis: Common wavenumber axis for matching.
+        y_unit: Optional spectral intensity unit used to align transmittance-like
+            spectra with absorbance-like spectra before matching.
 
     Returns:
-        Normalized, resampled intensity array.
+        Unit-normalized feature vector suitable for cosine similarity.
     """
-    resampled = resample(wavenumbers, intensities, target_axis)
-    return peak_normalize(resampled)
+    signal = resample(wavenumbers, intensities, target_axis).astype(np.float64, copy=False)
+    signal = np.nan_to_num(signal, nan=0.0, posinf=0.0, neginf=0.0)
+
+    if _is_transmittance_like(y_unit):
+        signal = float(np.nanmax(signal)) - signal
+    else:
+        signal = signal - float(np.nanmin(signal))
+
+    window = _matching_window_length(signal.size)
+    if window is not None:
+        baseline = savgol_filter(signal, window_length=window, polyorder=3, mode="interp")
+        signal = signal - baseline
+
+    signal = np.clip(signal, 0.0, None)
+    peak = float(np.nanmax(signal))
+    if peak > 0.0:
+        signal = signal / peak
+
+    derivative = np.gradient(signal)
+    vector = np.concatenate((signal, derivative * 0.5))
+    norm = float(np.linalg.norm(vector))
+    if norm > 0.0:
+        return vector / norm
+    return vector
+
+
+def _is_transmittance_like(y_unit: object | None) -> bool:
+    """Return True for spectral units where absorptions appear as dips."""
+    text = getattr(y_unit, "value", y_unit)
+    if text is None:
+        return False
+    return str(text) in {"Transmittance", "Reflectance", "Single Beam"}
+
+
+def _matching_window_length(n_points: int) -> int | None:
+    """Pick a stable Savitzky-Golay window length for baseline suppression."""
+    if n_points < 7:
+        return None
+    window = min(n_points, 151)
+    if window % 2 == 0:
+        window -= 1
+    if window < 7:
+        return None
+    return window

@@ -31,6 +31,13 @@ def test_match_results_panel_set_results(qtbot):
     assert panel._list.count() == 2
     assert "Ethanol" in panel._list.item(0).text()
     assert "95.0%" in panel._list.item(0).text()
+    assert "Excellent" in panel._list.item(0).text()
+    assert "Strong" in panel._list.item(1).text()
+    assert panel._list.currentRow() == 0
+    assert (
+        panel._status_label.toolTip() == "Similarity score is an internal cosine metric "
+        "(band shape + first derivative). Not equivalent to OMNIC HQI."
+    )
 
 
 def test_match_results_panel_empty_results(qtbot):
@@ -49,14 +56,22 @@ def test_match_results_panel_candidate_selected_signal(qtbot):
     panel = MatchResultsPanel()
     qtbot.addWidget(panel)
 
+    received = []
+    panel.candidate_selected.connect(received.append)
     results = [MatchResult(ref_id=1, name="Benzene", score=0.88)]
     panel.set_results(results)
 
-    received = []
-    panel.candidate_selected.connect(received.append)
-    panel._list.setCurrentRow(0)
     assert len(received) == 1
     assert received[0].name == "Benzene"
+
+
+def test_match_quality_label_thresholds():
+    from matching.quality import match_quality_label
+
+    assert match_quality_label(0.95) == "Excellent"
+    assert match_quality_label(0.80) == "Strong"
+    assert match_quality_label(0.55) == "Possible"
+    assert match_quality_label(0.30) == "Weak"
 
 
 def test_spectrum_widget_overlay(qtbot):

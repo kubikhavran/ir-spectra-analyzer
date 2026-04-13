@@ -50,6 +50,9 @@ logs/
 # User settings
 .ir-spectra-analyzer/
 
+# Claude Code session state
+.claude-session
+
 # OS
 .DS_Store
 ._*
