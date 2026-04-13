@@ -52,6 +52,10 @@ logs/
 
 # Claude Code session state
 .claude-session
+.claude-commit-validation.txt
+
+# QA test artifacts
+tests/qa_screenshots/
 
 # OS
 .DS_Store
