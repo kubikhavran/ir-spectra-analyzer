@@ -232,6 +232,7 @@ class MainWindow(QMainWindow):
         self._vibration_panel.preset_clicked_for_assign.connect(self._on_preset_clicked_for_assign)
         self._match_results_panel.candidate_selected.connect(self._on_match_candidate_selected)
         self._match_results_panel.import_reference.connect(self._on_import_reference)
+        self._molecule_widget.smiles_changed.connect(self._on_structure_edited)
 
     # --- Event handlers ---
 
@@ -640,6 +641,20 @@ class MainWindow(QMainWindow):
         self._spectrum_widget.set_peaks(self._project.peaks)
         self.statusBar().showMessage(
             f'Assigned "{preset.name}" to peak at {peak.position:.1f} cm\u207b\u00b9'
+        )
+
+    def _on_structure_edited(self, smiles: str) -> None:
+        """Handle SMILES change emitted by MoleculeWidget after dialog acceptance."""
+        peak = self._peak_table.selected_peak()
+        if peak is None:
+            self.statusBar().showMessage("Select a peak first to assign a structure")
+            return
+        from core.commands import AssignSMILESCommand  # noqa: PLC0415
+
+        self._undo_stack.push(AssignSMILESCommand(peak, smiles))
+        self._molecule_widget.set_smiles(smiles)
+        self.statusBar().showMessage(
+            f"Structure assigned to peak at {peak.position:.1f} cm\u207b\u00b9"
         )
 
     def _on_delete_peak(self) -> None:
