@@ -157,7 +157,7 @@ def test_project_serializer_vibration_assignment_roundtrip(tmp_path):
 
 
 def test_project_serializer_smiles_roundtrip(tmp_path):
-    """smiles field survives save/load."""
+    """smiles field (peak-level) survives save/load."""
     project = _make_project()
     project.peaks[0].smiles = "CCO"
     serializer = ProjectSerializer()
@@ -165,3 +165,53 @@ def test_project_serializer_smiles_roundtrip(tmp_path):
     serializer.save(project, file_path)
     loaded = serializer.load(file_path)
     assert loaded.peaks[0].smiles == "CCO"
+
+
+def test_project_serializer_project_smiles_roundtrip(tmp_path):
+    """project.smiles (project-level) survives save/load."""
+    project = _make_project()
+    project.smiles = "c1ccccc1"
+    serializer = ProjectSerializer()
+    file_path = tmp_path / "project_smiles.irproj"
+    serializer.save(project, file_path)
+    loaded = serializer.load(file_path)
+    assert loaded.smiles == "c1ccccc1"
+
+
+def test_project_serializer_project_smiles_defaults_to_empty(tmp_path):
+    """Loading an old project file without 'smiles' key returns empty string."""
+    import json
+
+    serializer = ProjectSerializer()
+
+    # Build a minimal old-style project dict without the smiles key
+    wn = np.linspace(400.0, 4000.0, 10).tolist()
+    ints = np.linspace(0.0, 1.0, 10).tolist()
+    payload = {
+        "format": "ir-spectra-analyzer-project",
+        "version": 1,
+        "project": {
+            "name": "Legacy",
+            "peaks": [],
+            "spectrum": {
+                "wavenumbers": wn,
+                "intensities": ints,
+                "title": "Old",
+                "source_path": None,
+                "acquired_at": None,
+                "y_unit": "Absorbance",
+                "x_unit": "cm\u207b\u00b9",
+                "comments": "",
+                "extra_metadata": {},
+            },
+            "corrected_spectrum": None,
+            "created_at": None,
+            "updated_at": None,
+            "db_id": None,
+        },
+    }
+    file_path = tmp_path / "legacy.irproj"
+    file_path.write_text(json.dumps(payload), encoding="utf-8")
+
+    loaded = serializer.load(file_path)
+    assert loaded.smiles == ""

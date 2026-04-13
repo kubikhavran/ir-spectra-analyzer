@@ -172,3 +172,50 @@ def test_spectrum_renderer_render_to_bytes() -> None:
     assert isinstance(result, bytes)
     assert len(result) > 0
     assert result[:4] == b"\x89PNG"
+
+
+def test_pdf_with_project_smiles_calls_structure_section(tmp_path, monkeypatch) -> None:
+    """PDF with project.smiles='CCO' should call _append_structure_section."""
+    from reporting.pdf_generator import PDFGenerator, ReportOptions
+
+    project = _make_project()
+    project.smiles = "CCO"
+
+    called_with: list = []
+    original = PDFGenerator._append_structure_section
+
+    def _spy(self, story, project_smiles, section_style) -> None:
+        called_with.append(project_smiles)
+        return original(self, story, project_smiles, section_style)
+
+    monkeypatch.setattr(PDFGenerator, "_append_structure_section", _spy)
+
+    out = tmp_path / "report_project_smiles.pdf"
+    PDFGenerator().generate(project, out, options=ReportOptions(include_structures=True))
+
+    assert out.exists()
+    assert called_with == ["CCO"]
+
+
+def test_pdf_without_project_smiles_skips_structure_section(tmp_path, monkeypatch) -> None:
+    """PDF with empty project.smiles should NOT call _append_structure_section."""
+    from reporting.pdf_generator import PDFGenerator, ReportOptions
+
+    project = _make_project()
+    project.smiles = ""  # no project-level SMILES
+
+    called = False
+    original = PDFGenerator._append_structure_section
+
+    def _spy(self, *args, **kwargs) -> None:
+        nonlocal called
+        called = True
+        return original(self, *args, **kwargs)
+
+    monkeypatch.setattr(PDFGenerator, "_append_structure_section", _spy)
+
+    out = tmp_path / "report_no_project_smiles.pdf"
+    PDFGenerator().generate(project, out, options=ReportOptions(include_structures=True))
+
+    assert out.exists()
+    assert not called

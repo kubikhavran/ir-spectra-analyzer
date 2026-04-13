@@ -316,6 +316,9 @@ class MainWindow(QMainWindow):
                 )
                 self._metadata_panel.set_metadata(metadata)
 
+            # Update molecule structure panel with the saved project-level SMILES
+            self._molecule_widget.set_smiles(project.smiles)
+
             self.statusBar().showMessage(f"Project loaded: {Path(path).name}")
         except Exception as e:  # noqa: BLE001
             QMessageBox.critical(self, "Open Error", f"Failed to open project:\n{e}")
@@ -377,6 +380,9 @@ class MainWindow(QMainWindow):
                     for row in raw_presets
                 ]
                 self._vibration_panel.set_presets(presets)
+
+            # Update molecule structure panel (new project starts with empty SMILES)
+            self._molecule_widget.set_smiles(self._project.smiles)
 
             base = f"Loaded: {Path(path).name} ({spectrum.n_points} points)"
             if self._project.peaks:
@@ -579,7 +585,6 @@ class MainWindow(QMainWindow):
             f"Peak: {peak.position:.2f} cm\u207b\u00b9  |  {peak.intensity:.4f}"
         )
         self._vibration_panel.highlight_for_peak(peak.position)
-        self._molecule_widget.set_smiles(peak.smiles)
 
     def _on_preset_clicked_for_assign(self, preset) -> None:
         """Store preset as pending — next peak click in viewer will assign it."""
@@ -609,7 +614,6 @@ class MainWindow(QMainWindow):
         # Always select in table and highlight matching vibrations
         self._peak_table.select_peak(peak)
         self._vibration_panel.highlight_for_peak(peak.position)
-        self._molecule_widget.set_smiles(peak.smiles)
         self.statusBar().showMessage(status_msg)
 
     def _on_clear_peaks(self) -> None:
@@ -645,17 +649,13 @@ class MainWindow(QMainWindow):
 
     def _on_structure_edited(self, smiles: str) -> None:
         """Handle SMILES change emitted by MoleculeWidget after dialog acceptance."""
-        peak = self._peak_table.selected_peak()
-        if peak is None:
-            self.statusBar().showMessage("Select a peak first to assign a structure")
+        if self._project is None:
             return
-        from core.commands import AssignSMILESCommand  # noqa: PLC0415
+        from core.commands import SetProjectSMILESCommand  # noqa: PLC0415
 
-        self._undo_stack.push(AssignSMILESCommand(peak, smiles))
+        self._undo_stack.push(SetProjectSMILESCommand(self._project, smiles))
         self._molecule_widget.set_smiles(smiles)
-        self.statusBar().showMessage(
-            f"Structure assigned to peak at {peak.position:.1f} cm\u207b\u00b9"
-        )
+        self.statusBar().showMessage("Proposed structure updated")
 
     def _on_delete_peak(self) -> None:
         """Delete the currently selected peak."""

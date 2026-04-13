@@ -196,12 +196,11 @@ class PDFGenerator:
                 table_cell_style,
                 table_cell_right,
             )
-        if options.include_structures and sorted_peaks:
+        if options.include_structures and project.smiles:
             self._append_structure_section(
                 story,
-                sorted_peaks,
+                project.smiles,
                 section_style,
-                table_cell_style,
             )
 
         doc = SimpleDocTemplate(
@@ -366,44 +365,20 @@ class PDFGenerator:
     def _append_structure_section(
         self,
         story: list,
-        sorted_peaks,
+        project_smiles: str,
         section_style: ParagraphStyle,
-        table_cell_style: ParagraphStyle,
     ) -> None:
-        """Append the molecular structures section for peaks with SMILES."""
-        peaks_with_smiles = [peak for peak in sorted_peaks if peak.smiles]
-        if not peaks_with_smiles:
+        """Append a single proposed molecular structure section using project-level SMILES."""
+        if not project_smiles:
             return
 
-        struct_rows = []
-        for peak in peaks_with_smiles:
-            png_bytes = render_smiles_to_png(peak.smiles, size=(105, 105))
-            if png_bytes is None:
-                continue
-            left_text = (
-                f"Position: {peak.position:.2f} cm\u207b\u00b9<br/>Assignment: {peak.display_label}"
-            )
-            mol_img = Image(io.BytesIO(png_bytes), width=3.5 * cm, height=3.5 * cm)
-            struct_rows.append([Paragraph(left_text, table_cell_style), mol_img])
-
-        if not struct_rows:
+        png_bytes = render_smiles_to_png(project_smiles, size=(300, 300))
+        if png_bytes is None:
             return
+
+        img_size = 8 * cm
+        mol_img = Image(io.BytesIO(png_bytes), width=img_size, height=img_size)
 
         story.append(Spacer(1, 0.4 * cm))
-        story.append(Paragraph("Molecular structures", section_style))
-        left_col_w = _TEXT_W - 4 * cm
-        right_col_w = 4 * cm
-        struct_table = Table(
-            struct_rows,
-            colWidths=[left_col_w, right_col_w],
-        )
-        struct_table.setStyle(
-            TableStyle(
-                [
-                    ("VALIGN", (0, 0), (-1, -1), "TOP"),
-                    ("TOPPADDING", (0, 0), (-1, -1), 4),
-                    ("BOTTOMPADDING", (0, 0), (-1, -1), 4),
-                ]
-            )
-        )
-        story.append(struct_table)
+        story.append(Paragraph("Proposed Molecular Structure", section_style))
+        story.append(mol_img)

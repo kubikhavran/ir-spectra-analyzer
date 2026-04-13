@@ -58,6 +58,7 @@ class ProjectSerializer:
     def _project_to_dict(self, project: Project) -> dict[str, Any]:
         return {
             "name": project.name,
+            "smiles": project.smiles,
             "created_at": self._datetime_to_iso(project.created_at),
             "updated_at": self._datetime_to_iso(project.updated_at),
             "db_id": project.db_id,
@@ -78,6 +79,7 @@ class ProjectSerializer:
 
         project = Project(
             name=data.get("name", ""),
+            smiles=data.get("smiles", ""),
             spectrum=spectrum,
             peaks=[self._peak_from_dict(p) for p in data.get("peaks", [])],
             created_at=self._iso_to_datetime(data.get("created_at")),

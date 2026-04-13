@@ -37,6 +37,7 @@ class Project:
     spectrum: Spectrum | None = None
     corrected_spectrum: Spectrum | None = None
     peaks: list[Peak] = field(default_factory=list)
+    smiles: str = ""
     created_at: datetime = field(default_factory=datetime.now)
     updated_at: datetime = field(default_factory=datetime.now)
     db_id: int | None = None

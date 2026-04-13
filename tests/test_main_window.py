@@ -725,3 +725,140 @@ def test_main_window_export_pdf_uses_selected_report_options(qtbot, tmp_path):
 
     builder.build.assert_not_called()
     builder.build_with_options.assert_called_once_with(window._project, output_path, options)
+
+
+# ---------------------------------------------------------------------------
+# Project-level SMILES tests
+# ---------------------------------------------------------------------------
+
+
+def test_load_project_shows_project_smiles_in_molecule_widget(qtbot, tmp_path):
+    """Loading a project with project.smiles='CCO' shows 'CCO' in molecule_widget."""
+    from unittest.mock import patch
+
+    from core.peak import Peak
+    from core.project import Project
+    from core.spectrum import Spectrum
+    from storage.project_serializer import ProjectSerializer
+    from ui.main_window import MainWindow
+
+    db = _make_mock_db()
+    settings = _make_mock_settings()
+    window = MainWindow(db=db, settings=settings)
+    qtbot.addWidget(window)
+
+    wn = np.linspace(400.0, 4000.0, 10)
+    spectrum = Spectrum(wavenumbers=wn, intensities=np.linspace(0.0, 1.0, 10), title="T")
+    project = Project(name="Mol", spectrum=spectrum, smiles="CCO")
+    project.peaks.append(
+        Peak(position=1000.0, intensity=0.5, smiles="c1ccccc1")
+    )  # peak smiles differ
+
+    project_path = tmp_path / "project_smiles.irproj"
+    ProjectSerializer().save(project, project_path)
+
+    with patch(
+        "ui.main_window.QFileDialog.getOpenFileName",
+        return_value=(str(project_path), "IR Project Files (*.irproj)"),
+    ):
+        window._on_open_project()
+
+    assert window._project is not None
+    assert window._project.smiles == "CCO"
+    # molecule_widget should show project-level SMILES, not the peak's SMILES
+    assert window._molecule_widget._current_smiles == "CCO"
+
+
+def test_on_structure_edited_updates_project_smiles_without_peak_selected(qtbot):
+    """_on_structure_edited pushes SetProjectSMILESCommand and updates project.smiles."""
+    from core.project import Project
+    from core.spectrum import Spectrum
+    from ui.main_window import MainWindow
+
+    db = _make_mock_db()
+    settings = _make_mock_settings()
+    window = MainWindow(db=db, settings=settings)
+    qtbot.addWidget(window)
+
+    wn = np.linspace(400.0, 4000.0, 10)
+    spectrum = Spectrum(wavenumbers=wn, intensities=np.linspace(0.0, 1.0, 10), title="T")
+    window._project = Project(name="Test", spectrum=spectrum)
+
+    # No peak selected — should still work now
+    assert window._peak_table.selected_peak() is None
+
+    window._on_structure_edited("CCO")
+
+    assert window._project.smiles == "CCO"
+    assert window._molecule_widget._current_smiles == "CCO"
+
+    # Verify undo restores the empty SMILES
+    window._undo_stack.undo()
+    assert window._project.smiles == ""
+
+
+def test_peak_selection_does_not_change_molecule_widget(qtbot):
+    """Clicking a peak should NOT update the molecule_widget SMILES (project-level only)."""
+    from core.peak import Peak
+    from core.project import Project
+    from core.spectrum import Spectrum
+    from ui.main_window import MainWindow
+
+    db = _make_mock_db()
+    settings = _make_mock_settings()
+    window = MainWindow(db=db, settings=settings)
+    qtbot.addWidget(window)
+
+    wn = np.linspace(400.0, 4000.0, 10)
+    spectrum = Spectrum(wavenumbers=wn, intensities=np.linspace(0.0, 1.0, 10), title="T")
+    project = Project(name="Test", spectrum=spectrum, smiles="CCO")
+    peak = Peak(position=1000.0, intensity=0.5, smiles="c1ccccc1")
+    project.peaks.append(peak)
+    window._project = project
+    # Set molecule widget to the project SMILES as it would be after load
+    window._molecule_widget.set_smiles("CCO")
+
+    # Simulate peak selection from table
+    window._on_peak_selected(peak)
+
+    # molecule_widget must still show project SMILES, not peak SMILES
+    assert window._molecule_widget._current_smiles == "CCO"
+
+
+def test_load_spectrum_shows_empty_smiles_in_molecule_widget(qtbot, tmp_path):
+    """Loading a fresh .spa sets molecule_widget to empty (new project.smiles='')."""
+    import sys
+    import types
+    from unittest.mock import MagicMock
+
+    from ui.main_window import MainWindow
+
+    spectrum = _make_spectrum()
+    db = _make_mock_db()
+    settings = _make_mock_settings()
+    window = MainWindow(db=db, settings=settings)
+    qtbot.addWidget(window)
+    # Pre-set some SMILES to verify it gets cleared
+    window._molecule_widget.set_smiles("c1ccccc1")
+
+    spa_file = tmp_path / "fresh.spa"
+    spa_file.write_bytes(b"\x00" * 16)
+
+    fake_fr_mod = types.ModuleType("file_io.format_registry")
+    mock_registry_cls = MagicMock()
+    mock_registry_cls.return_value.read.return_value = spectrum
+    fake_fr_mod.FormatRegistry = mock_registry_cls
+
+    original = sys.modules.get("file_io.format_registry")
+    sys.modules["file_io.format_registry"] = fake_fr_mod
+    try:
+        window._load_spectrum(str(spa_file))
+    finally:
+        if original is None:
+            sys.modules.pop("file_io.format_registry", None)
+        else:
+            sys.modules["file_io.format_registry"] = original
+
+    assert window._project is not None
+    assert window._project.smiles == ""
+    assert window._molecule_widget._current_smiles == ""

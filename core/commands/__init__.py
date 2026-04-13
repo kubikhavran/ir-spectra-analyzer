@@ -7,6 +7,7 @@ from core.commands.peak_commands import (
     CorrectBaselineCommand,
     DeletePeakCommand,
 )
+from core.commands.set_project_smiles_command import SetProjectSMILESCommand
 
 __all__ = [
     "AddPeakCommand",
@@ -14,4 +15,5 @@ __all__ = [
     "AssignPresetCommand",
     "CorrectBaselineCommand",
     "AssignSMILESCommand",
+    "SetProjectSMILESCommand",
 ]
