@@ -37,7 +37,11 @@ def prepare_for_matching(
     signal = resample(wavenumbers, intensities, target_axis).astype(np.float64, copy=False)
     signal = np.nan_to_num(signal, nan=0.0, posinf=0.0, neginf=0.0)
 
-    if _is_transmittance_like(y_unit):
+    sig_min = float(np.nanmin(signal))
+    sig_max = float(np.nanmax(signal))
+    _is_corrected_t = sig_min < -5.0 and sig_max <= 5.0  # corrected %T has negative dips
+
+    if _is_transmittance_like(y_unit) or _is_corrected_t:
         signal = float(np.nanmax(signal)) - signal
     else:
         signal = signal - float(np.nanmin(signal))

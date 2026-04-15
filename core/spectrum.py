@@ -103,7 +103,10 @@ class Spectrum:
         if self.y_unit in dip_units:
             return True
         if self.y_unit == SpectralUnit.BASELINE_CORRECTED:
-            return False
+            y_min_v = float(np.min(self.intensities))
+            y_max_v = float(np.max(self.intensities))
+            # Corrected %T spectra: baseline near 0, absorption bands as negative dips
+            return y_min_v < -5.0 and y_max_v <= 5.0
 
         y_min = float(np.min(self.intensities))
         y_max = float(np.max(self.intensities))

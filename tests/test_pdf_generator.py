@@ -184,9 +184,9 @@ def test_pdf_with_project_smiles_calls_structure_section(tmp_path, monkeypatch) 
     called_with: list = []
     original = PDFGenerator._append_structure_section
 
-    def _spy(self, story, project_smiles, section_style) -> None:
-        called_with.append(project_smiles)
-        return original(self, story, project_smiles, section_style)
+    def _spy(self, story, proj, section_style) -> None:
+        called_with.append(proj.smiles)
+        return original(self, story, proj, section_style)
 
     monkeypatch.setattr(PDFGenerator, "_append_structure_section", _spy)
 

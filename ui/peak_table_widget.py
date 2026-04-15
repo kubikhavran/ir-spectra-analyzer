@@ -54,10 +54,10 @@ class PeakTableWidget(QWidget):
         self._peaks = peaks
         self._table.setRowCount(len(peaks))
         for row, peak in enumerate(peaks):
-            self._table.setItem(row, 0, QTableWidgetItem(f"{peak.position:.2f}"))
-            self._table.setItem(row, 1, QTableWidgetItem(f"{peak.intensity:.4f}"))
+            self._table.setItem(row, 0, QTableWidgetItem(str(int(round(peak.position)))))
+            self._table.setItem(row, 1, QTableWidgetItem(str(int(round(peak.intensity)))))
             self._table.setItem(row, 2, QTableWidgetItem(peak.label))
-            assignment = peak.label if peak.vibration_id is not None else ""
+            assignment = peak.display_label if peak.vibration_labels else ""
             self._table.setItem(row, 3, QTableWidgetItem(assignment))
 
     def selected_peak(self) -> Peak | None:

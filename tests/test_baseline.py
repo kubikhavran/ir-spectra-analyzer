@@ -86,8 +86,8 @@ def test_rubber_band_upper_flat_spectrum_is_zero():
     assert np.allclose(corrected, 0.0, atol=1e-8)
 
 
-def test_rubber_band_upper_dip_becomes_positive():
-    """%T dip (Gaussian absorption band) is positive after upper-hull correction."""
+def test_rubber_band_upper_dip_becomes_negative():
+    """%T dip (Gaussian absorption band) is negative after upper-hull correction."""
     wn = np.linspace(400.0, 4000.0, 3601)
     # Flat 100 %T baseline with a Gaussian absorption dip at 1700 cm-1 going to 60 %T.
     dip = 40.0 * np.exp(-((wn - 1700.0) ** 2) / (2 * 30.0**2))
@@ -98,10 +98,10 @@ def test_rubber_band_upper_dip_becomes_positive():
     # Baseline regions are near zero.
     assert abs(corrected[0]) < 1.0
     assert abs(corrected[-1]) < 1.0
-    # Absorption band appears as a positive peak.
-    assert corrected.max() > 30.0
-    # The peak maximum is near the dip position.
-    peak_wn = wn[np.argmax(corrected)]
+    # Absorption band appears as a negative trough.
+    assert corrected.min() < -30.0
+    # The trough minimum is near the dip position.
+    peak_wn = wn[np.argmin(corrected)]
     assert abs(peak_wn - 1700.0) < 20.0
 
 
@@ -124,13 +124,13 @@ def test_rubber_band_upper_baseline_not_anchored_to_dip_bottoms():
     assert abs(corrected[mid_idx]) < 5.0  # within 5 %T of zero (tolerance for interpolation)
 
 
-def test_rubber_band_upper_output_all_nonnegative():
-    """upper=True correction should produce non-negative values for clean %T data."""
+def test_rubber_band_upper_output_all_nonpositive():
+    """upper=True correction should produce non-positive values for clean %T data."""
     wn = np.linspace(400.0, 4000.0, 1001)
     dip = 30.0 * np.exp(-((wn - 2000.0) ** 2) / (2 * 50.0**2))
     transmittance = 100.0 - dip
     corrected = rubber_band_baseline(wn, transmittance, upper=True)
-    assert np.all(corrected >= -1e-8)  # allow tiny floating-point error
+    assert np.all(corrected <= 1e-8)  # allow tiny floating-point error
 
 
 def test_rubber_band_upper_vs_lower_direction():
@@ -147,8 +147,8 @@ def test_rubber_band_upper_vs_lower_direction():
     # For a %T dip: upper hull correction.
     transmittance = 100.0 - 50.0 * np.exp(-((wn - 2000.0) ** 2) / (2 * 50.0**2))
     corrected_t = rubber_band_baseline(wn, transmittance, upper=True)
-    # Dip converted to positive peak.
-    assert corrected_t.max() > 40.0
+    # Dip becomes a negative trough.
+    assert corrected_t.min() < -40.0
 
 
 # ---------------------------------------------------------------------------
@@ -185,8 +185,8 @@ def test_on_correct_baseline_uses_upper_hull_for_transmittance(qtbot):
 
     assert win._project.corrected_spectrum is not None
     corrected = win._project.corrected_spectrum.intensities
-    # Dip becomes a positive peak.
-    assert corrected.max() > 30.0
+    # Dip becomes a negative trough.
+    assert corrected.min() < -30.0
     # Endpoints near zero (baseline regions).
     assert abs(corrected[0]) < 5.0
     assert abs(corrected[-1]) < 5.0

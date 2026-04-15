@@ -68,11 +68,11 @@ def test_assign_preset_command_redo_undo():
     )
     stack = QUndoStack()
     stack.push(AssignPresetCommand(peak, preset))
-    assert peak.label == "C-H stretch"
-    assert peak.vibration_id == 42
+    assert peak.display_label == "C-H stretch"
+    assert 42 in peak.vibration_ids
     stack.undo()
-    assert peak.label == "2900.0"
-    assert peak.vibration_id is None
+    assert peak.display_label == "2900"
+    assert 42 not in peak.vibration_ids
 
 
 def test_detect_peaks_macro_is_single_undo():

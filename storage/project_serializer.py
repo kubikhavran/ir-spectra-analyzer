@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import base64
 import json
 from datetime import datetime
 from pathlib import Path
@@ -59,6 +60,9 @@ class ProjectSerializer:
         return {
             "name": project.name,
             "smiles": project.smiles,
+            "structure_image": base64.b64encode(project.structure_image).decode()
+            if project.structure_image
+            else "",
             "created_at": self._datetime_to_iso(project.created_at),
             "updated_at": self._datetime_to_iso(project.updated_at),
             "db_id": project.db_id,
@@ -87,6 +91,8 @@ class ProjectSerializer:
             db_id=data.get("db_id"),
         )
         project.corrected_spectrum = corrected_spectrum
+        si_raw = data.get("structure_image", "")
+        project.structure_image = base64.b64decode(si_raw) if si_raw else b""
         return project
 
     @staticmethod
@@ -138,6 +144,8 @@ class ProjectSerializer:
             "intensity": peak.intensity,
             "label": peak.label,
             "vibration_id": peak.vibration_id,
+            "vibration_ids": peak.vibration_ids,
+            "vibration_labels": peak.vibration_labels,
             "label_offset_x": peak.label_offset_x,
             "label_offset_y": peak.label_offset_y,
             "manual_placement": peak.manual_placement,
@@ -148,11 +156,20 @@ class ProjectSerializer:
 
     @staticmethod
     def _peak_from_dict(data: dict[str, Any]) -> Peak:
+        # New format
+        vibration_ids = data.get("vibration_ids", [])
+        vibration_labels = data.get("vibration_labels", [])
+        # Backward-compat: old single-vibration projects
+        if not vibration_ids and data.get("vibration_id") is not None:
+            vibration_ids = [data["vibration_id"]]
+            # vibration_labels can't be recovered without DB lookup; leave empty
         return Peak(
             position=float(data.get("position", 0.0)),
             intensity=float(data.get("intensity", 0.0)),
             label=data.get("label", ""),
             vibration_id=data.get("vibration_id"),
+            vibration_ids=vibration_ids,
+            vibration_labels=vibration_labels,
             label_offset_x=float(data.get("label_offset_x", 0.0)),
             label_offset_y=float(data.get("label_offset_y", 0.0)),
             manual_placement=bool(data.get("manual_placement", False)),

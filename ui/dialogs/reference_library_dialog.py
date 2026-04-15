@@ -2,16 +2,22 @@
 
 from __future__ import annotations
 
+from datetime import datetime, timedelta
 from pathlib import Path
 
-from PySide6.QtCore import Qt
+from PySide6.QtCore import QDate, Qt
 from PySide6.QtWidgets import (
     QCheckBox,
+    QComboBox,
+    QDateEdit,
     QDialog,
     QFileDialog,
+    QFormLayout,
+    QGroupBox,
     QHBoxLayout,
     QInputDialog,
     QLabel,
+    QLineEdit,
     QMessageBox,
     QPushButton,
     QSplitter,
@@ -60,7 +66,8 @@ class ReferenceLibraryDialog(QDialog):
         self._import_service = import_service or ReferenceImportService(db)
         self._current_spectrum = current_spectrum
         self._project_library_folder = self._library_service.discover_project_library_folder()
-        self._refs: list[dict] = []
+        self._refs: list[dict] = []  # currently displayed (after filters)
+        self._refs_all: list[dict] = []  # full unfiltered list from DB
         self._similarity_by_ref_id: dict[int, float] = {}
         self._pg = None
         self._preview_plot = None
@@ -68,7 +75,7 @@ class ReferenceLibraryDialog(QDialog):
         self._current_spectrum_curve = None
         self._preview_placeholder = None
         self.setWindowTitle("Reference Library")
-        self.setMinimumSize(700, 500)
+        self.setMinimumSize(820, 520)
         self._setup_ui()
         self._load_data()
 
@@ -78,10 +85,12 @@ class ReferenceLibraryDialog(QDialog):
 
         splitter = QSplitter(Qt.Orientation.Horizontal, self)
 
-        # --- Left: table ---
+        # --- Left: filters + table ---
         left_widget = QWidget()
         left_layout = QVBoxLayout(left_widget)
         left_layout.setContentsMargins(0, 0, 0, 0)
+
+        left_layout.addWidget(self._build_filter_panel())
 
         self._table = QTableWidget(0, 7)
         self._table.setHorizontalHeaderLabels(
@@ -178,17 +187,153 @@ class ReferenceLibraryDialog(QDialog):
 
         root_layout.addLayout(btn_layout)
 
-    def _load_data(self) -> None:
-        """Fetch all reference spectra from DB and populate the table."""
-        self._project_library_folder = self._library_service.discover_project_library_folder()
-        self._refs = self._library_service.get_library_references()
-        self._refs.sort(key=self._sort_key_for_ref)
+    # ------------------------------------------------------------------
+    # Filter panel
+    # ------------------------------------------------------------------
 
-        # Disable sorting while inserting to avoid index confusion
+    def _build_filter_panel(self) -> QGroupBox:
+        """Build the collapsible filter bar above the table."""
+        box = QGroupBox("Filters")
+        box.setStyleSheet("QGroupBox { font-size: 9pt; }")
+        form = QFormLayout(box)
+        form.setContentsMargins(6, 4, 6, 4)
+        form.setSpacing(4)
+
+        # Name search
+        self._filter_name = QLineEdit()
+        self._filter_name.setPlaceholderText("e.g. PAR or KLH")
+        self._filter_name.setClearButtonEnabled(True)
+        self._filter_name.textChanged.connect(self._on_filter_changed)
+        form.addRow("Name contains:", self._filter_name)
+
+        # Y-unit filter
+        self._filter_yunit = QComboBox()
+        self._filter_yunit.addItems(["All", "Absorbance", "Transmittance", "%Transmittance"])
+        self._filter_yunit.currentIndexChanged.connect(self._on_filter_changed)
+        form.addRow("Y unit:", self._filter_yunit)
+
+        # Date preset
+        date_row = QHBoxLayout()
+        self._filter_date_preset = QComboBox()
+        self._filter_date_preset.addItems(
+            [
+                "All time",
+                "Last 7 days",
+                "Last 30 days",
+                "Last 3 months",
+                "Last 6 months",
+                "Last year",
+                "Custom range…",
+            ]
+        )
+        self._filter_date_preset.currentIndexChanged.connect(self._on_date_preset_changed)
+        date_row.addWidget(self._filter_date_preset)
+        date_row.addStretch()
+        form.addRow("Imported:", date_row)
+
+        # Custom date range (hidden by default)
+        self._custom_date_widget = QWidget()
+        custom_row = QHBoxLayout(self._custom_date_widget)
+        custom_row.setContentsMargins(0, 0, 0, 0)
+        custom_row.setSpacing(4)
+        custom_row.addWidget(QLabel("From:"))
+        self._filter_date_from = QDateEdit()
+        self._filter_date_from.setCalendarPopup(True)
+        self._filter_date_from.setDate(QDate.currentDate().addMonths(-3))
+        self._filter_date_from.dateChanged.connect(self._on_filter_changed)
+        custom_row.addWidget(self._filter_date_from)
+        custom_row.addWidget(QLabel("To:"))
+        self._filter_date_to = QDateEdit()
+        self._filter_date_to.setCalendarPopup(True)
+        self._filter_date_to.setDate(QDate.currentDate())
+        self._filter_date_to.dateChanged.connect(self._on_filter_changed)
+        custom_row.addWidget(self._filter_date_to)
+        custom_row.addStretch()
+        self._custom_date_widget.setVisible(False)
+        form.addRow("", self._custom_date_widget)
+
+        return box
+
+    def _on_date_preset_changed(self) -> None:
+        """Show/hide custom date widgets and re-apply filters."""
+        is_custom = self._filter_date_preset.currentText() == "Custom range…"
+        self._custom_date_widget.setVisible(is_custom)
+        self._on_filter_changed()
+
+    def _on_filter_changed(self) -> None:
+        """Re-apply active filters and refresh the table."""
+        self._populate_table(self._apply_filters(self._refs_all))
+
+    def _apply_filters(self, refs: list[dict]) -> list[dict]:
+        """Return the subset of refs that pass all active filters."""
+        name_query = self._filter_name.text().strip().lower()
+        yunit_filter = self._filter_yunit.currentText()
+        date_preset = self._filter_date_preset.currentText()
+
+        # Compute date boundary
+        now = datetime.now()
+        date_from: datetime | None = None
+        date_to: datetime | None = None
+        if date_preset == "Last 7 days":
+            date_from = now - timedelta(days=7)
+        elif date_preset == "Last 30 days":
+            date_from = now - timedelta(days=30)
+        elif date_preset == "Last 3 months":
+            date_from = now - timedelta(days=91)
+        elif date_preset == "Last 6 months":
+            date_from = now - timedelta(days=182)
+        elif date_preset == "Last year":
+            date_from = now - timedelta(days=365)
+        elif date_preset == "Custom range…":
+            qfrom = self._filter_date_from.date()
+            qto = self._filter_date_to.date()
+            date_from = datetime(qfrom.year(), qfrom.month(), qfrom.day())
+            date_to = datetime(qto.year(), qto.month(), qto.day(), 23, 59, 59)
+
+        result = []
+        for ref in refs:
+            # Name filter
+            if name_query and name_query not in str(ref.get("name", "")).lower():
+                continue
+
+            # Y-unit filter
+            if yunit_filter != "All":
+                ref_unit = str(ref.get("y_unit", "")).strip()
+                if ref_unit.lower() != yunit_filter.lower():
+                    continue
+
+            # Date filter
+            if date_from is not None or date_to is not None:
+                created_str = str(ref.get("created_at", ""))
+                try:
+                    # SQLite format: "2024-01-15 12:34:56" or "2024-01-15T12:34:56"
+                    created_str = created_str.replace("T", " ")
+                    created = datetime.strptime(created_str[:19], "%Y-%m-%d %H:%M:%S")
+                except (ValueError, IndexError):
+                    created = None
+                if created is not None:
+                    if date_from is not None and created < date_from:
+                        continue
+                    if date_to is not None and created > date_to:
+                        continue
+
+            result.append(ref)
+
+        return result
+
+    # ------------------------------------------------------------------
+    # Table population (split from _load_data for filter reuse)
+    # ------------------------------------------------------------------
+
+    def _populate_table(self, refs: list[dict]) -> None:
+        """Fill the table widget from a (pre-filtered) list of reference dicts."""
+        sorted_refs = sorted(refs, key=self._sort_key_for_ref)
+        self._refs = sorted_refs
+
         self._table.setSortingEnabled(False)
         self._table.setRowCount(0)
 
-        for ref in self._refs:
+        for ref in sorted_refs:
             row = self._table.rowCount()
             self._table.insertRow(row)
 
@@ -211,6 +356,15 @@ class ReferenceLibraryDialog(QDialog):
         self._table.clearSelection()
         self._preview_label.setText("Select a row to preview")
         self._show_empty_preview_plot()
+        self._update_button_state()
+
+    def _load_data(self) -> None:
+        """Fetch all reference spectra from DB and populate the table."""
+        self._project_library_folder = self._library_service.discover_project_library_folder()
+        self._refs_all = self._library_service.get_library_references()
+
+        self._populate_table(self._apply_filters(self._refs_all))
+
         self._library_label.setText(self._project_library_status_text())
         if self._similarity_by_ref_id:
             self._search_label.setText(
@@ -218,7 +372,6 @@ class ReferenceLibraryDialog(QDialog):
             )
         else:
             self._search_label.setText(self._search_status_text())
-        self._update_button_state()
 
     def _selected_ref_id(self) -> int | None:
         """Return the DB id of the currently selected row, or None."""
@@ -596,9 +749,7 @@ class ReferenceLibraryDialog(QDialog):
             cur_y = np.asarray(self._current_spectrum.intensities, dtype=float)
             cur_max = np.max(np.abs(cur_y))
             norm_cur_y = cur_y / cur_max if cur_max > 0 else cur_y
-            self._current_spectrum_curve.setData(
-                x=self._current_spectrum.wavenumbers, y=norm_cur_y
-            )
+            self._current_spectrum_curve.setData(x=self._current_spectrum.wavenumbers, y=norm_cur_y)
             self._current_spectrum_curve.setVisible(True)
         else:
             self._preview_curve.setData(x=ref["wavenumbers"], y=ref["intensities"])

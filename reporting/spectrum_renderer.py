@@ -44,6 +44,7 @@ class SpectrumRenderer:
         peaks: list[Peak],
         dpi: int = 150,
         y_unit: SpectralUnit = SpectralUnit.ABSORBANCE,
+        is_dip_spectrum: bool = False,
     ) -> bytes:
         """Render spectrum with peak annotations to PNG bytes in memory.
 
@@ -53,6 +54,8 @@ class SpectrumRenderer:
             peaks: List of peaks to annotate.
             dpi: Output resolution.
             y_unit: Spectral intensity unit — controls Y-axis label and range.
+            is_dip_spectrum: When True, peaks are downward dips (%T style) and
+                labels are drawn below the apex, matching the live viewer.
 
         Returns:
             PNG image as bytes.
@@ -102,8 +105,13 @@ class SpectrumRenderer:
             ax.set_ylim(0.0, 110.0)
             ax.yaxis.set_major_locator(ticker.MultipleLocator(20))
             ax.yaxis.set_minor_locator(ticker.MultipleLocator(10))
+        elif is_dip_spectrum:
+            # Corrected %T: near-zero top, negative dips at bottom
+            y_data_min = float(np.min(intensities))
+            ax.set_ylim(bottom=y_data_min * 1.10, top=5.0)
+            ax.yaxis.set_minor_locator(ticker.AutoMinorLocator(2))
         else:
-            # Absorbance / Reflectance / Single Beam — start at 0, auto top
+            # Absorbance / Reflectance / Single Beam / non-dip BASELINE_CORRECTED
             y_data_max = float(np.max(intensities))
             ax.set_ylim(bottom=0.0, top=y_data_max * 1.10)
             ax.yaxis.set_minor_locator(ticker.AutoMinorLocator(2))
@@ -119,28 +127,38 @@ class SpectrumRenderer:
         ax.grid(False)
 
         # --- Peak annotations ---
-        # Style: short vertical line segment from peak apex upward + rotated text
+        # Style: short vertical line from apex + rotated wavenumber text.
+        # For dip-type spectra (%T) the line goes DOWN from the apex and the
+        # label sits below, matching the live PyQtGraph viewer behaviour.
         if peaks:
             y_lo, y_hi = ax.get_ylim()
-            label_gap = (y_hi - y_lo) * 0.015  # gap between line end and text base
-            tick_height = (y_hi - y_lo) * 0.055  # height of the short tick line
+            y_span = y_hi - y_lo
+            label_gap = y_span * 0.015
+            tick_height = y_span * 0.055
 
             for peak in peaks:
                 apex_y = peak.intensity
-                line_top = min(apex_y + tick_height, y_hi * 0.97)
+                if is_dip_spectrum:
+                    line_end = max(apex_y - tick_height, y_lo + abs(y_lo) * 0.03)
+                    text_y = line_end - label_gap
+                    va = "top"
+                else:
+                    line_end = min(apex_y + tick_height, y_hi * 0.97)
+                    text_y = line_end + label_gap
+                    va = "bottom"
                 ax.plot(
                     [peak.position, peak.position],
-                    [apex_y, line_top],
+                    [apex_y, line_end],
                     color="black",
                     linewidth=0.7,
                     solid_capstyle="butt",
                 )
                 ax.text(
                     peak.position,
-                    line_top + label_gap,
-                    peak.display_label,
+                    text_y,
+                    str(int(round(peak.position))),
                     rotation=90,
-                    va="bottom",
+                    va=va,
                     ha="center",
                     fontsize=7,
                     fontfamily="sans-serif",
@@ -166,6 +184,7 @@ class SpectrumRenderer:
         output_path: Path,
         dpi: int = 300,
         y_unit: SpectralUnit = SpectralUnit.ABSORBANCE,
+        is_dip_spectrum: bool = False,
     ) -> None:
         """Render spectrum with peak annotations to PNG file.
 
@@ -176,6 +195,9 @@ class SpectrumRenderer:
             output_path: Destination PNG file.
             dpi: Output resolution.
             y_unit: Spectral intensity unit for Y-axis label.
+            is_dip_spectrum: When True, peak labels are placed below the apex.
         """
-        png_bytes = self.render_to_bytes(wavenumbers, intensities, peaks, dpi=dpi, y_unit=y_unit)
+        png_bytes = self.render_to_bytes(
+            wavenumbers, intensities, peaks, dpi=dpi, y_unit=y_unit, is_dip_spectrum=is_dip_spectrum
+        )
         output_path.write_bytes(png_bytes)

@@ -34,6 +34,7 @@ class VibrationPreset:
     description: str = ""
     color: str = "#4A90D9"
     db_id: int | None = None
+    is_builtin: bool = True
 
     def covers_wavenumber(self, wavenumber: float) -> bool:
         """Return True if wavenumber falls within the typical range."""

@@ -116,6 +116,9 @@ class MainWindow(QMainWindow):
         batch_project_pdf_action = database_menu.addAction("Batch Export Project PDFs...")
         batch_project_pdf_action.triggered.connect(self._on_batch_export_project_pdfs)
 
+        # View menu — populated after docks are created
+        self._view_menu = menu_bar.addMenu("&View")
+
         help_menu = menu_bar.addMenu("&Help")
         about_action = help_menu.addAction("&About")
         about_action.triggered.connect(self._on_about)
@@ -152,53 +155,63 @@ class MainWindow(QMainWindow):
         )
 
         # Left dock: Vibration Presets
-        self._vibration_panel = VibrationPanel(self)
-        left_dock = QDockWidget("Vibration Presets", self)
-        left_dock.setAllowedAreas(Qt.DockWidgetArea.AllDockWidgetAreas)
-        left_dock.setFeatures(dock_features)
-        left_dock.setWidget(self._vibration_panel)
-        left_dock.setMinimumWidth(280)
-        self.addDockWidget(Qt.DockWidgetArea.LeftDockWidgetArea, left_dock)
+        self._vibration_panel = VibrationPanel(db=self._db, parent=self)
+        self._dock_vibration = QDockWidget("Vibration Presets", self)
+        self._dock_vibration.setAllowedAreas(Qt.DockWidgetArea.AllDockWidgetAreas)
+        self._dock_vibration.setFeatures(dock_features)
+        self._dock_vibration.setWidget(self._vibration_panel)
+        self._dock_vibration.setMinimumWidth(280)
+        self.addDockWidget(Qt.DockWidgetArea.LeftDockWidgetArea, self._dock_vibration)
 
         # Bottom dock: Peaks
         self._peak_table = PeakTableWidget(self)
-        bottom_dock = QDockWidget("Peaks", self)
-        bottom_dock.setAllowedAreas(Qt.DockWidgetArea.AllDockWidgetAreas)
-        bottom_dock.setFeatures(dock_features)
-        bottom_dock.setWidget(self._peak_table)
-        bottom_dock.setMinimumHeight(200)
-        self.addDockWidget(Qt.DockWidgetArea.BottomDockWidgetArea, bottom_dock)
+        self._dock_peaks = QDockWidget("Peaks", self)
+        self._dock_peaks.setAllowedAreas(Qt.DockWidgetArea.AllDockWidgetAreas)
+        self._dock_peaks.setFeatures(dock_features)
+        self._dock_peaks.setWidget(self._peak_table)
+        self._dock_peaks.setMinimumHeight(200)
+        self.addDockWidget(Qt.DockWidgetArea.BottomDockWidgetArea, self._dock_peaks)
 
         # Right dock: Metadata
         self._metadata_panel = MetadataPanel(self)
-        right_dock = QDockWidget("Metadata", self)
-        right_dock.setAllowedAreas(Qt.DockWidgetArea.AllDockWidgetAreas)
-        right_dock.setFeatures(dock_features)
-        right_dock.setWidget(self._metadata_panel)
-        right_dock.setMinimumWidth(260)
-        self.addDockWidget(Qt.DockWidgetArea.RightDockWidgetArea, right_dock)
+        self._dock_metadata = QDockWidget("Metadata", self)
+        self._dock_metadata.setAllowedAreas(Qt.DockWidgetArea.AllDockWidgetAreas)
+        self._dock_metadata.setFeatures(dock_features)
+        self._dock_metadata.setWidget(self._metadata_panel)
+        self._dock_metadata.setMinimumWidth(260)
+        self.addDockWidget(Qt.DockWidgetArea.RightDockWidgetArea, self._dock_metadata)
 
         # Bottom-right dock: Match Results
         from ui.match_results_panel import MatchResultsPanel  # noqa: PLC0415
 
         self._match_results_panel = MatchResultsPanel(self)
-        match_dock = QDockWidget("Match Results", self)
-        match_dock.setAllowedAreas(Qt.DockWidgetArea.AllDockWidgetAreas)
-        match_dock.setFeatures(dock_features)
-        match_dock.setWidget(self._match_results_panel)
-        match_dock.setMinimumHeight(150)
-        self.addDockWidget(Qt.DockWidgetArea.RightDockWidgetArea, match_dock)
-        self.tabifyDockWidget(right_dock, match_dock)  # tab with Metadata panel
+        self._dock_match = QDockWidget("Match Results", self)
+        self._dock_match.setAllowedAreas(Qt.DockWidgetArea.AllDockWidgetAreas)
+        self._dock_match.setFeatures(dock_features)
+        self._dock_match.setWidget(self._match_results_panel)
+        self._dock_match.setMinimumHeight(150)
+        self.addDockWidget(Qt.DockWidgetArea.RightDockWidgetArea, self._dock_match)
+        self.tabifyDockWidget(self._dock_metadata, self._dock_match)
 
         # Right dock: Molecule Structure
         self._molecule_widget = MoleculeWidget(self)
-        structure_dock = QDockWidget("Structure", self)
-        structure_dock.setAllowedAreas(Qt.DockWidgetArea.AllDockWidgetAreas)
-        structure_dock.setFeatures(dock_features)
-        structure_dock.setWidget(self._molecule_widget)
-        structure_dock.setMinimumWidth(220)
-        self.addDockWidget(Qt.DockWidgetArea.RightDockWidgetArea, structure_dock)
-        self.tabifyDockWidget(right_dock, structure_dock)  # tab with Metadata panel
+        self._dock_structure = QDockWidget("Structure", self)
+        self._dock_structure.setAllowedAreas(Qt.DockWidgetArea.AllDockWidgetAreas)
+        self._dock_structure.setFeatures(dock_features)
+        self._dock_structure.setWidget(self._molecule_widget)
+        self._dock_structure.setMinimumWidth(220)
+        self.addDockWidget(Qt.DockWidgetArea.RightDockWidgetArea, self._dock_structure)
+        self.tabifyDockWidget(self._dock_metadata, self._dock_structure)
+
+        # Populate View menu with toggle actions for every dock
+        for dock in (
+            self._dock_vibration,
+            self._dock_peaks,
+            self._dock_metadata,
+            self._dock_match,
+            self._dock_structure,
+        ):
+            self._view_menu.addAction(dock.toggleViewAction())
 
     def _setup_statusbar(self) -> None:
         """Set up status bar with cursor position label."""
@@ -227,12 +240,17 @@ class MainWindow(QMainWindow):
         """Wire up inter-component signals."""
         self._spectrum_widget.peak_clicked.connect(self._on_peak_clicked)
         self._spectrum_widget.peak_selected_in_viewer.connect(self._on_peak_selected_in_viewer)
+        self._spectrum_widget.peak_delete_requested.connect(self._on_delete_peak_object)
         self._peak_table.peak_selected.connect(self._on_peak_selected)
         self._vibration_panel.preset_selected.connect(self._on_preset_selected)
         self._vibration_panel.preset_clicked_for_assign.connect(self._on_preset_clicked_for_assign)
+        self._vibration_panel.preset_added.connect(self._on_vibration_preset_changed)
+        self._vibration_panel.preset_deleted.connect(self._on_vibration_preset_changed)
+        self._vibration_panel.preset_remove_requested.connect(self._on_remove_vibration)
         self._match_results_panel.candidate_selected.connect(self._on_match_candidate_selected)
         self._match_results_panel.import_reference.connect(self._on_import_reference)
         self._molecule_widget.smiles_changed.connect(self._on_structure_edited)
+        self._molecule_widget.structure_image_changed.connect(self._on_structure_image_changed)
 
     # --- Event handlers ---
 
@@ -317,7 +335,7 @@ class MainWindow(QMainWindow):
                 self._metadata_panel.set_metadata(metadata)
 
             # Update molecule structure panel with the saved project-level SMILES
-            self._molecule_widget.set_smiles(project.smiles)
+            self._molecule_widget.set_structure(project.smiles, project.structure_image)
 
             self.statusBar().showMessage(f"Project loaded: {Path(path).name}")
         except Exception as e:  # noqa: BLE001
@@ -376,13 +394,14 @@ class MainWindow(QMainWindow):
                         description=row.get("description", ""),
                         color=row.get("color", "#4A90D9"),
                         db_id=row.get("id"),
+                        is_builtin=bool(row.get("is_builtin", 1)),
                     )
                     for row in raw_presets
                 ]
                 self._vibration_panel.set_presets(presets)
 
             # Update molecule structure panel (new project starts with empty SMILES)
-            self._molecule_widget.set_smiles(self._project.smiles)
+            self._molecule_widget.set_structure(self._project.smiles, self._project.structure_image)
 
             base = f"Loaded: {Path(path).name} ({spectrum.n_points} points)"
             if self._project.peaks:
@@ -585,6 +604,23 @@ class MainWindow(QMainWindow):
             f"Peak: {peak.position:.2f} cm\u207b\u00b9  |  {peak.intensity:.4f}"
         )
         self._vibration_panel.highlight_for_peak(peak.position)
+        self._vibration_panel.set_active_peak(peak)
+
+    def _on_remove_vibration(self, preset) -> None:
+        """Remove a vibration assignment from the currently selected peak."""
+        if self._project is None:
+            return
+        peak = self._peak_table.selected_peak()
+        if peak is None:
+            return
+        from core.commands import RemovePresetCommand  # noqa: PLC0415
+
+        self._undo_stack.push(RemovePresetCommand(peak, preset))
+        self._peak_table.set_peaks(self._project.peaks)
+        self._spectrum_widget.set_peaks(self._project.peaks)
+        self.statusBar().showMessage(
+            f'Removed "{preset.name}" from peak at {peak.position:.1f} cm\u207b\u00b9'
+        )
 
     def _on_preset_clicked_for_assign(self, preset) -> None:
         """Store preset as pending — next peak click in viewer will assign it."""
@@ -614,6 +650,7 @@ class MainWindow(QMainWindow):
         # Always select in table and highlight matching vibrations
         self._peak_table.select_peak(peak)
         self._vibration_panel.highlight_for_peak(peak.position)
+        self._vibration_panel.set_active_peak(peak)
         self.statusBar().showMessage(status_msg)
 
     def _on_clear_peaks(self) -> None:
@@ -647,6 +684,26 @@ class MainWindow(QMainWindow):
             f'Assigned "{preset.name}" to peak at {peak.position:.1f} cm\u207b\u00b9'
         )
 
+    def _on_vibration_preset_changed(self) -> None:
+        """Reload vibration presets after a custom preset is added or deleted."""
+        from core.vibration_presets import VibrationPreset  # noqa: PLC0415
+
+        raw_presets = self._db.get_vibration_presets()
+        presets = [
+            VibrationPreset(
+                name=row["name"],
+                typical_range_min=row["typical_range_min"],
+                typical_range_max=row["typical_range_max"],
+                category=row.get("category", ""),
+                description=row.get("description", ""),
+                color=row.get("color", "#4A90D9"),
+                db_id=row.get("id"),
+                is_builtin=bool(row.get("is_builtin", 1)),
+            )
+            for row in raw_presets
+        ]
+        self._vibration_panel.set_presets(presets)
+
     def _on_structure_edited(self, smiles: str) -> None:
         """Handle SMILES change emitted by MoleculeWidget after dialog acceptance."""
         if self._project is None:
@@ -654,8 +711,12 @@ class MainWindow(QMainWindow):
         from core.commands import SetProjectSMILESCommand  # noqa: PLC0415
 
         self._undo_stack.push(SetProjectSMILESCommand(self._project, smiles))
-        self._molecule_widget.set_smiles(smiles)
         self.statusBar().showMessage("Proposed structure updated")
+
+    def _on_structure_image_changed(self, png_bytes: bytes) -> None:
+        """Store the canvas PNG from the molecule editor in the project."""
+        if self._project is not None:
+            self._project.structure_image = png_bytes
 
     def _on_delete_peak(self) -> None:
         """Delete the currently selected peak."""
@@ -670,6 +731,16 @@ class MainWindow(QMainWindow):
         self._peak_table.set_peaks(self._project.peaks)
         self._spectrum_widget.set_peaks(self._project.peaks)
         self.statusBar().showMessage(f"Deleted peak at {peak.position:.1f} cm\u207b\u00b9")
+
+    def _on_delete_peak_object(self, peak: object) -> None:
+        """Delete a specific peak object (emitted from shift+click on label)."""
+        if self._project is None:
+            return
+        from core.commands import DeletePeakCommand  # noqa: PLC0415
+
+        self._undo_stack.push(DeletePeakCommand(self._project, peak))
+        self._peak_table.set_peaks(self._project.peaks)
+        self._spectrum_widget.set_peaks(self._project.peaks)
 
     def _on_match_spectrum(self) -> None:
         """Run spectral matching against the reference database."""

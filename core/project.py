@@ -38,6 +38,7 @@ class Project:
     corrected_spectrum: Spectrum | None = None
     peaks: list[Peak] = field(default_factory=list)
     smiles: str = ""
+    structure_image: bytes = field(default=b"")
     created_at: datetime = field(default_factory=datetime.now)
     updated_at: datetime = field(default_factory=datetime.now)
     db_id: int | None = None

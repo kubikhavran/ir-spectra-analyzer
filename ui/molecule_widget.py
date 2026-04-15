@@ -45,10 +45,12 @@ class MoleculeWidget(QWidget):
     """
 
     smiles_changed = Signal(str)
+    structure_image_changed = Signal(bytes)
 
     def __init__(self, parent=None) -> None:
         super().__init__(parent)
         self._current_smiles: str = ""
+        self._current_image_bytes: bytes = b""
 
         layout = QVBoxLayout(self)
         layout.setContentsMargins(4, 4, 4, 4)
@@ -95,6 +97,23 @@ class MoleculeWidget(QWidget):
         self._image_label.setPixmap(pixmap)
         self._image_label.setText("")
 
+    def set_structure(self, smiles: str, image_bytes: bytes = b"") -> None:
+        """Update the displayed molecule, preferring image_bytes over RDKit rendering."""
+        self._current_smiles = smiles
+        self._current_image_bytes = image_bytes
+
+        if not smiles and not image_bytes:
+            self._image_label.setPixmap(QPixmap())
+            self._image_label.setText("No structure assigned")
+            return
+
+        if image_bytes:
+            self._display_png_bytes(image_bytes)
+            return
+
+        # Fall back to RDKit rendering
+        self.set_smiles(smiles)
+
     # Expose text() for backward-compat with existing tests that call widget.text()
     def text(self) -> str:
         """Return the current text label (for compatibility with old tests)."""
@@ -109,6 +128,23 @@ class MoleculeWidget(QWidget):
     # Private helpers
     # ------------------------------------------------------------------
 
+    def _display_png_bytes(self, png_bytes: bytes) -> None:
+        """Display raw PNG bytes in the image label."""
+        if not png_bytes:
+            return
+        image = QImage.fromData(png_bytes)
+        if image.isNull():
+            return
+        pixmap = QPixmap.fromImage(image)
+        self._image_label.setPixmap(
+            pixmap.scaled(
+                self._image_label.size(),
+                Qt.AspectRatioMode.KeepAspectRatio,
+                Qt.TransformationMode.SmoothTransformation,
+            )
+        )
+        self._image_label.setText("")
+
     def _open_editor(self) -> None:
         """Open MoleculeEditorDialog and emit smiles_changed if accepted."""
         from ui.dialogs.molecule_editor_dialog import MoleculeEditorDialog  # noqa: PLC0415
@@ -116,5 +152,17 @@ class MoleculeWidget(QWidget):
         dlg = MoleculeEditorDialog(initial_smiles=self._current_smiles, parent=self)
         if dlg.exec() == MoleculeEditorDialog.DialogCode.Accepted:
             new_smiles = dlg.smiles()
-            if new_smiles != self._current_smiles:
+            new_png = dlg.png_bytes()
+
+            changed = new_smiles != self._current_smiles or new_png != self._current_image_bytes
+            if changed:
+                self._current_image_bytes = new_png
+                if new_png:
+                    self._display_png_bytes(new_png)
+                    self._current_smiles = new_smiles
+                    self._image_label.setText("")
+                else:
+                    # No canvas PNG (SMILES tab or empty draw) — try RDKit
+                    self.set_smiles(new_smiles)
                 self.smiles_changed.emit(new_smiles)
+                self.structure_image_changed.emit(new_png)

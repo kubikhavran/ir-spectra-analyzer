@@ -152,5 +152,7 @@ def rubber_band_baseline(
     baseline = _convex_hull_baseline(wn, y, upper=upper)
 
     if upper:
-        return baseline - y  # upper_hull − y  →  positive at absorption dips
+        return (
+            y - baseline
+        )  # y − upper_hull  →  negative at absorption dips, preserving visual orientation
     return y - baseline  # y − lower_hull  →  positive at absorption peaks

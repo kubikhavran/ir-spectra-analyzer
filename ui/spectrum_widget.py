@@ -18,10 +18,30 @@ from __future__ import annotations
 import numpy as np
 import pyqtgraph as pg
 from PySide6.QtCore import Qt, Signal
-from PySide6.QtWidgets import QVBoxLayout, QWidget
+from PySide6.QtWidgets import (
+    QHBoxLayout,
+    QLabel,
+    QPushButton,
+    QSlider,
+    QVBoxLayout,
+    QWidget,
+)
 
 from core.peak import Peak
 from core.spectrum import Spectrum
+
+# Default visible X range (standard IR region)
+_X_DEFAULT_MIN = 400.0
+_X_DEFAULT_MAX = 3800.0
+
+# Distinct colors for reference spectrum overlays
+_OVERLAY_COLORS = [
+    "#2980B9",  # blue
+    "#E67E22",  # orange
+    "#27AE60",  # green
+    "#8E44AD",  # purple
+    "#C0392B",  # red
+]
 
 
 class _DraggableLabel(pg.TextItem):
@@ -50,6 +70,7 @@ class _DraggableLabel(pg.TextItem):
         label_x: float,
         label_y: float,
         click_callback=None,
+        shift_click_callback=None,
         **kwargs,
     ) -> None:
         super().__init__(**kwargs)
@@ -60,6 +81,7 @@ class _DraggableLabel(pg.TextItem):
         self._data_x = label_x  # current label x in data coordinates
         self._data_y = label_y  # current label y in data coordinates
         self._click_callback = click_callback
+        self._shift_click_callback = shift_click_callback
         self._leader: pg.PlotCurveItem | None = None
 
     def set_leader(self, leader: pg.PlotCurveItem) -> None:
@@ -100,6 +122,10 @@ class _DraggableLabel(pg.TextItem):
             ev.ignore()
             return
         ev.accept()
+        if ev.modifiers() & Qt.KeyboardModifier.ShiftModifier:
+            if self._shift_click_callback is not None:
+                self._shift_click_callback(self._peak_x)
+            return
         if self._click_callback is not None:
             self._click_callback(self._peak_x)
 
@@ -127,6 +153,7 @@ class SpectrumWidget(QWidget):
     peak_clicked = Signal(float, float)  # (wavenumber, intensity)
     cursor_moved = Signal(float, float)  # (wavenumber, intensity_at_cursor)
     peak_selected_in_viewer = Signal(object)  # emits Peak instance
+    peak_delete_requested = Signal(object)  # emits Peak instance on Shift+click
 
     def __init__(self, parent=None) -> None:
         super().__init__(parent)
@@ -134,28 +161,69 @@ class SpectrumWidget(QWidget):
         self._peaks: list[Peak] = []
         self._peak_items: list = []
         self._add_peak_mode: bool = False
+        self._overlay_alpha: int = 60  # 0–100 percent opacity for reference curves
+        self._overlay_spectra_cache: list = []  # keep for redraw on slider change
         self._setup_ui()
 
     def _setup_ui(self) -> None:
         """Initialize PyQtGraph plot widget with OMNIC-like white style."""
         layout = QVBoxLayout(self)
         layout.setContentsMargins(0, 0, 0, 0)
+        layout.setSpacing(0)
 
+        # ── Overlay controls bar (hidden until an overlay is active) ────────
+        self._overlay_bar = QWidget()
+        self._overlay_bar.setStyleSheet(
+            "QWidget { background: #F0F4F8; border-bottom: 1px solid #CCC; }"
+        )
+        overlay_row = QHBoxLayout(self._overlay_bar)
+        overlay_row.setContentsMargins(8, 4, 8, 4)
+        overlay_row.setSpacing(8)
+
+        overlay_row.addWidget(QLabel("Reference overlay:"))
+
+        self._overlay_name_label = QLabel("")
+        self._overlay_name_label.setStyleSheet("color: #2980B9; font-weight: bold;")
+        overlay_row.addWidget(self._overlay_name_label)
+
+        overlay_row.addWidget(QLabel("Opacity:"))
+
+        self._opacity_slider = QSlider(Qt.Orientation.Horizontal)
+        self._opacity_slider.setRange(5, 100)
+        self._opacity_slider.setValue(self._overlay_alpha)
+        self._opacity_slider.setFixedWidth(120)
+        self._opacity_slider.setToolTip("Reference spectrum opacity")
+        self._opacity_slider.valueChanged.connect(self._on_opacity_changed)
+        overlay_row.addWidget(self._opacity_slider)
+
+        self._opacity_label = QLabel(f"{self._overlay_alpha}%")
+        self._opacity_label.setFixedWidth(36)
+        overlay_row.addWidget(self._opacity_label)
+
+        clear_overlay_btn = QPushButton("Clear")
+        clear_overlay_btn.setFixedWidth(52)
+        clear_overlay_btn.clicked.connect(lambda: self.set_overlay_spectra([]))
+        overlay_row.addWidget(clear_overlay_btn)
+
+        overlay_row.addStretch()
+        self._overlay_bar.setVisible(False)
+        layout.addWidget(self._overlay_bar)
+
+        # ── Plot widget ──────────────────────────────────────────────────────
         self._plot_widget = pg.PlotWidget()
 
-        # OMNIC-like style: white background, black axes
+        # OMNIC-like style: white background, black axes, no grid
         self._plot_widget.setBackground("w")
+        self._plot_widget.showGrid(x=False, y=False)
 
         # Axis labels with black color
         label_style = {"color": "#000000", "font-size": "10pt"}
         self._plot_widget.setLabel("bottom", "Wavenumber (cm⁻¹)", **label_style)
         self._plot_widget.setLabel("left", "Absorbance", **label_style)
 
-        # Light gray grid
-        self._plot_widget.showGrid(x=True, y=True, alpha=0.15)
-
-        # IR convention: high to low wavenumber
+        # IR convention: high to low wavenumber; lock X to standard IR range
         self._plot_widget.invertX(True)
+        self._plot_widget.setXRange(_X_DEFAULT_MIN, _X_DEFAULT_MAX, padding=0.0)
 
         # Style axis ticks/labels black
         for axis in ("bottom", "left"):
@@ -214,7 +282,11 @@ class SpectrumWidget(QWidget):
         label_style = {"color": "#000000", "font-size": "10pt"}
         self._plot_widget.setLabel("left", spectrum.display_y_unit.value, **label_style)
 
-        self._plot_widget.autoRange()
+        # Auto-scale Y only; preserve user's X range (default 400–3800 set at init)
+        y_min = float(np.min(spectrum.intensities))
+        y_max = float(np.max(spectrum.intensities))
+        padding = (y_max - y_min) * 0.05 if y_max > y_min else 0.1
+        self._plot_widget.setYRange(y_min - padding, y_max + padding, padding=0.0)
 
     def set_peaks(self, peaks: list[Peak]) -> None:
         """Update peak annotations in the viewer.
@@ -275,7 +347,8 @@ class SpectrumWidget(QWidget):
                 label_x=lx,
                 label_y=ly,
                 click_callback=self._on_label_clicked,
-                text=f"{peak.position:.1f}",
+                shift_click_callback=self._on_label_shift_clicked,
+                text=str(int(round(peak.position))),
                 color=(0, 0, 0),
                 angle=90,
                 anchor=anchor,
@@ -290,25 +363,45 @@ class SpectrumWidget(QWidget):
             label.set_leader(leader)
 
     def set_overlay_spectra(self, spectra: list) -> None:
-        """Overlay additional spectra (e.g. reference candidates) in gray.
+        """Overlay additional spectra (e.g. reference candidates) with colored lines.
 
         Args:
             spectra: List of Spectrum objects to overlay. Pass empty list to clear.
         """
+        self._overlay_spectra_cache = list(spectra)
+        self._redraw_overlays()
+
+        # Show/hide overlay bar and update name label
+        has_overlays = bool(spectra)
+        self._overlay_bar.setVisible(has_overlays)
+        if has_overlays:
+            names = [getattr(s, "title", "") or "" for s in spectra]
+            self._overlay_name_label.setText(", ".join(n for n in names if n) or "—")
+
+    def _redraw_overlays(self) -> None:
+        """Remove and redraw all overlay curves using current alpha and color settings."""
         for curve in self._overlay_curves:
             self._plot_widget.removeItem(curve)
         self._overlay_curves.clear()
 
-        for i, spectrum in enumerate(spectra):
-            # Cycle through grays: 160, 140, 120 for top candidates
-            gray_level = max(100, 180 - i * 20)
-            color = f"#{gray_level:02x}{gray_level:02x}{gray_level:02x}"
+        alpha = int(self._overlay_alpha / 100 * 255)
+        for i, spectrum in enumerate(self._overlay_spectra_cache):
+            hex_color = _OVERLAY_COLORS[i % len(_OVERLAY_COLORS)]
+            r = int(hex_color[1:3], 16)
+            g = int(hex_color[3:5], 16)
+            b = int(hex_color[5:7], 16)
             curve = self._plot_widget.plot(
                 x=spectrum.wavenumbers,
                 y=spectrum.intensities,
-                pen=pg.mkPen(color, width=1, style=Qt.PenStyle.DotLine),
+                pen=pg.mkPen((r, g, b, alpha), width=1.5),
             )
             self._overlay_curves.append(curve)
+
+    def _on_opacity_changed(self, value: int) -> None:
+        """Update overlay opacity when slider changes."""
+        self._overlay_alpha = value
+        self._opacity_label.setText(f"{value}%")
+        self._redraw_overlays()
 
     def _on_label_clicked(self, peak_x: float) -> None:
         """Called when a peak label is directly clicked; find and select the peak."""
@@ -317,6 +410,14 @@ class SpectrumWidget(QWidget):
         closest = min(self._peaks, key=lambda p: abs(p.position - peak_x))
         if abs(closest.position - peak_x) <= 1.0:  # exact match (label stores peak_x)
             self.peak_selected_in_viewer.emit(closest)
+
+    def _on_label_shift_clicked(self, peak_x: float) -> None:
+        """Called on Shift+click of a label; delete peak in any tool mode."""
+        if not self._peaks:
+            return
+        closest = min(self._peaks, key=lambda p: abs(p.position - peak_x))
+        if abs(closest.position - peak_x) <= 1.0:
+            self.peak_delete_requested.emit(closest)
 
     def _on_mouse_clicked(self, event) -> None:
         """Handle mouse click on the plot scene for peak picking or selection."""

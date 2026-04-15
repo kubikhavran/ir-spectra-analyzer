@@ -37,30 +37,56 @@ class DeletePeakCommand(QUndoCommand):
         self._peak = peak
 
     def redo(self) -> None:
-        if self._peak in self._project.peaks:
-            self._project.peaks.remove(self._peak)
+        for i, p in enumerate(self._project.peaks):
+            if p is self._peak:
+                self._project.peaks.pop(i)
+                return
 
     def undo(self) -> None:
-        self._project.add_peak(self._peak)
+        if not any(p is self._peak for p in self._project.peaks):
+            self._project.add_peak(self._peak)
 
 
 class AssignPresetCommand(QUndoCommand):
-    """Assigns (or re-assigns) a vibration preset to a peak (undoable)."""
+    """Appends a vibration preset assignment to a peak (undoable)."""
 
     def __init__(self, peak: Peak, preset: VibrationPreset) -> None:
         super().__init__(f'Assign "{preset.name}" to {peak.position:.1f} cm\u207b\u00b9')
         self._peak = peak
         self._preset = preset
-        self._old_vibration_id = peak.vibration_id
-        self._old_label = peak.label
 
     def redo(self) -> None:
-        self._peak.vibration_id = self._preset.db_id
-        self._peak.label = self._preset.name
+        # Only add if not already present (avoid duplicates)
+        if self._preset.db_id not in self._peak.vibration_ids:
+            self._peak.vibration_ids.append(self._preset.db_id)
+            self._peak.vibration_labels.append(self._preset.name)
 
     def undo(self) -> None:
-        self._peak.vibration_id = self._old_vibration_id
-        self._peak.label = self._old_label
+        if self._preset.db_id in self._peak.vibration_ids:
+            idx = self._peak.vibration_ids.index(self._preset.db_id)
+            self._peak.vibration_ids.pop(idx)
+            self._peak.vibration_labels.pop(idx)
+
+
+class RemovePresetCommand(QUndoCommand):
+    """Removes one vibration assignment from a peak (undoable)."""
+
+    def __init__(self, peak: Peak, preset: VibrationPreset) -> None:
+        super().__init__(f'Remove "{preset.name}" from {peak.position:.1f} cm\u207b\u00b9')
+        self._peak = peak
+        self._preset = preset
+        self._removed_idx: int = -1
+
+    def redo(self) -> None:
+        if self._preset.db_id in self._peak.vibration_ids:
+            self._removed_idx = self._peak.vibration_ids.index(self._preset.db_id)
+            self._peak.vibration_ids.pop(self._removed_idx)
+            self._peak.vibration_labels.pop(self._removed_idx)
+
+    def undo(self) -> None:
+        if self._removed_idx >= 0:
+            self._peak.vibration_ids.insert(self._removed_idx, self._preset.db_id)
+            self._peak.vibration_labels.insert(self._removed_idx, self._preset.name)
 
 
 class CorrectBaselineCommand(QUndoCommand):

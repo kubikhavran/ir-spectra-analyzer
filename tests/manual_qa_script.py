@@ -22,10 +22,9 @@ sys.path.insert(0, str(PROJECT_ROOT))
 
 os.environ.setdefault("QT_QPA_PLATFORM", "xcb" if sys.platform == "linux" else "")
 
-from PySide6.QtCore import QPoint, Qt, QTimer
-from PySide6.QtGui import QScreen
+from PySide6.QtCore import Qt, QTimer
 from PySide6.QtTest import QTest
-from PySide6.QtWidgets import QApplication, QDialog, QFileDialog, QMessageBox
+from PySide6.QtWidgets import QApplication
 
 # ── Bootstrap so app-level imports work ──────────────────────────────────────
 from app.runtime_imports import install_project_imports
@@ -41,10 +40,11 @@ LIBRARY = FIXTURES / "reference library_1"
 SCREENSHOT_DIR = PROJECT_ROOT / "tests" / "qa_screenshots"
 SCREENSHOT_DIR.mkdir(exist_ok=True)
 
-RESULTS: list[tuple[str, str]] = []   # (step, status)
+RESULTS: list[tuple[str, str]] = []  # (step, status)
 
 
 # ── Helpers ──────────────────────────────────────────────────────────────────
+
 
 def shot(app: QApplication, name: str, window) -> None:
     """Grab screenshot of the main window and save it."""
@@ -77,6 +77,7 @@ def check(condition: bool, step: str, detail: str = "") -> bool:
 
 
 # ── Main QA routine ──────────────────────────────────────────────────────────
+
 
 def run_qa() -> None:
     app = QApplication.instance() or QApplication(sys.argv)
@@ -148,6 +149,7 @@ def run_qa() -> None:
     spectrum = win._project.spectrum if win._project else None
     if spectrum is not None:
         import numpy as np  # noqa: PLC0415
+
         mid_wn = float((spectrum.wavenumbers[0] + spectrum.wavenumbers[-1]) / 2)
         mid_intensity = float(np.interp(mid_wn, spectrum.wavenumbers, spectrum.intensities))
         peaks_before = len(win._project.peaks)
@@ -250,7 +252,9 @@ def run_qa() -> None:
     time.sleep(0.5)
     app.processEvents()
 
-    results = win._match_results_panel._results if hasattr(win._match_results_panel, "_results") else []
+    results = (
+        win._match_results_panel._results if hasattr(win._match_results_panel, "_results") else []
+    )
     check(len(results) > 0, f"Match returned results ({len(results)} hits)")
     sb_match = win.statusBar().currentMessage()
     check(

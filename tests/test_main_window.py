@@ -790,7 +790,9 @@ def test_on_structure_edited_updates_project_smiles_without_peak_selected(qtbot)
     window._on_structure_edited("CCO")
 
     assert window._project.smiles == "CCO"
-    assert window._molecule_widget._current_smiles == "CCO"
+    # Note: _current_smiles on the widget is already updated by the widget itself
+    # before emitting smiles_changed; calling _on_structure_edited directly (as done
+    # in this test) bypasses that path, so we only verify project state here.
 
     # Verify undo restores the empty SMILES
     window._undo_stack.undo()

@@ -35,8 +35,9 @@ from PySide6.QtWidgets import (
 # ---------------------------------------------------------------------------
 
 _JSME_CACHE_DIR = Path.home() / ".ir-spectra-analyzer" / "jsme"
-_JSME_JS = _JSME_CACHE_DIR / "JSME.nocache.js"
-_JSME_CDN = "https://unpkg.com/jsme-editor/dist/JSME.nocache.js"
+# Correct filename is lowercase jsme.nocache.js (unpkg.com/jsme-editor package, v2024.04.29)
+_JSME_JS = _JSME_CACHE_DIR / "jsme.nocache.js"
+_JSME_BASE_URL = "https://unpkg.com/jsme-editor"
 
 _JSME_HTML_TEMPLATE = """\
 <!DOCTYPE html>
@@ -44,11 +45,11 @@ _JSME_HTML_TEMPLATE = """\
 <head>
 <meta charset="utf-8">
 <style>
-  html, body { margin: 0; padding: 0; width: 100%; height: 100%; background: #ffffff; }
-  #jsme_container { width: 100%; }
+  html, body {{ margin: 0; padding: 0; width: 100%; height: 100%; background: #ffffff; }}
+  #jsme_container {{ width: 100%; }}
 </style>
 <script src="qrc:///qtwebchannel/qwebchannel.js"></script>
-<script src="JSME.nocache.js"></script>
+<script src="jsme.nocache.js"></script>
 </head>
 <body>
 <div id="jsme_container"></div>
@@ -56,35 +57,91 @@ _JSME_HTML_TEMPLATE = """\
 var jsmeApplet = null;
 var pyBridge = null;
 
-new QWebChannel(qt.webChannelTransport, function(channel) {
+new QWebChannel(qt.webChannelTransport, function(channel) {{
     pyBridge = channel.objects.pyBridge;
-});
+}});
 
-function jsmeOnLoad() {
-    jsmeApplet = new JSApplet.JSME("jsme_container", "100%", "480px", {
+function jsmeOnLoad() {{
+    jsmeApplet = new JSApplet.JSME("jsme_container", "100%", "480px", {{
         "options": "query,autoez,zoomrestricted,nopastemolfile"
-    });
-    jsmeApplet.setCallBack("AfterStructureModified", function() {
+    }});
+    jsmeApplet.setCallBack("AfterStructureModified", function() {{
         sendSMILES();
-    });
-}
+    }});
+}}
 
-function loadSMILES(smiles) {
-    if (jsmeApplet && smiles) {
+function loadSMILES(smiles) {{
+    if (jsmeApplet && smiles) {{
         jsmeApplet.readMolecule(smiles);
-    }
-}
+    }}
+}}
 
-function getSMILES() {
+function getSMILES() {{
     if (!jsmeApplet) return "";
     return jsmeApplet.smiles();
-}
+}}
 
-function sendSMILES() {
-    if (pyBridge && jsmeApplet) {
+function sendSMILES() {{
+    if (pyBridge && jsmeApplet) {{
         pyBridge.receive_smiles(jsmeApplet.smiles());
-    }
-}
+    }}
+}}
+
+function sendCanvasPNG() {{
+    if (!pyBridge) return;
+    var svgs = document.querySelectorAll('#jsme_container svg');
+    var svg = null;
+    var maxArea = 0;
+    for (var i = 0; i < svgs.length; i++) {{
+        var box = svgs[i].getBoundingClientRect();
+        var area = box.width * box.height;
+        if (area > maxArea) {{
+            maxArea = area;
+            svg = svgs[i];
+        }}
+    }}
+    if (!svg) {{
+        var canvas = document.querySelector('#jsme_container canvas');
+        if (canvas) {{
+            pyBridge.receive_png(canvas.toDataURL('image/png'));
+        }} else {{
+            pyBridge.receive_png('');
+        }}
+        return;
+    }}
+    try {{
+        var svgData = new XMLSerializer().serializeToString(svg);
+        if (svgData.indexOf('xmlns="http://www.w3.org/2000/svg"') === -1) {{
+            svgData = svgData.replace('<svg', '<svg xmlns="http://www.w3.org/2000/svg"');
+        }}
+        var DOMURL = window.URL || window.webkitURL || window;
+        var img = new Image();
+        var svgBlob = new Blob([svgData], {{type: 'image/svg+xml;charset=utf-8'}});
+        var url = DOMURL.createObjectURL(svgBlob);
+        img.onload = function () {{
+            try {{
+                var canvas = document.createElement('canvas');
+                var bbox = svg.getBoundingClientRect();
+                canvas.width = bbox.width || 400;
+                canvas.height = bbox.height || 400;
+                var ctx = canvas.getContext('2d');
+                ctx.fillStyle = '#ffffff';
+                ctx.fillRect(0, 0, canvas.width, canvas.height);
+                ctx.drawImage(img, 0, 0);
+                DOMURL.revokeObjectURL(url);
+                pyBridge.receive_png(canvas.toDataURL('image/png'));
+            }} catch (e) {{
+                pyBridge.receive_png('');
+            }}
+        }};
+        img.onerror = function () {{
+            pyBridge.receive_png('');
+        }};
+        img.src = url;
+    }} catch (e) {{
+        pyBridge.receive_png('');
+    }}
+}}
 </script>
 </body>
 </html>
@@ -92,25 +149,59 @@ function sendSMILES() {
 
 
 def _ensure_jsme_cached() -> Path | None:
-    """Download JSME to local cache if not present. Returns path or None on failure."""
+    """Download JSME.nocache.js + companion .cache.js files to local cache.
+
+    Parses the nocache loader to find the two GWT permutation hashes and
+    downloads those .cache.js files alongside the loader. All files land in
+    _JSME_CACHE_DIR so the HTML can reference them with relative paths.
+
+    Returns the path to jsme.nocache.js, or None on any failure.
+    """
+    import re  # noqa: PLC0415
+
     if _JSME_JS.exists():
         return _JSME_JS
     try:
         _JSME_CACHE_DIR.mkdir(parents=True, exist_ok=True)
-        with urllib.request.urlopen(_JSME_CDN, timeout=10) as resp:  # noqa: S310
-            _JSME_JS.write_bytes(resp.read())
+
+        # 1. Download the nocache loader
+        loader_url = f"{_JSME_BASE_URL}/jsme.nocache.js"
+        with urllib.request.urlopen(loader_url, timeout=10) as resp:  # noqa: S310
+            loader_bytes = resp.read()
+        _JSME_JS.write_bytes(loader_bytes)
+
+        # 2. Find companion .cache.js hashes embedded in the loader
+        loader_text = loader_bytes.decode("utf-8", errors="replace")
+        hashes = re.findall(r"'([0-9A-F]{32})'", loader_text)
+        unique_hashes = list(dict.fromkeys(hashes))  # deduplicate, preserve order
+
+        # 3. Download each companion cache file
+        for h in unique_hashes:
+            cache_url = f"{_JSME_BASE_URL}/{h}.cache.js"
+            dest = _JSME_CACHE_DIR / f"{h}.cache.js"
+            if dest.exists():
+                continue
+            try:
+                with urllib.request.urlopen(cache_url, timeout=15) as resp:  # noqa: S310
+                    dest.write_bytes(resp.read())
+            except Exception:  # noqa: BLE001
+                pass  # non-fatal: the loader will skip unavailable permutations
+
         return _JSME_JS
     except Exception:  # noqa: BLE001
         return None
 
 
 def _write_jsme_html() -> Path | None:
-    """Write the JSME HTML loader file next to the cached JS. Returns path or None."""
-    html_dir = _JSME_CACHE_DIR / "html"
+    """Write editor.html into _JSME_CACHE_DIR (same dir as the JS files).
+
+    The HTML uses relative src="jsme.nocache.js" so it works via file:// URL.
+    Returns the html path or None on failure.
+    """
     try:
-        html_dir.mkdir(parents=True, exist_ok=True)
-        html_path = html_dir / "editor.html"
-        html_path.write_text(_JSME_HTML_TEMPLATE, encoding="utf-8")
+        _JSME_CACHE_DIR.mkdir(parents=True, exist_ok=True)
+        html_path = _JSME_CACHE_DIR / "editor.html"
+        html_path.write_text(_JSME_HTML_TEMPLATE.format(), encoding="utf-8")
         return html_path
     except Exception:  # noqa: BLE001
         return None
@@ -122,9 +213,10 @@ def _write_jsme_html() -> Path | None:
 
 
 class _JSBridge(QObject):
-    """Receives SMILES from JavaScript via QWebChannel."""
+    """Receives SMILES and PNG from JavaScript via QWebChannel."""
 
     smiles_received = Signal(str)
+    png_received = Signal(str)
 
     def __init__(self, parent: QObject | None = None) -> None:
         super().__init__(parent)
@@ -134,6 +226,10 @@ class _JSBridge(QObject):
     def receive_smiles(self, smiles: str) -> None:
         self._last_smiles = smiles
         self.smiles_received.emit(smiles)
+
+    @Slot(str)
+    def receive_png(self, b64_str: str) -> None:
+        self.png_received.emit(b64_str)
 
     @property
     def last_smiles(self) -> str:
@@ -160,6 +256,7 @@ class MoleculeEditorDialog(QDialog):
         self._initial_smiles = initial_smiles
         self._draw_smiles: str = initial_smiles  # updated by JS bridge
         self._accepted_smiles: str = ""
+        self._canvas_png_bytes: bytes = b""
         self._web_view: QWebEngineView | None = None
 
         self._build_ui()
@@ -233,9 +330,7 @@ class MoleculeEditorDialog(QDialog):
         # Allow local file to load qrc:// WebChannel resource
         settings = self._web_view.settings()
         settings.setAttribute(QWebEngineSettings.WebAttribute.LocalContentCanAccessFileUrls, True)
-        settings.setAttribute(
-            QWebEngineSettings.WebAttribute.LocalContentCanAccessRemoteUrls, True
-        )
+        settings.setAttribute(QWebEngineSettings.WebAttribute.LocalContentCanAccessRemoteUrls, True)
         settings.setAttribute(QWebEngineSettings.WebAttribute.JavascriptEnabled, True)
 
         # Set up web channel
@@ -362,10 +457,39 @@ class MoleculeEditorDialog(QDialog):
         if active == 0 and self._web_view is not None:
             # Draw tab — flush JS bridge synchronously, then read
             self._flush_draw_smiles()
+            self._flush_canvas_png()
             self._accepted_smiles = self._draw_smiles
         else:
             self._accepted_smiles = self._smiles_input.text().strip()
         self.accept()
+
+    def _flush_canvas_png(self) -> None:
+        if self._web_view is None:
+            return
+        import base64  # noqa: PLC0415
+
+        loop = QEventLoop()
+        received: list[str] = []
+
+        def _on_data(data: str) -> None:
+            received.append(data or "")
+            loop.quit()
+
+        self._js_bridge.png_received.connect(_on_data)
+        self._web_view.page().runJavaScript("sendCanvasPNG()")
+
+        # Allow up to 1500 ms for the async image conversion
+        QTimer.singleShot(1500, loop.quit)
+        loop.exec()
+        
+        self._js_bridge.png_received.disconnect(_on_data)
+
+        if received and received[0].startswith("data:image/png;base64,"):
+            b64 = received[0][len("data:image/png;base64,") :]
+            try:
+                self._canvas_png_bytes = base64.b64decode(b64)
+            except Exception:  # noqa: BLE001
+                pass
 
     def _flush_draw_smiles(self) -> None:
         """Trigger JS to send current SMILES and process events so bridge fires."""
@@ -411,3 +535,7 @@ class MoleculeEditorDialog(QDialog):
         After the dialog has been accepted, returns the value committed on OK.
         """
         return self._accepted_smiles
+
+    def png_bytes(self) -> bytes:
+        """Return the canvas PNG captured from the Draw tab (empty bytes if not available)."""
+        return self._canvas_png_bytes
