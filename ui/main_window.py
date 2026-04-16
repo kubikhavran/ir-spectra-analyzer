@@ -247,10 +247,11 @@ class MainWindow(QMainWindow):
         self._vibration_panel.preset_added.connect(self._on_vibration_preset_changed)
         self._vibration_panel.preset_deleted.connect(self._on_vibration_preset_changed)
         self._vibration_panel.preset_remove_requested.connect(self._on_remove_vibration)
+        self._peak_table.vibration_label_removed.connect(self._on_vibration_label_removed)
         self._match_results_panel.candidate_selected.connect(self._on_match_candidate_selected)
         self._match_results_panel.import_reference.connect(self._on_import_reference)
         self._molecule_widget.smiles_changed.connect(self._on_structure_edited)
-        self._molecule_widget.structure_image_changed.connect(self._on_structure_image_changed)
+        self._molecule_widget.mol_block_changed.connect(self._on_mol_block_changed)
 
     # --- Event handlers ---
 
@@ -330,12 +331,20 @@ class MainWindow(QMainWindow):
                     acquired_at=spectrum.acquired_at,
                     resolution=spectrum.extra_metadata.get("resolution_cm"),
                     scans=None,
-                    comments=spectrum.comments,
+                    comments=spectrum.extra_metadata.get("omnic_comment", spectrum.comments),
+                    extra={
+                        "omnic_client": spectrum.extra_metadata.get("omnic_custom_info_2", ""),
+                        "omnic_order": spectrum.extra_metadata.get("omnic_custom_info_1", ""),
+                    },
                 )
                 self._metadata_panel.set_metadata(metadata)
 
             # Update molecule structure panel with the saved project-level SMILES
-            self._molecule_widget.set_structure(project.smiles, project.structure_image)
+            self._molecule_widget.set_structure(
+                project.smiles,
+                mol_block=getattr(project, 'mol_block', ''),
+                image_bytes=project.structure_image,
+            )
 
             self.statusBar().showMessage(f"Project loaded: {Path(path).name}")
         except Exception as e:  # noqa: BLE001
@@ -376,7 +385,11 @@ class MainWindow(QMainWindow):
                 acquired_at=spectrum.acquired_at,
                 resolution=spectrum.extra_metadata.get("resolution_cm"),
                 scans=None,
-                comments=spectrum.comments,
+                comments=spectrum.extra_metadata.get("omnic_comment", spectrum.comments),
+                extra={
+                    "omnic_client": spectrum.extra_metadata.get("omnic_custom_info_2", ""),
+                    "omnic_order": spectrum.extra_metadata.get("omnic_custom_info_1", ""),
+                },
             )
             self._metadata_panel.set_metadata(metadata)
 
@@ -401,7 +414,11 @@ class MainWindow(QMainWindow):
                 self._vibration_panel.set_presets(presets)
 
             # Update molecule structure panel (new project starts with empty SMILES)
-            self._molecule_widget.set_structure(self._project.smiles, self._project.structure_image)
+            self._molecule_widget.set_structure(
+                self._project.smiles,
+                mol_block=getattr(self._project, 'mol_block', ''),
+                image_bytes=self._project.structure_image,
+            )
 
             base = f"Loaded: {Path(path).name} ({spectrum.n_points} points)"
             if self._project.peaks:
@@ -418,7 +435,7 @@ class MainWindow(QMainWindow):
         """Switch tool mode in SpectrumWidget."""
         self._spectrum_widget.set_tool_mode(mode)
 
-    def _on_peak_clicked(self, wavenumber: float, intensity: float) -> None:
+    def _on_peak_clicked(self, wavenumber: float, intensity: float, click_y: float) -> None:
         """Add a manually clicked peak to the project."""
         if self._project is None:
             return
@@ -430,7 +447,7 @@ class MainWindow(QMainWindow):
             intensity=intensity,
             manual_placement=True,
             label_offset_x=0.0,
-            label_offset_y=0.0,
+            label_offset_y=click_y - intensity,
         )
         cmd = AddPeakCommand(self._project, peak)
         self._undo_stack.push(cmd)
@@ -540,14 +557,16 @@ class MainWindow(QMainWindow):
 
         from pathlib import Path  # noqa: PLC0415
 
+        from reporting.pdf_generator import ReportOptions  # noqa: PLC0415
         from reporting.report_builder import ReportBuilder  # noqa: PLC0415
+
+        if report_options is None:
+            report_options = ReportOptions()
+        report_options.view_x_range = self._spectrum_widget.get_x_view_range()
 
         try:
             builder = ReportBuilder()
-            if report_options is None:
-                builder.build(self._project, Path(path))
-            else:
-                builder.build_with_options(self._project, Path(path), report_options)
+            builder.build_with_options(self._project, Path(path), report_options)
             self.statusBar().showMessage(f"PDF exported: {Path(path).name}")
             return True
         except Exception as e:  # noqa: BLE001
@@ -621,6 +640,31 @@ class MainWindow(QMainWindow):
         self.statusBar().showMessage(
             f'Removed "{preset.name}" from peak at {peak.position:.1f} cm\u207b\u00b9'
         )
+
+    def _on_vibration_label_removed(self, peak: object, label_str: str) -> None:
+        """Remove a single vibration label that the user deleted from the peak table cell."""
+        if self._project is None:
+            return
+        from core.commands import RemovePresetCommand  # noqa: PLC0415
+        from core.peak import Peak as PeakType  # noqa: PLC0415
+        from core.vibration_presets import VibrationPreset  # noqa: PLC0415
+
+        p = peak  # type: ignore[assignment]
+        if not isinstance(p, PeakType):
+            return
+        if label_str not in p.vibration_labels:
+            return
+        idx = p.vibration_labels.index(label_str)
+        db_id = p.vibration_ids[idx] if idx < len(p.vibration_ids) else None
+        stub_preset = VibrationPreset(
+            name=label_str,
+            typical_range_min=0.0,
+            typical_range_max=0.0,
+            db_id=db_id,
+        )
+        self._undo_stack.push(RemovePresetCommand(p, stub_preset))
+        self._peak_table.set_peaks(self._project.peaks)
+        self._spectrum_widget.set_peaks(self._project.peaks)
 
     def _on_preset_clicked_for_assign(self, preset) -> None:
         """Store preset as pending — next peak click in viewer will assign it."""
@@ -713,10 +757,10 @@ class MainWindow(QMainWindow):
         self._undo_stack.push(SetProjectSMILESCommand(self._project, smiles))
         self.statusBar().showMessage("Proposed structure updated")
 
-    def _on_structure_image_changed(self, png_bytes: bytes) -> None:
-        """Store the canvas PNG from the molecule editor in the project."""
+    def _on_mol_block_changed(self, mol_block: str) -> None:
+        """Store the MOL block from the molecule editor in the project."""
         if self._project is not None:
-            self._project.structure_image = png_bytes
+            self._project.mol_block = mol_block
 
     def _on_delete_peak(self) -> None:
         """Delete the currently selected peak."""

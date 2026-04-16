@@ -13,11 +13,11 @@ Závislost: ReportLab, Matplotlib
 from __future__ import annotations
 
 import io
+import struct
 from dataclasses import dataclass
 from pathlib import Path
 
 import matplotlib
-
 from reportlab.lib import colors
 from reportlab.lib.enums import TA_CENTER, TA_RIGHT
 from reportlab.lib.pagesizes import A4, landscape
@@ -79,10 +79,9 @@ def _ensure_fonts() -> tuple[str, str, str]:
     return regular, bold, oblique
 
 
-# Matplotlib figsize used in SpectrumRenderer — needed to preserve aspect ratio
+# Default figsize (used only if spectrum section gets a text_height constraint)
 _RENDERER_FIG_W = 7.5
 _RENDERER_FIG_H = 3.2
-_FIG_ASPECT = _RENDERER_FIG_H / _RENDERER_FIG_W  # height / width ratio
 
 _MARGIN = 2 * cm
 
@@ -105,12 +104,16 @@ class ReportOptions:
         include_peak_table: If True, include the peak assignments table.
         include_metadata: If True, include the project/spectrum metadata table.
         dpi: Resolution for the spectrum image (default 150).
+        view_x_range: Optional (x_min, x_max) visible wavenumber range from the viewer.
+            When set, the PDF plot and X range metadata row use this range instead of
+            the full data extent. Defaults to (400.0, 3800.0) when None.
     """
 
     include_structures: bool = True
     include_peak_table: bool = True
     include_metadata: bool = True
     dpi: int = 150
+    view_x_range: tuple[float, float] | None = None
 
 
 def _classify_peak_intensities(peaks: list, is_dip_spectrum: bool) -> dict[int, str]:
@@ -259,15 +262,10 @@ class PDFGenerator:
 
         story = []
 
-        # Page 1: title + spectrum on landscape page
-        self._append_header_section(
-            story,
-            project,
-            spectrum,
-            title_style,
-            subtitle_style,
-        )
+        # Resolve view range — use what the viewer was showing, or the default 400–3800 window
+        _x_min, _x_max = options.view_x_range if options.view_x_range else (400.0, 3800.0)
 
+        # Page 1: full-page spectrum (no header — maximum graph area)
         self._append_spectrum_section(
             story,
             spectrum.wavenumbers,
@@ -278,20 +276,32 @@ class PDFGenerator:
             y_unit=spectrum.y_unit,
             is_dip_spectrum=spectrum.is_dip_spectrum,
             text_width=_LAND_TEXT_W,
+            text_height=_LAND_TEXT_H,
+            x_min=_x_min,
+            x_max=_x_max,
         )
 
         # Switch to portrait for subsequent pages, then page break
         story.append(NextPageTemplate("portrait"))
         story.append(PageBreak())
 
-        # Page 2+: metadata, peak table, structures
+        # Page 2+: header first, then metadata+structure, peak table
+        self._append_header_section(
+            story,
+            project,
+            spectrum,
+            title_style,
+            subtitle_style,
+        )
+
         if options.include_metadata:
-            self._append_metadata_section(
+            self._append_metadata_and_structure_section(
                 story,
                 project,
                 spectrum,
                 key_style,
                 val_style,
+                options,
             )
 
         sorted_peaks = sorted(project.peaks, key=lambda p: p.position, reverse=True)
@@ -304,12 +314,6 @@ class PDFGenerator:
                 table_cell_style,
                 table_cell_right,
                 is_dip_spectrum=spectrum.is_dip_spectrum,
-            )
-        if options.include_structures and (project.smiles or project.structure_image):
-            self._append_structure_section(
-                story,
-                project,
-                section_style,
             )
 
         # Build document with two page templates
@@ -362,10 +366,35 @@ class PDFGenerator:
         title_style: ParagraphStyle,
         subtitle_style: ParagraphStyle,
     ) -> None:
-        """Append the report header section."""
-        filename = spectrum.source_path.name if spectrum.source_path else "—"
-        story.append(Paragraph(project.name, title_style))
-        story.append(Paragraph(filename, subtitle_style))
+        """Append the report header section.
+
+        Left column: project/sample name (bold, large).
+        Right column: spectrum title / internal lab code (bold, right-aligned).
+        """
+        title_right_style = ParagraphStyle(
+            "ReportTitleRight",
+            parent=title_style,
+            alignment=TA_RIGHT,
+            spaceAfter=0,
+        )
+        left_para = Paragraph(project.name, title_style)
+        right_para = Paragraph(spectrum.title or "", title_right_style)
+        header_row = Table(
+            [[left_para, right_para]],
+            colWidths=[_PORT_TEXT_W * 0.6, _PORT_TEXT_W * 0.4],
+        )
+        header_row.setStyle(
+            TableStyle(
+                [
+                    ("VALIGN", (0, 0), (-1, -1), "BOTTOM"),
+                    ("TOPPADDING", (0, 0), (-1, -1), 0),
+                    ("BOTTOMPADDING", (0, 0), (-1, -1), 4),
+                    ("LEFTPADDING", (0, 0), (-1, -1), 0),
+                    ("RIGHTPADDING", (0, 0), (-1, -1), 0),
+                ]
+            )
+        )
+        story.append(header_row)
         story.append(HRFlowable(width="100%", thickness=1, color=colors.black, spaceAfter=6))
 
     def _append_metadata_section(
@@ -384,22 +413,15 @@ class PDFGenerator:
                 meta_rows.append([Paragraph(key, key_style), Paragraph(value, val_style)])
 
         _add_row("Sample", project.name)
-        if spectrum.source_path:
-            _add_row("File", spectrum.source_path.name)
+        _add_row("Client", spectrum.extra_metadata.get("omnic_custom_info_2"))
+        _add_row("Order", spectrum.extra_metadata.get("omnic_custom_info_1"))
         if spectrum.acquired_at:
             _add_row("Acquired", spectrum.acquired_at.strftime("%Y-%m-%d %H:%M"))
-        serial = spectrum.extra_metadata.get("instrument_serial")
-        if serial:
-            _add_row("Instrument S/N", str(serial))
         resolution = spectrum.extra_metadata.get("resolution_cm")
         if resolution is not None:
             _add_row("Resolution", f"{resolution:.3f} cm\u207b\u00b9")
         _add_row("Y unit", spectrum.y_unit.value)
-        _add_row(
-            "X range",
-            f"{spectrum.wavenumbers[0]:.1f} \u2013 {spectrum.wavenumbers[-1]:.1f} cm\u207b\u00b9",
-        )
-        _add_row("Points", str(spectrum.n_points))
+        _add_row("X range", "400 \u2013 3800 cm\u207b\u00b9")
 
         if not meta_rows:
             return
@@ -431,8 +453,23 @@ class PDFGenerator:
         y_unit,
         is_dip_spectrum: bool = False,
         text_width: float,
+        text_height: float | None = None,
+        x_min: float = 400.0,
+        x_max: float = 3800.0,
     ) -> None:
         """Append the rendered spectrum image section."""
+        # Compute figsize in inches from the available frame dimensions.
+        # ReportLab Frame has 6pt default padding on each side, so usable area
+        # is text_width/text_height minus 12pt (left+right or top+bottom).
+        _frame_pad = 12.0  # 6pt × 2 sides
+        if text_height is not None:
+            # Full-page mode: fill the usable frame area
+            fig_w_in = (text_width - _frame_pad) / 72.0
+            fig_h_in = (text_height - _frame_pad) / 72.0
+        else:
+            fig_w_in = _RENDERER_FIG_W
+            fig_h_in = _RENDERER_FIG_H
+
         png_bytes = SpectrumRenderer().render_to_bytes(
             wavenumbers,
             intensities,
@@ -440,14 +477,29 @@ class PDFGenerator:
             dpi=dpi,
             y_unit=y_unit,
             is_dip_spectrum=is_dip_spectrum,
+            figsize=(fig_w_in, fig_h_in),
+            x_min=x_min,
+            x_max=x_max,
         )
         img_buf = io.BytesIO(png_bytes)
-        # Preserve the natural aspect ratio of the Matplotlib figure
-        img_height = text_width * _FIG_ASPECT
-        img = Image(img_buf, width=text_width, height=img_height)
+
+        # Scale image to fill the usable frame area, preserving exact figsize aspect ratio
+        aspect = fig_h_in / fig_w_in
+        usable_w = text_width - _frame_pad if text_height is not None else text_width
+        usable_h = text_height - _frame_pad if text_height is not None else None
+        embed_w = usable_w
+        embed_h = embed_w * aspect
+        if usable_h is not None and embed_h > usable_h:
+            embed_h = usable_h
+            embed_w = embed_h / aspect
+
+        img = Image(img_buf, width=embed_w, height=embed_h)
         story.append(img)
-        story.append(Paragraph("Figure 1 \u2014 IR spectrum", caption_style))
-        story.append(Spacer(1, 0.4 * cm))
+
+        if text_height is None:
+            # Caption only when not filling a full page
+            story.append(Paragraph("Figure 1 \u2014 IR spectrum", caption_style))
+            story.append(Spacer(1, 0.4 * cm))
 
     def _append_peak_table_section(
         self,
@@ -511,29 +563,194 @@ class PDFGenerator:
         peaks_table.setStyle(ts)
         story.append(peaks_table)
 
+    def _append_metadata_and_structure_section(
+        self,
+        story: list,
+        project: Project,
+        spectrum,
+        key_style: ParagraphStyle,
+        val_style: ParagraphStyle,
+        options: ReportOptions,
+    ) -> None:
+        """Metadata table on the left, molecule structure image on the right."""
+        from chemistry.structure_renderer import render_to_svg, svg_to_png_bytes  # noqa: PLC0415
+
+        # ── Build metadata rows ──────────────────────────────────────────────
+        meta_rows: list = []
+
+        def _add_row(key: str, value: str | None) -> None:
+            if value:
+                meta_rows.append([Paragraph(key, key_style), Paragraph(value, val_style)])
+
+        _add_row("Sample", project.name)
+        _add_row("Client", spectrum.extra_metadata.get("omnic_custom_info_2"))
+        _add_row("Order", spectrum.extra_metadata.get("omnic_custom_info_1"))
+        if spectrum.acquired_at:
+            _add_row("Acquired", spectrum.acquired_at.strftime("%Y-%m-%d %H:%M"))
+        resolution = spectrum.extra_metadata.get("resolution_cm")
+        if resolution is not None:
+            _add_row("Resolution", f"{resolution:.3f} cm\u207b\u00b9")
+        omnic_comment = spectrum.extra_metadata.get("omnic_comment")
+        if omnic_comment:
+            _add_row("Comment", omnic_comment)
+        _add_row("Y unit", spectrum.y_unit.value)
+        _x_lo, _x_hi = options.view_x_range if options.view_x_range else (400.0, 3800.0)
+        _add_row(
+            "X range",
+            f"{max(_x_lo, _x_hi):.0f} \u2013 {min(_x_lo, _x_hi):.0f} cm\u207b\u00b9",
+        )
+
+        # ── Try to render molecule structure (right column) ──────────────────
+        mol_block = getattr(project, "mol_block", "")
+        has_structure = options.include_structures and (
+            project.smiles or mol_block or project.structure_image
+        )
+
+        png_bytes: bytes | None = None
+        if has_structure:
+            if project.smiles or mol_block:
+                svg = render_to_svg(
+                    smiles=project.smiles,
+                    mol_block=mol_block,
+                    size=(380, 380),
+                )
+                if svg:
+                    png_bytes = svg_to_png_bytes(svg, 760, 760)
+            if not png_bytes and project.structure_image:
+                png_bytes = project.structure_image
+
+        # ── Decide layout ────────────────────────────────────────────────────
+        if has_structure and png_bytes:
+            left_col_w = _PORT_TEXT_W * 0.58
+            right_col_w = _PORT_TEXT_W - left_col_w
+        else:
+            left_col_w = _PORT_TEXT_W
+            right_col_w = 0.0
+
+        key_col_w = 4.0 * cm
+        val_col_w = left_col_w - key_col_w
+
+        if meta_rows:
+            meta_subtable = Table(meta_rows, colWidths=[key_col_w, val_col_w])
+            meta_subtable.setStyle(
+                TableStyle(
+                    [
+                        ("VALIGN", (0, 0), (-1, -1), "TOP"),
+                        ("TOPPADDING", (0, 0), (-1, -1), 2),
+                        ("BOTTOMPADDING", (0, 0), (-1, -1), 2),
+                        ("LEFTPADDING", (0, 0), (-1, -1), 0),
+                        ("RIGHTPADDING", (0, 0), (-1, -1), 4),
+                    ]
+                )
+            )
+        else:
+            meta_subtable = Spacer(left_col_w, 1)
+
+        if has_structure and png_bytes:
+            try:
+                img_w_px, img_h_px = struct.unpack(">II", png_bytes[16:24])
+            except Exception:  # noqa: BLE001
+                img_w_px = img_h_px = 760
+
+            max_w = right_col_w - 0.3 * cm  # small inset from column edge
+            max_h = 7.0 * cm
+            if img_w_px > 0 and img_h_px > 0:
+                scale = min(max_w / img_w_px, max_h / img_h_px)
+                embed_w = img_w_px * scale
+                embed_h = img_h_px * scale
+            else:
+                embed_w = embed_h = max_w
+
+            right_cell: object = Image(io.BytesIO(png_bytes), width=embed_w, height=embed_h)
+
+            two_col = Table(
+                [[meta_subtable, right_cell]],
+                colWidths=[left_col_w, right_col_w],
+            )
+            two_col.setStyle(
+                TableStyle(
+                    [
+                        ("VALIGN", (0, 0), (-1, -1), "TOP"),
+                        ("ALIGN", (1, 0), (1, 0), "CENTER"),
+                        ("TOPPADDING", (0, 0), (-1, -1), 0),
+                        ("BOTTOMPADDING", (0, 0), (-1, -1), 0),
+                        ("LEFTPADDING", (0, 0), (-1, -1), 0),
+                        ("RIGHTPADDING", (0, 0), (-1, -1), 0),
+                    ]
+                )
+            )
+            story.append(two_col)
+        else:
+            story.append(meta_subtable)
+
+        story.append(Spacer(1, 0.4 * cm))
+
     def _append_structure_section(
         self,
         story: list,
         project: Project,
         section_style: ParagraphStyle,
     ) -> None:
-        """Append a single proposed molecular structure section."""
+        """Append the proposed molecular structure section.
+
+        Rendering priority:
+        1. RDKit SVG from SMILES/MolBlock → Qt rasterised PNG (best quality, vector-sourced)
+        2. Stored structure_image (legacy JSME screenshot) — fallback only
+        """
+        from chemistry.structure_renderer import render_to_svg, svg_to_png_bytes  # noqa: PLC0415
+
         png_bytes: bytes | None = None
 
-        # Prefer stored image bytes (works without RDKit)
-        if project.structure_image:
-            png_bytes = project.structure_image
-        elif project.smiles:
-            from chemistry.structure_renderer import render_smiles_to_png  # noqa: PLC0415
+        mol_block = getattr(project, "mol_block", "")
 
-            png_bytes = render_smiles_to_png(project.smiles, size=(300, 300))
+        # 1. Render via RDKit → SVG → Qt PNG (vector-quality source at report DPI)
+        if project.smiles or mol_block:
+            svg = render_to_svg(
+                smiles=project.smiles,
+                mol_block=mol_block,
+                size=(500, 350),
+            )
+            if svg:
+                png_bytes = svg_to_png_bytes(svg, 1000, 700)
+
+        # 2. Legacy fallback
+        if not png_bytes and project.structure_image:
+            png_bytes = project.structure_image
 
         if not png_bytes:
             return
 
-        img_size = 8 * cm
-        mol_img = Image(io.BytesIO(png_bytes), width=img_size, height=img_size)
+        # Read actual dimensions from PNG header for proportional scaling
+        try:
+            img_w_px, img_h_px = struct.unpack(">II", png_bytes[16:24])
+        except Exception:  # noqa: BLE001
+            img_w_px = img_h_px = 700
+
+        max_w = min(_PORT_TEXT_W * 0.65, 12 * cm)
+        max_h = 10 * cm
+        if img_w_px > 0 and img_h_px > 0:
+            scale = min(max_w / img_w_px, max_h / img_h_px)
+            embed_w = img_w_px * scale
+            embed_h = img_h_px * scale
+        else:
+            embed_w = embed_h = max_w
+
+        mol_img = Image(io.BytesIO(png_bytes), width=embed_w, height=embed_h)
+
+        centred = Table([[mol_img]], colWidths=[_PORT_TEXT_W])
+        centred.setStyle(
+            TableStyle(
+                [
+                    ("ALIGN", (0, 0), (0, 0), "CENTER"),
+                    ("VALIGN", (0, 0), (0, 0), "MIDDLE"),
+                    ("TOPPADDING", (0, 0), (0, 0), 0),
+                    ("BOTTOMPADDING", (0, 0), (0, 0), 0),
+                    ("LEFTPADDING", (0, 0), (0, 0), 0),
+                    ("RIGHTPADDING", (0, 0), (0, 0), 0),
+                ]
+            )
+        )
 
         story.append(Spacer(1, 0.4 * cm))
         story.append(Paragraph("Proposed Molecular Structure", section_style))
-        story.append(mol_img)
+        story.append(centred)

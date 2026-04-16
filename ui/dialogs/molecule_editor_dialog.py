@@ -142,6 +142,15 @@ function sendCanvasPNG() {{
         pyBridge.receive_png('');
     }}
 }}
+
+function sendMolFile() {{
+    if (!pyBridge) return;
+    var mol = "";
+    if (jsmeApplet) {{
+        try {{ mol = jsmeApplet.molFile() || ""; }} catch(e) {{ mol = ""; }}
+    }}
+    pyBridge.receive_mol_block(mol);
+}}
 </script>
 </body>
 </html>
@@ -213,10 +222,11 @@ def _write_jsme_html() -> Path | None:
 
 
 class _JSBridge(QObject):
-    """Receives SMILES and PNG from JavaScript via QWebChannel."""
+    """Receives SMILES, PNG, and MOL block from JavaScript via QWebChannel."""
 
     smiles_received = Signal(str)
     png_received = Signal(str)
+    mol_block_received = Signal(str)
 
     def __init__(self, parent: QObject | None = None) -> None:
         super().__init__(parent)
@@ -230,6 +240,10 @@ class _JSBridge(QObject):
     @Slot(str)
     def receive_png(self, b64_str: str) -> None:
         self.png_received.emit(b64_str)
+
+    @Slot(str)
+    def receive_mol_block(self, mol_block: str) -> None:
+        self.mol_block_received.emit(mol_block)
 
     @property
     def last_smiles(self) -> str:
@@ -257,6 +271,7 @@ class MoleculeEditorDialog(QDialog):
         self._draw_smiles: str = initial_smiles  # updated by JS bridge
         self._accepted_smiles: str = ""
         self._canvas_png_bytes: bytes = b""
+        self._canvas_mol_block: str = ""
         self._web_view: QWebEngineView | None = None
 
         self._build_ui()
@@ -455,46 +470,68 @@ class MoleculeEditorDialog(QDialog):
         """Collect SMILES from the active tab and accept the dialog."""
         active = self._tabs.currentIndex()
         if active == 0 and self._web_view is not None:
-            # Draw tab — flush JS bridge synchronously, then read
+            # Draw tab — flush JS bridge synchronously, then read.
+            # _flush_canvas_png() is no longer called: PDF rendering uses
+            # RDKit SVG, so the canvas screenshot is not needed.
             self._flush_draw_smiles()
-            self._flush_canvas_png()
+            self._flush_mol_block()
             self._accepted_smiles = self._draw_smiles
         else:
             self._accepted_smiles = self._smiles_input.text().strip()
         self.accept()
 
-    def _flush_canvas_png(self) -> None:
+    def _flush_mol_block(self) -> None:
+        """Trigger JS to send current MOL block and wait for response.
+
+        Tries the QWebChannel bridge first; falls back to direct JS evaluation
+        if the bridge is not yet ready (QWebChannel init is asynchronous).
+        """
         if self._web_view is None:
             return
-        import base64  # noqa: PLC0415
 
+        # --- Bridge path ---
         loop = QEventLoop()
         received: list[str] = []
 
-        def _on_data(data: str) -> None:
-            received.append(data or "")
+        def _on_received(s: str) -> None:
+            received.append(s)
             loop.quit()
 
-        self._js_bridge.png_received.connect(_on_data)
-        self._web_view.page().runJavaScript("sendCanvasPNG()")
-
-        # Allow up to 1500 ms for the async image conversion
-        QTimer.singleShot(1500, loop.quit)
+        self._js_bridge.mol_block_received.connect(_on_received)
+        self._web_view.page().runJavaScript("sendMolFile()")
+        QTimer.singleShot(500, loop.quit)
         loop.exec()
-        
-        self._js_bridge.png_received.disconnect(_on_data)
+        self._js_bridge.mol_block_received.disconnect(_on_received)
+        if received and received[0]:
+            self._canvas_mol_block = received[0]
+            return
 
-        if received and received[0].startswith("data:image/png;base64,"):
-            b64 = received[0][len("data:image/png;base64,") :]
-            try:
-                self._canvas_png_bytes = base64.b64decode(b64)
-            except Exception:  # noqa: BLE001
-                pass
+        # --- Direct JS eval fallback (bridge not ready yet) ---
+        loop2 = QEventLoop()
+        direct: list[str] = []
+
+        def _got_mol(s: object) -> None:
+            direct.append(str(s) if s else "")
+            loop2.quit()
+
+        self._web_view.page().runJavaScript(
+            "(jsmeApplet ? (jsmeApplet.molFile() || '') : '')", 0, _got_mol
+        )
+        QTimer.singleShot(500, loop2.quit)
+        loop2.exec()
+        if direct and direct[0]:
+            self._canvas_mol_block = direct[0]
 
     def _flush_draw_smiles(self) -> None:
-        """Trigger JS to send current SMILES and process events so bridge fires."""
+        """Trigger JS to send current SMILES and process events so bridge fires.
+
+        Tries the QWebChannel bridge first; falls back to direct JS evaluation
+        if the bridge is not yet ready (QWebChannel init is asynchronous).
+        """
         if self._web_view is None:
             return
+
+        # --- Bridge path ---
         loop = QEventLoop()
         received: list[str] = []
 
@@ -504,14 +541,26 @@ class MoleculeEditorDialog(QDialog):
 
         self._js_bridge.smiles_received.connect(_on_received)
         self._web_view.page().runJavaScript("sendSMILES()")
-
-        # Give it up to 500 ms to respond; fall back to cached value
         QTimer.singleShot(500, loop.quit)
         loop.exec()
-
         self._js_bridge.smiles_received.disconnect(_on_received)
-        if received:
+        if received and received[0]:
             self._draw_smiles = received[0]
+            return
+
+        # --- Direct JS eval fallback (bridge not ready yet) ---
+        loop2 = QEventLoop()
+        direct: list[str] = []
+
+        def _got_smiles(s: object) -> None:
+            direct.append(str(s) if s else "")
+            loop2.quit()
+
+        self._web_view.page().runJavaScript("getSMILES()", 0, _got_smiles)
+        QTimer.singleShot(500, loop2.quit)
+        loop2.exec()
+        if direct and direct[0]:
+            self._draw_smiles = direct[0]
 
     def _on_clear(self) -> None:
         """Clear the SMILES in the active tab."""
@@ -539,3 +588,7 @@ class MoleculeEditorDialog(QDialog):
     def png_bytes(self) -> bytes:
         """Return the canvas PNG captured from the Draw tab (empty bytes if not available)."""
         return self._canvas_png_bytes
+
+    def mol_block(self) -> str:
+        """Return the MOL V2000 block captured from the Draw tab (empty if unavailable)."""
+        return self._canvas_mol_block

@@ -134,8 +134,8 @@ def test_manual_peak_labels_anchor_to_each_peak_curve_level(qtbot):
     window._project = Project(name="Manual peaks", spectrum=spectrum)
     window._spectrum_widget.set_spectrum(spectrum)
 
-    window._on_peak_clicked(3000.0, 0.8)
-    window._on_peak_clicked(1000.0, 1.2)
+    window._on_peak_clicked(3000.0, 0.8, 0.8)
+    window._on_peak_clicked(1000.0, 1.2, 1.2)
 
     labels = [
         item for item in window._spectrum_widget._peak_items if isinstance(item, _DraggableLabel)
@@ -252,8 +252,8 @@ def test_manual_peak_labels_anchor_to_curve_level_for_transmittance(qtbot):
     window._project = Project(name="Transmittance peaks", spectrum=spectrum)
     window._spectrum_widget.set_spectrum(spectrum)
 
-    window._on_peak_clicked(3000.0, 81.5)
-    window._on_peak_clicked(1000.0, 88.2)
+    window._on_peak_clicked(3000.0, 81.5, 81.5)
+    window._on_peak_clicked(1000.0, 88.2, 88.2)
 
     labels = [
         item for item in window._spectrum_widget._peak_items if isinstance(item, _DraggableLabel)
@@ -281,7 +281,8 @@ def test_manual_peak_click_uses_interpolated_curve_intensity(qtbot):
     window._spectrum_widget.set_spectrum(spectrum)
 
     for x in (1000.0, 1452.0, 3000.0):
-        window._on_peak_clicked(x, window._spectrum_widget._intensity_at(x))
+        intensity = window._spectrum_widget._intensity_at(x)
+        window._on_peak_clicked(x, intensity, intensity)
 
     observed = {peak.position: peak.intensity for peak in window._project.peaks}
     assert observed[1000.0] == pytest.approx(0.81)
@@ -670,7 +671,7 @@ def test_main_window_on_export_passes_report_options_from_dialog(qtbot, monkeypa
 
 
 def test_main_window_export_pdf_uses_default_report_builder(qtbot, tmp_path):
-    """Calling _export_pdf without explicit options should keep the default report path."""
+    """Calling _export_pdf without explicit options should still use build_with_options."""
     from unittest.mock import MagicMock, patch
 
     from core.project import Project
@@ -691,8 +692,8 @@ def test_main_window_export_pdf_uses_default_report_builder(qtbot, tmp_path):
     ):
         window._export_pdf()
 
-    builder.build.assert_called_once()
-    builder.build_with_options.assert_not_called()
+    builder.build.assert_not_called()
+    builder.build_with_options.assert_called_once()
 
 
 def test_main_window_export_pdf_uses_selected_report_options(qtbot, tmp_path):

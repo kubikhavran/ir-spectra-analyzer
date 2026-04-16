@@ -60,6 +60,7 @@ class ProjectSerializer:
         return {
             "name": project.name,
             "smiles": project.smiles,
+            "mol_block": project.mol_block,
             "structure_image": base64.b64encode(project.structure_image).decode()
             if project.structure_image
             else "",
@@ -91,6 +92,7 @@ class ProjectSerializer:
             db_id=data.get("db_id"),
         )
         project.corrected_spectrum = corrected_spectrum
+        project.mol_block = data.get("mol_block", "")
         si_raw = data.get("structure_image", "")
         project.structure_image = base64.b64decode(si_raw) if si_raw else b""
         return project

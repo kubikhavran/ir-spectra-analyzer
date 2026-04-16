@@ -175,20 +175,20 @@ def test_spectrum_renderer_render_to_bytes() -> None:
 
 
 def test_pdf_with_project_smiles_calls_structure_section(tmp_path, monkeypatch) -> None:
-    """PDF with project.smiles='CCO' should call _append_structure_section."""
+    """PDF with project.smiles='CCO' should call _append_metadata_and_structure_section."""
     from reporting.pdf_generator import PDFGenerator, ReportOptions
 
     project = _make_project()
     project.smiles = "CCO"
 
     called_with: list = []
-    original = PDFGenerator._append_structure_section
+    original = PDFGenerator._append_metadata_and_structure_section
 
-    def _spy(self, story, proj, section_style) -> None:
+    def _spy(self, story, proj, spectrum, key_style, val_style, options) -> None:
         called_with.append(proj.smiles)
-        return original(self, story, proj, section_style)
+        return original(self, story, proj, spectrum, key_style, val_style, options)
 
-    monkeypatch.setattr(PDFGenerator, "_append_structure_section", _spy)
+    monkeypatch.setattr(PDFGenerator, "_append_metadata_and_structure_section", _spy)
 
     out = tmp_path / "report_project_smiles.pdf"
     PDFGenerator().generate(project, out, options=ReportOptions(include_structures=True))

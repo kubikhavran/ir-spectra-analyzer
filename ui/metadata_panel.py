@@ -9,6 +9,7 @@ Zodpovědnost:
 
 from __future__ import annotations
 
+from PySide6.QtCore import Qt
 from PySide6.QtWidgets import QFormLayout, QLabel, QLineEdit, QWidget
 
 from core.metadata import SpectrumMetadata
@@ -28,12 +29,22 @@ class MetadataPanel(QWidget):
         self._operator_edit = QLineEdit()
         self._instrument_label = QLabel()
         self._date_label = QLabel()
+        self._client_label = QLabel()
+        self._client_label.setTextInteractionFlags(Qt.TextInteractionFlag.TextSelectableByMouse)
+        self._order_label = QLabel()
+        self._order_label.setTextInteractionFlags(Qt.TextInteractionFlag.TextSelectableByMouse)
+        self._comment_label = QLabel()
+        self._comment_label.setWordWrap(True)
+        self._comment_label.setTextInteractionFlags(Qt.TextInteractionFlag.TextSelectableByMouse)
 
         layout.addRow("Title:", self._title_edit)
         layout.addRow("Sample:", self._sample_edit)
         layout.addRow("Operator:", self._operator_edit)
         layout.addRow("Instrument:", self._instrument_label)
         layout.addRow("Acquired:", self._date_label)
+        layout.addRow("Client:", self._client_label)
+        layout.addRow("Order:", self._order_label)
+        layout.addRow("Comment:", self._comment_label)
 
     def set_metadata(self, metadata: SpectrumMetadata) -> None:
         """Populate fields from metadata object.
@@ -47,3 +58,6 @@ class MetadataPanel(QWidget):
         self._instrument_label.setText(metadata.instrument)
         if metadata.acquired_at:
             self._date_label.setText(metadata.acquired_at.strftime("%Y-%m-%d %H:%M"))
+        self._client_label.setText(metadata.extra.get("omnic_client", ""))
+        self._order_label.setText(metadata.extra.get("omnic_order", ""))
+        self._comment_label.setText(metadata.comments or "")

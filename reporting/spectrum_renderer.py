@@ -45,6 +45,9 @@ class SpectrumRenderer:
         dpi: int = 150,
         y_unit: SpectralUnit = SpectralUnit.ABSORBANCE,
         is_dip_spectrum: bool = False,
+        figsize: tuple[float, float] = (7.5, 3.2),
+        x_min: float = 400.0,
+        x_max: float = 3800.0,
     ) -> bytes:
         """Render spectrum with peak annotations to PNG bytes in memory.
 
@@ -67,7 +70,11 @@ class SpectrumRenderer:
         import matplotlib.ticker as ticker  # noqa: PLC0415
 
         # --- Figure / axes setup ---
-        fig, ax = plt.subplots(figsize=(7.5, 3.2))
+        fig, ax = plt.subplots(figsize=figsize)
+        _fscale = figsize[0] / 7.5  # font scale relative to default width
+        _fs_label = max(8, round(9 * _fscale))
+        _fs_tick = max(7, round(8 * _fscale))
+        _fs_peak = max(6, round(7 * _fscale))
         fig.patch.set_facecolor("white")
         ax.set_facecolor("white")
 
@@ -76,49 +83,51 @@ class SpectrumRenderer:
 
         # --- X-axis: inverted, OMNIC-style ticks ---
         ax.invert_xaxis()
-        wn_min = float(np.min(wavenumbers))
-        wn_max = float(np.max(wavenumbers))
+        _plot_x_lo, _plot_x_hi = min(x_min, x_max), max(x_min, x_max)
 
-        # Major ticks at every 500 cm⁻¹ rounded to grid
-        major_start = np.ceil(wn_min / _WN_MAJOR_STEP) * _WN_MAJOR_STEP
-        major_end = np.floor(wn_max / _WN_MAJOR_STEP) * _WN_MAJOR_STEP
+        # Major ticks at every 500 cm⁻¹ within the visible range
+        major_start = np.ceil(_plot_x_lo / _WN_MAJOR_STEP) * _WN_MAJOR_STEP
+        major_end = np.floor(_plot_x_hi / _WN_MAJOR_STEP) * _WN_MAJOR_STEP
         major_ticks = np.arange(major_start, major_end + 1, _WN_MAJOR_STEP)
         ax.set_xticks(major_ticks)
 
-        minor_start = np.ceil(wn_min / _WN_MINOR_STEP) * _WN_MINOR_STEP
-        minor_end = np.floor(wn_max / _WN_MINOR_STEP) * _WN_MINOR_STEP
+        minor_start = np.ceil(_plot_x_lo / _WN_MINOR_STEP) * _WN_MINOR_STEP
+        minor_end = np.floor(_plot_x_hi / _WN_MINOR_STEP) * _WN_MINOR_STEP
         minor_ticks = np.arange(minor_start, minor_end + 1, _WN_MINOR_STEP)
         ax.set_xticks(minor_ticks, minor=True)
 
         ax.tick_params(
-            axis="x", which="major", length=5, width=0.8, labelsize=8, direction="in", top=True
+            axis="x", which="major", length=5, width=0.8, labelsize=_fs_tick, direction="in", top=True
         )
         ax.tick_params(axis="x", which="minor", length=3, width=0.6, direction="in", top=True)
 
-        # --- Y-axis: unit-aware range ---
+        # --- Y-axis: auto-fit to visible data (matches live viewer reset_view) ---
         ax.tick_params(
-            axis="y", which="major", length=5, width=0.8, labelsize=8, direction="in", right=True
+            axis="y", which="major", length=5, width=0.8, labelsize=_fs_tick, direction="in", right=True
         )
         ax.tick_params(axis="y", which="minor", length=3, width=0.6, direction="in", right=True)
 
-        if y_unit == SpectralUnit.TRANSMITTANCE:
-            ax.set_ylim(0.0, 110.0)
-            ax.yaxis.set_major_locator(ticker.MultipleLocator(20))
-            ax.yaxis.set_minor_locator(ticker.MultipleLocator(10))
-        elif is_dip_spectrum:
-            # Corrected %T: near-zero top, negative dips at bottom
-            y_data_min = float(np.min(intensities))
-            ax.set_ylim(bottom=y_data_min * 1.10, top=5.0)
+        # Use only data within the visible window for Y fitting
+        _vis_mask = (wavenumbers >= _plot_x_lo) & (wavenumbers <= _plot_x_hi)
+        _vis_y = intensities[_vis_mask] if _vis_mask.any() else intensities
+        _y_min = float(np.min(_vis_y))
+        _y_max = float(np.max(_vis_y))
+        _y_span = max(_y_max - _y_min, 1e-9)
+
+        if is_dip_spectrum or y_unit == SpectralUnit.TRANSMITTANCE:
+            # Dip-style (%T): peaks go down, labels extend below — add headroom below
+            ax.set_ylim(bottom=_y_min - _y_span * 0.22, top=_y_max + _y_span * 0.05)
+            ax.yaxis.set_major_locator(ticker.AutoLocator())
             ax.yaxis.set_minor_locator(ticker.AutoMinorLocator(2))
         else:
-            # Absorbance / Reflectance / Single Beam / non-dip BASELINE_CORRECTED
-            y_data_max = float(np.max(intensities))
-            ax.set_ylim(bottom=0.0, top=y_data_max * 1.10)
+            # Absorbance / peak-style: labels extend above — add headroom above
+            ax.set_ylim(bottom=max(0.0, _y_min - _y_span * 0.05), top=_y_max + _y_span * 0.22)
+            ax.yaxis.set_major_locator(ticker.AutoLocator())
             ax.yaxis.set_minor_locator(ticker.AutoMinorLocator(2))
 
         # --- Labels ---
-        ax.set_xlabel("Wavenumber (cm⁻¹)", fontsize=9, labelpad=4, fontfamily="sans-serif")
-        ax.set_ylabel(y_unit.value, fontsize=9, labelpad=4, fontfamily="sans-serif")
+        ax.set_xlabel("Wavenumber (cm⁻¹)", fontsize=_fs_label, labelpad=4, fontfamily="sans-serif")
+        ax.set_ylabel(y_unit.value, fontsize=_fs_label, labelpad=4, fontfamily="sans-serif")
 
         # --- Frame: full 4-sided box, no grid ---
         for spine in ax.spines.values():
@@ -160,15 +169,15 @@ class SpectrumRenderer:
                     rotation=90,
                     va=va,
                     ha="center",
-                    fontsize=7,
+                    fontsize=_fs_peak,
                     fontfamily="sans-serif",
                     color="black",
                 )
 
-        # --- X-axis limits: respect data range tightly ---
-        ax.set_xlim(wn_max, wn_min)  # inverted
+        # --- X-axis limits: use the requested visible range ---
+        ax.set_xlim(_plot_x_hi, _plot_x_lo)  # inverted: high→low
 
-        fig.tight_layout(pad=0.6)
+        fig.tight_layout(pad=0.6 if figsize[0] <= 8.0 else 1.2)
 
         buf = io.BytesIO()
         fig.savefig(buf, format="png", dpi=dpi, facecolor="white")

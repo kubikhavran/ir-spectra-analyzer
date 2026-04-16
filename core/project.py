@@ -38,6 +38,7 @@ class Project:
     corrected_spectrum: Spectrum | None = None
     peaks: list[Peak] = field(default_factory=list)
     smiles: str = ""
+    mol_block: str = ""  # V2000 MOL block with 2D coords (preserves user layout)
     structure_image: bytes = field(default=b"")
     created_at: datetime = field(default_factory=datetime.now)
     updated_at: datetime = field(default_factory=datetime.now)

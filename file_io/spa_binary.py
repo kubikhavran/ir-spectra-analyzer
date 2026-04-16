@@ -72,8 +72,12 @@ _OMNIC_DIR_ENTRY_SIZE = 16  # each entry: u16 type + u32 offset + u32 size + 6 p
 _OMNIC_DIR_MAX_ENTRIES = 30  # walk at most this many entries
 _OMNIC_DIR_TYPE_PARAMS = 2  # spectral parameters block
 _OMNIC_DIR_TYPE_INTENSITIES = 3  # float32 intensity data
+_OMNIC_DIR_TYPE_COMMENT = 4  # OMNIC user comment/notes (e.g. "CHCl3, film", "KBr, 1cm")
 _OMNIC_DIR_TYPE_HISTORY = 27  # acquisition history text
+_OMNIC_DIR_TYPE_CUSTOM_INFO = 146  # OMNIC Custom Info fields (client name, order ID, etc.)
 _OMNIC_DIR_TYPE_NAMED_BLOCK = 130  # named metadata/report blocks (e.g. PEAKTABLE)
+# Type-146 Custom Info block: 64-byte null-padded string fields
+_OMNIC_CUSTOM_INFO_FIELD_SIZE = 64  # each field occupies 64 bytes
 # Fallback fixed offsets (used when type-2 block is absent)
 _OMNIC_N_POINTS_OFFSET = 564  # u32 LE: number of spectral points
 _OMNIC_WN_MAX_OFFSET = 576  # f32 LE: wavenumber maximum (cm⁻¹)
@@ -201,6 +205,10 @@ class SPABinaryReader:
         intensity_size: int | None = None
         history_offset: int | None = None
         history_size: int | None = None
+        comment_offset: int | None = None
+        comment_size: int | None = None
+        custom_info_offset: int | None = None
+        custom_info_size: int | None = None
         named_blocks: list[tuple[int, int]] = []
 
         pos = _OMNIC_DIR_START
@@ -225,6 +233,12 @@ class SPABinaryReader:
             elif sec_type == _OMNIC_DIR_TYPE_INTENSITIES and intensity_offset is None:
                 intensity_offset = sec_data_offset
                 intensity_size = sec_size
+            elif sec_type == _OMNIC_DIR_TYPE_COMMENT and comment_offset is None:
+                comment_offset = sec_data_offset
+                comment_size = sec_size
+            elif sec_type == _OMNIC_DIR_TYPE_CUSTOM_INFO and custom_info_offset is None:
+                custom_info_offset = sec_data_offset
+                custom_info_size = sec_size
             elif sec_type == _OMNIC_DIR_TYPE_HISTORY and history_offset is None:
                 history_offset = sec_data_offset
                 history_size = sec_size
@@ -364,6 +378,43 @@ class SPABinaryReader:
                 extra["instrument_serial"] = parsed["instrument_serial"]
             # Store only a short snippet — the full text can be hundreds of bytes
             extra["omnic_history_snippet"] = hist_text[:512]
+
+        # --- Parse type-4 comment block (OMNIC user comment, e.g. "CHCl3, film") ---
+        if (
+            comment_offset is not None
+            and comment_size is not None
+            and comment_size > 0
+            and comment_offset + comment_size <= len(data)
+        ):
+            comment_bytes = data[comment_offset : comment_offset + comment_size]
+            comment_text = comment_bytes.decode("latin-1", errors="replace")
+            # Multi-line OMNIC comments use embedded NUL bytes as line separators
+            comment_text = comment_text.replace("\x00", "\n").strip()
+            if comment_text:
+                extra["omnic_comment"] = comment_text
+
+        # --- Parse type-146 Custom Info block (client name, order/lab ID) ---
+        if (
+            custom_info_offset is not None
+            and custom_info_size is not None
+            and custom_info_size >= _OMNIC_CUSTOM_INFO_FIELD_SIZE
+            and custom_info_offset + custom_info_size <= len(data)
+        ):
+            ci_block = data[custom_info_offset : custom_info_offset + custom_info_size]
+            # Field layout: each field is a 64-byte null-padded string
+            def _read_ci_field(buf: bytes, field_idx: int) -> str:
+                start = field_idx * _OMNIC_CUSTOM_INFO_FIELD_SIZE
+                end = start + _OMNIC_CUSTOM_INFO_FIELD_SIZE
+                if end > len(buf):
+                    return ""
+                return buf[start:end].rstrip(b"\x00").decode("latin-1", errors="replace").strip()
+
+            ci_1 = _read_ci_field(ci_block, 0)  # Custom Info 1: lab/order identifier
+            ci_2 = _read_ci_field(ci_block, 1)  # Custom Info 2: client name
+            if ci_1:
+                extra["omnic_custom_info_1"] = ci_1
+            if ci_2:
+                extra["omnic_custom_info_2"] = ci_2
 
         annotated_peaks = self._parse_omnic_peak_tables(data, named_blocks)
         if annotated_peaks:

@@ -150,7 +150,7 @@ class _DraggableLabel(pg.TextItem):
 class SpectrumWidget(QWidget):
     """PyQtGraph-based interactive IR spectrum viewer."""
 
-    peak_clicked = Signal(float, float)  # (wavenumber, intensity)
+    peak_clicked = Signal(float, float, float)  # (wavenumber, intensity, click_y)
     cursor_moved = Signal(float, float)  # (wavenumber, intensity_at_cursor)
     peak_selected_in_viewer = Signal(object)  # emits Peak instance
     peak_delete_requested = Signal(object)  # emits Peak instance on Shift+click
@@ -233,6 +233,11 @@ class SpectrumWidget(QWidget):
 
         layout.addWidget(self._plot_widget)
 
+        # Override PyQtGraph "A" button: disconnect default autoBtnClicked, wire to our reset
+        _pi = self._plot_widget.getPlotItem()
+        _pi.autoBtn.clicked.disconnect()
+        _pi.autoBtn.clicked.connect(self.reset_view)
+
         # Spectrum curve: black, width 1
         self._spectrum_curve = self._plot_widget.plot(pen=pg.mkPen("k", width=1))
 
@@ -282,11 +287,50 @@ class SpectrumWidget(QWidget):
         label_style = {"color": "#000000", "font-size": "10pt"}
         self._plot_widget.setLabel("left", spectrum.display_y_unit.value, **label_style)
 
-        # Auto-scale Y only; preserve user's X range (default 400–3800 set at init)
-        y_min = float(np.min(spectrum.intensities))
-        y_max = float(np.max(spectrum.intensities))
-        padding = (y_max - y_min) * 0.05 if y_max > y_min else 0.1
-        self._plot_widget.setYRange(y_min - padding, y_max + padding, padding=0.0)
+        self.reset_view()
+
+    def reset_view(self) -> None:
+        """Reset to standard IR view: X=3800–400 cm⁻¹, Y auto-fitted to visible data + labels."""
+        self._plot_widget.setXRange(_X_DEFAULT_MIN, _X_DEFAULT_MAX, padding=0.0)
+
+        if self._spectrum is None:
+            return
+
+        wn = self._spectrum.wavenumbers
+        iy = self._spectrum.intensities
+
+        # Fit Y only to data within the visible x window
+        mask = (wn >= _X_DEFAULT_MIN) & (wn <= _X_DEFAULT_MAX)
+        visible_y = iy[mask] if mask.any() else iy
+        if len(visible_y) == 0:
+            return
+
+        y_min = float(np.min(visible_y))
+        y_max = float(np.max(visible_y))
+        y_span = max(y_max - y_min, 1e-9)
+
+        peaks_are_dips = self._spectrum.is_dip_spectrum
+        if peaks_are_dips:
+            # Labels extend below troughs (%T)
+            self._plot_widget.setYRange(
+                y_min - y_span * 0.20, y_max + y_span * 0.05, padding=0.0
+            )
+        else:
+            # Labels extend above peaks (Absorbance)
+            self._plot_widget.setYRange(
+                y_min - y_span * 0.05, y_max + y_span * 0.20, padding=0.0
+            )
+
+    def get_x_view_range(self) -> tuple[float, float]:
+        """Return the current visible wavenumber range as (x_min, x_max).
+
+        Returns the actual data coordinates of the left and right ViewBox edges,
+        regardless of the invert_x setting.  The returned tuple is always ordered
+        (lower_value, higher_value) so callers do not need to know the axis direction.
+        """
+        vb = self._plot_widget.getPlotItem().vb
+        x_range = vb.viewRange()[0]  # [[xmin, xmax], [ymin, ymax]]
+        return (float(min(x_range)), float(max(x_range)))
 
     def set_peaks(self, peaks: list[Peak]) -> None:
         """Update peak annotations in the viewer.
@@ -430,15 +474,18 @@ class SpectrumWidget(QWidget):
 
         mouse_point = vb.mapSceneToView(pos)
         wavenumber = mouse_point.x()
+        click_y = mouse_point.y()
 
         if self._add_peak_mode:
+            if event.modifiers() & Qt.KeyboardModifier.ShiftModifier:
+                return  # let label's shift_click_callback handle deletion
             # Don't add a new peak if the click landed on an existing label
             if self._peaks:
                 closest = min(self._peaks, key=lambda p: abs(p.position - wavenumber))
                 if abs(closest.position - wavenumber) <= 5.0:
                     return  # user clicked on/near an existing label — label handles it
             intensity = self._intensity_at(wavenumber)
-            self.peak_clicked.emit(wavenumber, intensity)
+            self.peak_clicked.emit(wavenumber, intensity, click_y)
         elif self._peaks:
             # Select nearest peak within 30 cm⁻¹
             closest = min(self._peaks, key=lambda p: abs(p.position - wavenumber))
