@@ -106,7 +106,29 @@ SciPy, RDKit, ReportLab, Matplotlib, openpyxl, SpectroChemPy.
 
 ## Installation
 
-### With [uv](https://github.com/astral-sh/uv) (recommended)
+### Windows users — download the installer
+
+The easiest path. No Python knowledge required.
+
+1. Go to the [**Releases page**](https://github.com/kubikhavran/ir-spectra-analyzer/releases/latest).
+2. Download `IR-Spectra-Analyzer-Setup-<version>.exe`.
+3. Double-click to install. The wizard creates a Start Menu entry, an
+   optional Desktop shortcut, and registers `.spa` / `.irproj` so you can
+   double-click spectrum files to open them in the app.
+4. Launch **IR Spectra Analyzer** from the Start Menu.
+
+To uninstall, use **Settings → Apps → Installed Apps → IR Spectra Analyzer → Uninstall**
+(standard Windows flow). Your library database and preferences stay in
+`%APPDATA%\ir-spectra-analyzer\` and are preserved across reinstalls.
+
+> **First-run SmartScreen warning:** The installer is currently unsigned
+> (code-signing is planned). Windows may show a "Windows protected your PC"
+> dialog — click **More info → Run anyway**. This will go away once the app is
+> signed.
+
+### From source (developers)
+
+#### With [uv](https://github.com/astral-sh/uv) (recommended)
 
 ```bash
 git clone https://github.com/kubikhavran/ir-spectra-analyzer.git
@@ -117,7 +139,7 @@ source .venv/bin/activate          # Windows: .venv\Scripts\activate
 uv pip install -e ".[dev]"
 ```
 
-### With plain pip
+#### With plain pip
 
 ```bash
 git clone https://github.com/kubikhavran/ir-spectra-analyzer.git
@@ -266,6 +288,9 @@ ir-spectra-analyzer/
 ├── storage/                # SQLite + JSON settings persistence
 ├── utils/                  # Shared helpers
 ├── tests/                  # pytest + pytest-qt test suite (333 tests)
+├── assets/                 # App icon (multi-res .ico + master .png)
+├── packaging/              # PyInstaller spec + Inno Setup installer script
+├── scripts/                # Dev utilities (icon generator, …)
 ├── pyproject.toml          # Build + tooling config
 ├── IR_Spectral_Software_Architecture.md   # Full architectural design doc
 └── LICENSE
@@ -319,6 +344,40 @@ pre-commit run --all-files
 3. Run `ruff format . && ruff check . && pytest` before pushing.
 4. Open a PR. Conventional-commit style is preferred (`feat:`, `fix:`, `refactor:`,
    `test:`, `docs:`, `chore:`).
+
+### Building the Windows installer
+
+The release pipeline is fully automated via GitHub Actions. Tag a release and
+push, and the workflow in [`.github/workflows/release.yml`](.github/workflows/release.yml)
+runs on `windows-latest` to produce a signed installer and attach it to the
+matching GitHub Release:
+
+```bash
+git tag v0.4.0
+git push origin v0.4.0
+```
+
+A few minutes later `IR-Spectra-Analyzer-Setup-0.4.0.exe` appears on the
+[Releases page](https://github.com/kubikhavran/ir-spectra-analyzer/releases).
+
+To build locally on a Windows machine:
+
+```powershell
+# 1. Install deps
+pip install -e ".[dev]"
+pip install pyinstaller
+
+# 2. Regenerate icon (optional — commit is pre-built)
+python scripts/build_icon.py
+
+# 3. Bundle to dist\IR Spectra Analyzer\
+pyinstaller packaging\ir-spectra-analyzer.spec --clean --noconfirm
+
+# 4. Compile the installer (requires Inno Setup 6 from https://jrsoftware.org/)
+& "C:\Program Files (x86)\Inno Setup 6\ISCC.exe" packaging\installer.iss
+```
+
+The final installer lands in `dist\installer\`.
 
 ---
 

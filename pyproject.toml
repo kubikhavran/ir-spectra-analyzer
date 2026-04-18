@@ -43,6 +43,9 @@ ignore = ["E501"]
 [tool.ruff.lint.per-file-ignores]
 "tests/**" = ["S", "ANN"]
 "file_io/__init__.py" = ["A005"]
+# PyInstaller .spec files rely on runtime-injected globals (Analysis, PYZ, EXE,
+# COLLECT, SPECPATH). They are not valid Python modules on their own.
+"packaging/*.spec" = ["F821"]
 
 [tool.mypy]
 python_version = "3.11"
