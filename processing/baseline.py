@@ -121,12 +121,10 @@ def rubber_band_baseline(
       regions become zero.
 
     * ``upper=True`` — **%Transmittance mode**: upper convex hull is used as
-      the baseline.  Returns ``upper_hull − intensities``.  Absorption bands
-      (which are downward dips in %T) become positive; the flat transmission
-      baseline regions become zero.
-
-    Both modes produce a corrected signal where absorption features point
-    upward from a near-zero baseline, regardless of the original spectral unit.
+      the baseline.  Returns ``intensities − upper_hull`` so that the flat
+      transmission baseline is pulled to zero while absorption bands (downward
+      dips in %T) remain downward — preserving the familiar %T visual
+      orientation.  Corrected values are non-positive for clean %T data.
 
     Args:
         wavenumbers: X-axis data (cm⁻¹, ascending or descending).
