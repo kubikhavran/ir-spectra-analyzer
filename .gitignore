@@ -50,9 +50,14 @@ logs/
 # User settings
 .ir-spectra-analyzer/
 
-# Claude Code session state
+# AI agent scaffolding (local only — never committed)
+.claude/
 .claude-session
 .claude-commit-validation.txt
+CLAUDE.md
+AGENTS.md
+PROJECT_STATE.md
+.github/copilot-instructions.md
 
 # QA test artifacts
 tests/qa_screenshots/
