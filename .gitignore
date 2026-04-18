@@ -36,7 +36,8 @@ htmlcov/
 
 # Distribution
 *.manifest
-*.spec
+# *.spec excluded — PyInstaller .spec files in packaging/ are source-controlled
+!packaging/*.spec
 
 # Data files (user data — not tracked)
 *.db

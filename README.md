@@ -126,6 +126,31 @@ To uninstall, use **Settings → Apps → Installed Apps → IR Spectra Analyzer
 > dialog — click **More info → Run anyway**. This will go away once the app is
 > signed.
 
+### macOS users — download the DMG
+
+1. Go to the [**Releases page**](https://github.com/kubikhavran/ir-spectra-analyzer/releases/latest).
+2. Download the DMG that matches your Mac:
+   - **Apple Silicon (M1/M2/M3/M4):** `IR-Spectra-Analyzer-<version>-arm64.dmg`
+   - **Intel Mac:** `IR-Spectra-Analyzer-<version>-x86_64.dmg`
+3. Double-click the DMG → drag **IR Spectra Analyzer** into the **Applications** folder.
+4. Eject the disk image, then launch from Launchpad or Spotlight.
+
+> **First-launch Gatekeeper warning:** Because the app is unsigned, macOS may
+> show *"IR Spectra Analyzer cannot be opened because it is from an unidentified
+> developer"* or *"…is damaged and can't be opened"*.
+>
+> **Fix — right-click → Open:**
+> 1. In Finder, go to **Applications**.
+> 2. Right-click (or Control-click) **IR Spectra Analyzer**.
+> 3. Choose **Open** from the menu → click **Open** in the dialog.
+>
+> You only need to do this once. After that, double-click works normally.
+>
+> Alternatively, run this once in Terminal:
+> ```bash
+> xattr -rd com.apple.quarantine "/Applications/IR Spectra Analyzer.app"
+> ```
+
 ### From source (developers)
 
 #### With [uv](https://github.com/astral-sh/uv) (recommended)
@@ -360,7 +385,27 @@ git push origin v0.4.0
 A few minutes later `IR-Spectra-Analyzer-Setup-0.4.0.exe` appears on the
 [Releases page](https://github.com/kubikhavran/ir-spectra-analyzer/releases).
 
-To build locally on a Windows machine:
+To build locally on a **macOS** machine:
+
+```bash
+# 1. Install deps
+pip install -e ".[dev]"
+pip install pyinstaller dmgbuild
+
+# 2. Regenerate icon (produces .ico, .icns, .iconset)
+python scripts/build_icon.py
+
+# 3. Bundle to dist/IR Spectra Analyzer.app/
+pyinstaller packaging/ir-spectra-analyzer-mac.spec --clean --noconfirm
+
+# 4. Wrap in a DMG
+dmgbuild -s packaging/dmg_settings.py \
+  -D version=0.4.0 -D arch=arm64 \
+  "IR Spectra Analyzer" \
+  "dist/IR-Spectra-Analyzer-0.4.0-arm64.dmg"
+```
+
+To build locally on a **Windows** machine:
 
 ```powershell
 # 1. Install deps

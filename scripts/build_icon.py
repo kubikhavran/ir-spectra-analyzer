@@ -2,7 +2,13 @@
 
 Renders a minimalist IR-spectrum glyph (bold white trace with three absorption
 peaks on a deep indigo rounded-square background) at 1024x1024, then downscales
-with high-quality filtering to produce a multi-resolution Windows .ico file.
+with high-quality filtering to produce:
+
+  - assets/icon.png        — 1024×1024 master PNG
+  - assets/icon.ico        — Windows multi-resolution icon (16–256 px)
+  - assets/icon.iconset/   — macOS iconset directory (named per Apple spec)
+  - assets/icon.icns       — macOS icon (built from iconset via iconutil on macOS,
+                             skipped silently on other platforms)
 
 Run from the project root:
 
@@ -123,20 +129,70 @@ def build_master(size: int = 1024) -> Image.Image:
     return canvas
 
 
+def export_icns(master: Image.Image) -> None:
+    """Build assets/icon.iconset/ + assets/icon.icns.
+
+    The iconset contains PNG files named per Apple's convention.  On macOS,
+    ``iconutil -c icns`` converts the directory to a proper .icns file.
+    On other platforms the iconutil call is silently skipped — the .iconset
+    directory is still written and can be committed so CI can consume it.
+    """
+    import subprocess
+    import sys
+
+    # Apple iconset naming: icon_<logical>x<logical>[@2x].png
+    # @2x entries are the same sizes at double pixel density.
+    iconset_specs: list[tuple[str, int]] = [
+        ("icon_16x16.png", 16),
+        ("icon_16x16@2x.png", 32),
+        ("icon_32x32.png", 32),
+        ("icon_32x32@2x.png", 64),
+        ("icon_128x128.png", 128),
+        ("icon_128x128@2x.png", 256),
+        ("icon_256x256.png", 256),
+        ("icon_256x256@2x.png", 512),
+        ("icon_512x512.png", 512),
+        ("icon_512x512@2x.png", 1024),
+    ]
+
+    iconset_dir = ASSETS_DIR / "icon.iconset"
+    iconset_dir.mkdir(parents=True, exist_ok=True)
+    for filename, px in iconset_specs:
+        resized = master.resize((px, px), Image.LANCZOS)
+        resized.save(iconset_dir / filename, format="PNG")
+        print(f"  {filename} ({px}×{px})")
+
+    icns_path = ASSETS_DIR / "icon.icns"
+    if sys.platform == "darwin":
+        result = subprocess.run(
+            ["iconutil", "-c", "icns", str(iconset_dir), "-o", str(icns_path)],
+            capture_output=True,
+            text=True,
+        )
+        if result.returncode == 0:
+            print(f"Wrote {icns_path} (via iconutil)")
+        else:
+            print(f"iconutil failed: {result.stderr.strip()}")
+    else:
+        print(f"Skipping .icns generation (not on macOS). Run on macOS to build {icns_path}.")
+
+
 def export_all() -> None:
-    """Write master PNG + multi-res .ico into assets/."""
+    """Write master PNG, .ico, .iconset, and .icns into assets/."""
     ASSETS_DIR.mkdir(parents=True, exist_ok=True)
     master = build_master(1024)
+
     master_path = ASSETS_DIR / "icon.png"
     master.save(master_path, optimize=True)
+    print(f"Wrote {master_path} ({master.size[0]}×{master.size[1]})")
 
     ico_sizes = [(16, 16), (24, 24), (32, 32), (48, 48), (64, 64), (128, 128), (256, 256)]
     ico_path = ASSETS_DIR / "icon.ico"
     master.save(ico_path, format="ICO", sizes=ico_sizes)
+    print(f"Wrote {ico_path}")
 
-    # macOS .icns is optional (for dev convenience on Mac, not used by Windows build)
-    print(f"Wrote {master_path} ({master.size[0]}x{master.size[1]})")
-    print(f"Wrote {ico_path} with sizes {ico_sizes}")
+    print("Building macOS iconset:")
+    export_icns(master)
 
 
 if __name__ == "__main__":
