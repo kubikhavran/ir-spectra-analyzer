@@ -374,7 +374,7 @@ pre-commit run --all-files
 
 The release pipeline is fully automated via GitHub Actions. Tag a release and
 push, and the workflow in [`.github/workflows/release.yml`](.github/workflows/release.yml)
-runs on `windows-latest` to produce a signed installer and attach it to the
+runs on `windows-latest` to produce an installer and attach it to the
 matching GitHub Release:
 
 ```bash
