@@ -28,7 +28,7 @@ appname = "IR Spectra Analyzer"
 
 # Output DMG attributes
 format = "UDBZ"  # bzip2 compressed — good size/speed tradeoff
-size = "500M"
+size = "2G"
 
 # Items placed inside the DMG
 files = [str(_app_src)]
