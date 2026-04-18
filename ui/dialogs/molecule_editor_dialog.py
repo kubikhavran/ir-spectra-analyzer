@@ -1,9 +1,3 @@
-
-
-
-
-
-
 """
 MoleculeEditorDialog — Dialog for editing molecular structures.
 
@@ -97,8 +91,17 @@ function jsmeOnLoad() {{
 }}
 
 function loadSMILES(smiles) {{
+    // Fallback only — the SMILES path goes through loadMolBlock (see
+    // _on_load_finished) because jsmeApplet.readMolecule() silently fails in
+    // the packaged JSME build. Kept as a last-resort escape hatch.
     if (jsmeApplet && smiles) {{
         jsmeApplet.readMolecule(smiles);
+    }}
+}}
+
+function loadMolBlock(mol) {{
+    if (jsmeApplet && mol) {{
+        jsmeApplet.readMolFile(mol);
     }}
 }}
 
@@ -226,7 +229,36 @@ def _ensure_jsme_cached() -> Path | None:
             except Exception:  # noqa: BLE001
                 pass  # non-fatal: the loader will skip unavailable permutations
 
-        # 4. Download the GWT stylesheets (jsa.css, gwt/chrome/*.css) that the
+        # 4. Download GWT runAsync() deferred fragments. JSME uses code-splitting
+        # for on-demand features — the periodic-table element picker that opens
+        # when the user clicks "X" (or presses X on the keyboard) lives in one
+        # of these fragments. Without them, GWT shows a "Loading JS code
+        # failed." modal and the user cannot select elements like Na, K, Fe, ...
+        # Fragments are at <base>/deferredjs/<HASH>/<N>.cache.js; N starts at 1
+        # and is contiguous until we hit a 404.
+        for h in unique_hashes:
+            frag_dir = _JSME_CACHE_DIR / "deferredjs" / h
+            frag_dir.mkdir(parents=True, exist_ok=True)
+            n = 1
+            while n < 64:  # sanity cap; JSME currently has 11 fragments
+                dest = frag_dir / f"{n}.cache.js"
+                if dest.exists() and dest.stat().st_size > 0:
+                    n += 1
+                    continue
+                frag_url = f"{_JSME_BASE_URL}/deferredjs/{h}/{n}.cache.js"
+                try:
+                    with urllib.request.urlopen(frag_url, timeout=15) as resp:  # noqa: S310
+                        dest.write_bytes(resp.read())
+                except urllib.error.HTTPError as e:
+                    if e.code == 404:
+                        break  # no more fragments for this permutation
+                    n += 1  # other errors: skip this one, try next
+                    continue
+                except Exception:  # noqa: BLE001
+                    break  # network failure — stop trying more fragments
+                n += 1
+
+        # 5. Download the GWT stylesheets (jsa.css, gwt/chrome/*.css) that the
         # nocache bootstrap injects at runtime. Without them the GWT DialogBox
         # that hosts the periodic-table element picker has no layout and the
         # popup is effectively invisible to the user.
@@ -469,10 +501,28 @@ class MoleculeEditorDialog(QDialog):
     # ------------------------------------------------------------------
 
     def _on_load_finished(self, ok: bool) -> None:  # noqa: FBT001
-        """Load initial SMILES into JSME after page is ready."""
-        if ok and self._initial_smiles and self._web_view is not None:
+        """Load the initial structure into JSME after the page is ready.
+
+        JSME's ``readMolecule(SMILES)`` silently drops the molecule in the
+        packaged build — even trivial inputs like ``CCO`` fail to render. We
+        convert SMILES → V2000 MOL via RDKit and feed JSME through
+        ``readMolFile`` instead, which works for all elements including ones
+        that are not on the default sidebar (Na, K, Fe, ...).
+        """
+        if not (ok and self._initial_smiles and self._web_view is not None):
+            return
+
+        from chemistry.structure_renderer import smiles_to_mol_block  # noqa: PLC0415
+
+        mol_block = smiles_to_mol_block(self._initial_smiles)
+        if mol_block:
+            js = f"loadMolBlock({json.dumps(mol_block)})"
+        else:
+            # RDKit unavailable or parse failure — fall back to the raw-SMILES
+            # path. It may still fail inside JSME, but that's no worse than
+            # doing nothing.
             js = f"loadSMILES({json.dumps(self._initial_smiles)})"
-            self._web_view.page().runJavaScript(js)
+        self._web_view.page().runJavaScript(js)
 
     def _on_draw_smiles_updated(self, smiles: str) -> None:
         self._draw_smiles = smiles

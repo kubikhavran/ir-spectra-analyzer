@@ -134,6 +134,35 @@ def render_smiles_to_png(
     return buf.getvalue()
 
 
+def smiles_to_mol_block(smiles: str) -> str | None:
+    """Convert a SMILES string to a V2000 MOL block with 2D coordinates.
+
+    Used to hand structures to JSME, whose `readMolecule(SMILES)` entry point
+    is broken in the packaged build: it silently drops the molecule (even for
+    trivial inputs like "CCO") and never renders. `readMolFile(MOL)` works
+    correctly — including for custom elements like Na or Fe — so we go through
+    MOL instead.
+
+    Returns None if RDKit is unavailable or the SMILES cannot be parsed.
+    """
+    if not smiles or not smiles.strip():
+        return None
+    try:
+        from rdkit import Chem
+        from rdkit.Chem import AllChem
+    except ImportError:
+        return None
+    mol = Chem.MolFromSmiles(smiles)
+    if mol is None:
+        return None
+    if not mol.GetNumConformers():
+        AllChem.Compute2DCoords(mol)
+    try:
+        return Chem.MolToMolBlock(mol)
+    except Exception:  # noqa: BLE001
+        return None
+
+
 def _load_mol(smiles: str = "", mol_block: str = ""):  # type: ignore[return]
     """Load a molecule from mol_block (preferred) or SMILES.
 
