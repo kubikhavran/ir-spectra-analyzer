@@ -9,7 +9,6 @@ symlink on the right, a clean background, and a 128-px icon size.
 
 from __future__ import annotations
 
-import sys
 from pathlib import Path
 
 # dmgbuild injects 'defines' for -D KEY=VALUE substitutions. We use the
@@ -18,7 +17,8 @@ _defines = defines  # noqa: F821 — injected by dmgbuild at runtime
 _version = _defines.get("version", "0.0.0")
 _arch = _defines.get("arch", "arm64")
 
-_root = Path(__file__).resolve().parent.parent
+# dmgbuild exec()s this file, so __file__ is not available; use cwd (repo root).
+_root = Path.cwd()
 _app_src = _root / "dist" / "IR Spectra Analyzer.app"
 
 # ── dmgbuild settings ──────────────────────────────────────────────────────
