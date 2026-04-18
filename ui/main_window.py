@@ -366,7 +366,7 @@ class MainWindow(QMainWindow):
             # Update molecule structure panel with the saved project-level SMILES
             self._molecule_widget.set_structure(
                 project.smiles,
-                mol_block=getattr(project, 'mol_block', ''),
+                mol_block=getattr(project, "mol_block", ""),
                 image_bytes=project.structure_image,
             )
 
@@ -423,7 +423,7 @@ class MainWindow(QMainWindow):
             # Update molecule structure panel (new project starts with empty SMILES)
             self._molecule_widget.set_structure(
                 self._project.smiles,
-                mol_block=getattr(self._project, 'mol_block', ''),
+                mol_block=getattr(self._project, "mol_block", ""),
                 image_bytes=self._project.structure_image,
             )
 
@@ -889,6 +889,7 @@ class MainWindow(QMainWindow):
             library_service=self._reference_library_service,
             current_spectrum=current_spectrum,
         )
+        dlg.reference_opened.connect(self._load_spectrum)
         dlg.exec()
 
     def _on_batch_import_references(self) -> None:

@@ -147,7 +147,8 @@ def test_preview_text_updates_on_row_selection(qtbot, db):
     assert "Y Unit: Transmittance" in preview
     assert f"Points: {len(wn)}" in preview
 
-    x_data, y_data = dlg._preview_curve.getData()
+    assert len(dlg._preview_curves) == 1
+    x_data, y_data = dlg._preview_curves[0].getData()
     assert np.allclose(np.asarray(x_data), wn)
     assert np.allclose(np.asarray(y_data), inten)
     assert not dlg._preview_placeholder.isVisible()
@@ -569,3 +570,252 @@ def test_current_spectrum_curve_has_data_when_checkbox_checked(qtbot, db):
     assert y_data is not None
     assert len(y_data) > 0
     assert dlg._current_spectrum_curve.isVisible()
+
+
+# ----------------------------------------------------------------------
+# v0.4.0 reference-library polish — multi-select, keyboard, drag-drop,
+# description editing, multi-overlay preview, open-in-main-window,
+# find-similar-to-selected, footer stats.
+# ----------------------------------------------------------------------
+
+
+def _add_ref(db, name: str, folder: Path, *, description: str = "", y_unit: str = "Absorbance"):
+    wn, inten = _make_arrays()
+    return db.add_reference_spectrum(
+        name=name,
+        wavenumbers=wn,
+        intensities=inten,
+        description=description,
+        source=str(folder / f"{name}.spa"),
+        y_unit=y_unit,
+    )
+
+
+def test_multi_select_bulk_delete(qtbot, db, monkeypatch):
+    """Selecting multiple rows and pressing Delete removes all of them."""
+    folder = Path("/tmp/reference-library")
+    _add_ref(db, "A", folder)
+    _add_ref(db, "B", folder)
+    _add_ref(db, "C", folder)
+    dlg = ReferenceLibraryDialog(db, library_service=_FakeLibraryService(db, folder))
+    qtbot.addWidget(dlg)
+
+    monkeypatch.setattr(QMessageBox, "question", lambda *a, **k: QMessageBox.StandardButton.Yes)
+
+    # Select rows 0 and 1 (two of the three refs).
+    dlg._table.clearSelection()
+    dlg._table.selectRow(0)
+    dlg._table.selectionModel().select(
+        dlg._table.model().index(1, 0),
+        dlg._table.selectionModel().SelectionFlag.Select
+        | dlg._table.selectionModel().SelectionFlag.Rows,
+    )
+    assert len(dlg._selected_ref_ids()) == 2
+
+    dlg._on_delete()
+
+    assert db.get_reference_spectra().__len__() == 1
+    assert dlg._table.rowCount() == 1
+
+
+def test_inline_description_edit_persists(qtbot, db):
+    """Editing the description cell writes through to the database."""
+    folder = Path("/tmp/reference-library")
+    ref_id = _add_ref(db, "EditMe", folder, description="old")
+    dlg = ReferenceLibraryDialog(db, library_service=_FakeLibraryService(db, folder))
+    qtbot.addWidget(dlg)
+
+    # Locate the description cell and change its text programmatically.
+    row = 0
+    desc_item = dlg._table.item(row, 3)
+    assert desc_item.text() == "old"
+    desc_item.setText("new description")
+
+    # Database should now reflect the change.
+    rows = [r for r in db.get_reference_spectra() if r["id"] == ref_id]
+    assert rows
+    assert rows[0]["description"] == "new description"
+
+
+def test_open_in_main_window_emits_signal(qtbot, db, tmp_path):
+    """Selecting a ref and clicking Open emits reference_opened with the source path."""
+    folder = tmp_path
+    spa = folder / "sample.spa"
+    spa.write_bytes(b"stub")  # existence check only — no parsing here
+    db.add_reference_spectrum(
+        name="sample",
+        wavenumbers=np.linspace(400.0, 4000.0, 100),
+        intensities=np.ones(100),
+        source=str(spa),
+    )
+    dlg = ReferenceLibraryDialog(db, library_service=_FakeLibraryService(db, folder))
+    qtbot.addWidget(dlg)
+
+    received: list[str] = []
+    dlg.reference_opened.connect(received.append)
+
+    dlg._table.selectRow(0)
+    qtbot.waitUntil(lambda: dlg._open_in_main_btn.isEnabled())
+    dlg._on_open_in_main()
+
+    assert received == [str(spa)]
+
+
+def test_open_in_main_window_warns_when_source_missing(qtbot, db, monkeypatch, tmp_path):
+    """If the source .spa no longer exists on disk, a warning dialog appears."""
+    folder = tmp_path
+    db.add_reference_spectrum(
+        name="gone",
+        wavenumbers=np.linspace(400.0, 4000.0, 100),
+        intensities=np.ones(100),
+        source=str(folder / "missing.spa"),
+    )
+    dlg = ReferenceLibraryDialog(db, library_service=_FakeLibraryService(db, folder))
+    qtbot.addWidget(dlg)
+
+    warned: list = []
+    monkeypatch.setattr(
+        QMessageBox, "warning", lambda *a, **k: warned.append(a) or QMessageBox.StandardButton.Ok
+    )
+
+    received: list[str] = []
+    dlg.reference_opened.connect(received.append)
+
+    dlg._table.selectRow(0)
+    dlg._on_open_in_main()
+
+    assert received == [], "signal should not fire when source file is missing"
+    assert warned, "user should see a warning dialog"
+
+
+def test_multi_overlay_preview_renders_two_curves(qtbot, db):
+    """Selecting two rows renders two normalized curves into the preview plot."""
+    folder = Path("/tmp/reference-library")
+    _add_ref(db, "A", folder)
+    _add_ref(db, "B", folder)
+    dlg = ReferenceLibraryDialog(db, library_service=_FakeLibraryService(db, folder))
+    qtbot.addWidget(dlg)
+
+    dlg._table.clearSelection()
+    dlg._table.selectRow(0)
+    dlg._table.selectionModel().select(
+        dlg._table.model().index(1, 0),
+        dlg._table.selectionModel().SelectionFlag.Select
+        | dlg._table.selectionModel().SelectionFlag.Rows,
+    )
+    qtbot.waitUntil(lambda: len(dlg._preview_curves) == 2)
+    assert len(dlg._preview_curves) == 2
+    assert "2 references selected" in dlg._preview_label.text()
+
+
+def test_find_similar_to_selected_runs_search(qtbot, db, monkeypatch):
+    """Find-similar-to-selected feeds the selected ref into the library service."""
+    folder = Path("/tmp/reference-library")
+    _add_ref(db, "Query", folder)
+    _add_ref(db, "Candidate", folder)
+    dlg = ReferenceLibraryDialog(db, library_service=_FakeLibraryService(db, folder))
+    qtbot.addWidget(dlg)
+
+    captured: list = []
+
+    def fake_search(spectrum, **kwargs):
+        captured.append((spectrum, kwargs))
+        refs = db.get_reference_spectra()
+        return ReferenceSearchOutcome(
+            results=tuple(MatchResult(ref_id=r["id"], name=r["name"], score=0.5) for r in refs),
+            references=tuple(refs),
+            library_folder=folder,
+            imported_summary=None,
+        )
+
+    dlg._library_service.search_spectrum = fake_search  # type: ignore[attr-defined]
+
+    dlg._table.selectRow(0)
+    qtbot.waitUntil(lambda: dlg._find_similar_selected_btn.isEnabled())
+    dlg._on_find_similar_to_selected()
+
+    assert len(captured) == 1
+    spectrum_arg, _ = captured[0]
+    assert isinstance(spectrum_arg, Spectrum)
+    assert dlg._similarity_by_ref_id  # search outcome applied
+
+
+def test_drag_drop_path_extraction_lists_spa_files(tmp_path):
+    """The static mime-data extractor finds .spa files and recurses folders."""
+    from PySide6.QtCore import QMimeData, QUrl
+
+    spa_root = tmp_path / "a.spa"
+    spa_root.write_bytes(b"stub")
+    nested = tmp_path / "sub"
+    nested.mkdir()
+    spa_nested = nested / "b.SPA"
+    spa_nested.write_bytes(b"stub")
+    non_spa = tmp_path / "note.txt"
+    non_spa.write_text("ignore")
+
+    mime = QMimeData()
+    mime.setUrls(
+        [
+            QUrl.fromLocalFile(str(spa_root)),
+            QUrl.fromLocalFile(str(tmp_path)),
+            QUrl.fromLocalFile(str(non_spa)),
+        ]
+    )
+    found = ReferenceLibraryDialog._extract_spa_paths(mime)
+    names = sorted(p.name.lower() for p in found)
+    assert "a.spa" in names
+    assert "b.spa" in names
+    assert "note.txt" not in names
+
+
+def test_footer_stats_reports_counts_and_dates(qtbot, db):
+    """The footer stats label summarizes total refs, date range, and unit mix."""
+    folder = Path("/tmp/reference-library")
+    _add_ref(db, "A", folder, y_unit="Absorbance")
+    _add_ref(db, "B", folder, y_unit="Transmittance")
+    dlg = ReferenceLibraryDialog(db, library_service=_FakeLibraryService(db, folder))
+    qtbot.addWidget(dlg)
+
+    text = dlg._stats_label.text()
+    assert "2 references in library" in text
+    assert "Absorbance" in text
+    assert "Transmittance" in text
+    # created_at is auto-populated by SQLite, so a date range should appear.
+    assert "Imported between" in text
+
+
+def test_keyboard_delete_invokes_delete(qtbot, db, monkeypatch):
+    """Pressing Delete on the focused row triggers _on_delete."""
+    folder = Path("/tmp/reference-library")
+    _add_ref(db, "X", folder)
+    dlg = ReferenceLibraryDialog(db, library_service=_FakeLibraryService(db, folder))
+    qtbot.addWidget(dlg)
+
+    dlg._table.selectRow(0)
+    dlg._table.setFocus()
+    qtbot.waitUntil(lambda: dlg._delete_btn.isEnabled())
+
+    monkeypatch.setattr(QMessageBox, "question", lambda *a, **k: QMessageBox.StandardButton.Yes)
+    qtbot.keyClick(dlg, Qt.Key.Key_Delete)
+
+    assert dlg._table.rowCount() == 0
+
+
+def test_keyboard_f2_invokes_rename(qtbot, db, monkeypatch):
+    """Pressing F2 on the focused row opens the rename prompt."""
+    folder = Path("/tmp/reference-library")
+    _add_ref(db, "Before", folder)
+    dlg = ReferenceLibraryDialog(db, library_service=_FakeLibraryService(db, folder))
+    qtbot.addWidget(dlg)
+
+    monkeypatch.setattr(
+        "ui.dialogs.reference_library_dialog.QInputDialog.getText",
+        lambda *a, **k: ("After", True),
+    )
+
+    dlg._table.selectRow(0)
+    dlg._table.setFocus()
+    qtbot.waitUntil(lambda: dlg._rename_btn.isEnabled())
+    qtbot.keyClick(dlg, Qt.Key.Key_F2)
+
+    assert dlg._table.item(0, 0).text() == "After"

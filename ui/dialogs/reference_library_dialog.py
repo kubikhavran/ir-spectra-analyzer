@@ -5,7 +5,8 @@ from __future__ import annotations
 from datetime import datetime, timedelta
 from pathlib import Path
 
-from PySide6.QtCore import QDate, Qt
+from PySide6.QtCore import QDate, Qt, Signal
+from PySide6.QtGui import QDragEnterEvent, QDropEvent, QKeyEvent
 from PySide6.QtWidgets import (
     QCheckBox,
     QComboBox,
@@ -33,6 +34,26 @@ from core.spectrum import Spectrum
 from matching.quality import match_quality_label
 from storage.database import Database
 
+# Column indices for the library table. Keeping them as module-level constants
+# instead of magic numbers makes the editable-description wiring easier to
+# follow and protects against silent breakage if columns are reordered later.
+_COL_NAME = 0
+_COL_SIMILARITY = 1
+_COL_QUALITY = 2
+_COL_DESCRIPTION = 3
+_COL_SOURCE = 4
+_COL_Y_UNIT = 5
+_COL_CREATED_AT = 6
+
+# Distinct colors for the multi-overlay preview (up to 5 simultaneous refs).
+_PREVIEW_COLORS: tuple[tuple[int, int, int], ...] = (
+    (0, 0, 0),
+    (200, 60, 40),
+    (40, 130, 60),
+    (150, 80, 200),
+    (210, 140, 30),
+)
+
 
 class _SimilarityTableWidgetItem(QTableWidgetItem):
     """QTableWidgetItem variant that sorts by numeric similarity score."""
@@ -51,6 +72,10 @@ class _SimilarityTableWidgetItem(QTableWidgetItem):
 
 class ReferenceLibraryDialog(QDialog):
     """Dialog for viewing, renaming, and deleting reference spectra."""
+
+    # Emitted when the user asks to load a reference's source file into the
+    # main spectrum viewer. The payload is the absolute source path string.
+    reference_opened = Signal(str)
 
     def __init__(
         self,
@@ -71,11 +96,16 @@ class ReferenceLibraryDialog(QDialog):
         self._similarity_by_ref_id: dict[int, float] = {}
         self._pg = None
         self._preview_plot = None
-        self._preview_curve = None
+        self._preview_curves: list = []  # one pg.PlotDataItem per selected ref
         self._current_spectrum_curve = None
         self._preview_placeholder = None
+        self._preview_legend = None
+        # Guard against itemChanged() firing while the table is being
+        # populated programmatically.
+        self._suppress_item_changed = False
         self.setWindowTitle("Reference Library")
-        self.setMinimumSize(820, 520)
+        self.setMinimumSize(960, 620)
+        self.setAcceptDrops(True)
         self._setup_ui()
         self._load_data()
 
@@ -96,12 +126,20 @@ class ReferenceLibraryDialog(QDialog):
         self._table.setHorizontalHeaderLabels(
             ["Name", "Similarity", "Quality", "Description", "Source", "Y Unit", "Created At"]
         )
-        self._table.setEditTriggers(QTableWidget.EditTrigger.NoEditTriggers)
+        # Only the Description column is editable — all others are read-only
+        # even though the widget allows editing globally. Per-item editability
+        # is enforced in _populate_table via Qt.ItemFlag.ItemIsEditable.
+        self._table.setEditTriggers(
+            QTableWidget.EditTrigger.DoubleClicked
+            | QTableWidget.EditTrigger.EditKeyPressed
+            | QTableWidget.EditTrigger.AnyKeyPressed
+        )
         self._table.setSelectionBehavior(QTableWidget.SelectionBehavior.SelectRows)
-        self._table.setSelectionMode(QTableWidget.SelectionMode.SingleSelection)
+        self._table.setSelectionMode(QTableWidget.SelectionMode.ExtendedSelection)
         self._table.setSortingEnabled(True)
         self._table.horizontalHeader().setStretchLastSection(True)
         self._table.itemSelectionChanged.connect(self._on_selection_changed)
+        self._table.itemChanged.connect(self._on_item_changed)
 
         left_layout.addWidget(self._table)
         splitter.addWidget(left_widget)
@@ -141,16 +179,15 @@ class ReferenceLibraryDialog(QDialog):
 
         root_layout.addWidget(splitter)
 
-        # --- Bottom buttons ---
-        btn_layout = QHBoxLayout()
+        # --- Footer stats line ---
+        self._stats_label = QLabel("")
+        self._stats_label.setStyleSheet("color: gray; font-size: 9pt;")
+        self._stats_label.setWordWrap(True)
+        root_layout.addWidget(self._stats_label)
 
-        self._rename_btn = QPushButton("Rename")
-        self._rename_btn.setEnabled(False)
-        self._rename_btn.clicked.connect(self._on_rename)
-
-        self._delete_btn = QPushButton("Delete")
-        self._delete_btn.setEnabled(False)
-        self._delete_btn.clicked.connect(self._on_delete)
+        # --- Bottom buttons, split into two rows ---
+        # Row 1: library-management actions
+        row1 = QHBoxLayout()
 
         self._choose_library_folder_btn = QPushButton("Choose Folder...")
         self._choose_library_folder_btn.clicked.connect(self._on_choose_library_folder)
@@ -162,11 +199,46 @@ class ReferenceLibraryDialog(QDialog):
         self._import_file_btn = QPushButton("Import File...")
         self._import_file_btn.clicked.connect(self._on_import_files)
 
-        self._find_similar_btn = QPushButton("Find Similar to Current Spectrum")
+        self._rename_btn = QPushButton("Rename")
+        self._rename_btn.setToolTip("Rename the selected reference (F2)")
+        self._rename_btn.setEnabled(False)
+        self._rename_btn.clicked.connect(self._on_rename)
+
+        self._delete_btn = QPushButton("Delete")
+        self._delete_btn.setToolTip("Delete the selected reference(s) (Delete)")
+        self._delete_btn.setEnabled(False)
+        self._delete_btn.clicked.connect(self._on_delete)
+
+        row1.addWidget(self._choose_library_folder_btn)
+        row1.addWidget(self._sync_project_library_btn)
+        row1.addWidget(self._import_file_btn)
+        row1.addWidget(self._rename_btn)
+        row1.addWidget(self._delete_btn)
+        row1.addStretch()
+
+        # Row 2: workflow actions
+        row2 = QHBoxLayout()
+
+        self._find_similar_btn = QPushButton("Find Similar to Current")
+        self._find_similar_btn.setToolTip("Rank the library by similarity to the active spectrum")
         self._find_similar_btn.setEnabled(
             self._current_spectrum is not None and self._project_library_folder is not None
         )
         self._find_similar_btn.clicked.connect(self._on_find_similar)
+
+        self._find_similar_selected_btn = QPushButton("Find Similar to Selected")
+        self._find_similar_selected_btn.setToolTip(
+            "Rank the library by similarity to the selected reference"
+        )
+        self._find_similar_selected_btn.setEnabled(False)
+        self._find_similar_selected_btn.clicked.connect(self._on_find_similar_to_selected)
+
+        self._open_in_main_btn = QPushButton("Open in Main Window")
+        self._open_in_main_btn.setToolTip(
+            "Load the selected reference's source file into the main spectrum viewer (Enter)"
+        )
+        self._open_in_main_btn.setEnabled(False)
+        self._open_in_main_btn.clicked.connect(self._on_open_in_main)
 
         self._clear_search_btn = QPushButton("Show All")
         self._clear_search_btn.setEnabled(False)
@@ -175,17 +247,15 @@ class ReferenceLibraryDialog(QDialog):
         close_btn = QPushButton("Close")
         close_btn.clicked.connect(self.accept)
 
-        btn_layout.addWidget(self._choose_library_folder_btn)
-        btn_layout.addWidget(self._sync_project_library_btn)
-        btn_layout.addWidget(self._import_file_btn)
-        btn_layout.addWidget(self._find_similar_btn)
-        btn_layout.addWidget(self._clear_search_btn)
-        btn_layout.addWidget(self._rename_btn)
-        btn_layout.addWidget(self._delete_btn)
-        btn_layout.addStretch()
-        btn_layout.addWidget(close_btn)
+        row2.addWidget(self._find_similar_btn)
+        row2.addWidget(self._find_similar_selected_btn)
+        row2.addWidget(self._open_in_main_btn)
+        row2.addWidget(self._clear_search_btn)
+        row2.addStretch()
+        row2.addWidget(close_btn)
 
-        root_layout.addLayout(btn_layout)
+        root_layout.addLayout(row1)
+        root_layout.addLayout(row2)
 
     # ------------------------------------------------------------------
     # Filter panel
@@ -330,30 +400,59 @@ class ReferenceLibraryDialog(QDialog):
         sorted_refs = sorted(refs, key=self._sort_key_for_ref)
         self._refs = sorted_refs
 
-        self._table.setSortingEnabled(False)
-        self._table.setRowCount(0)
+        self._suppress_item_changed = True
+        try:
+            self._table.setSortingEnabled(False)
+            self._table.setRowCount(0)
 
-        for ref in sorted_refs:
-            row = self._table.rowCount()
-            self._table.insertRow(row)
+            read_only = Qt.ItemFlag.ItemIsSelectable | Qt.ItemFlag.ItemIsEnabled
+            editable = read_only | Qt.ItemFlag.ItemIsEditable
 
-            name_item = QTableWidgetItem(ref["name"])
-            name_item.setData(Qt.ItemDataRole.UserRole, ref["id"])
-            self._table.setItem(row, 0, name_item)
-            self._table.setItem(row, 1, self._similarity_item_for_ref(ref))
-            self._table.setItem(row, 2, QTableWidgetItem(self._quality_text_for_ref(ref)))
-            self._table.setItem(row, 3, QTableWidgetItem(ref.get("description", "")))
-            self._table.setItem(row, 4, QTableWidgetItem(ref.get("source", "")))
-            self._table.setItem(row, 5, QTableWidgetItem(ref.get("y_unit", "")))
-            self._table.setItem(row, 6, QTableWidgetItem(ref.get("created_at", "")))
+            for ref in sorted_refs:
+                row = self._table.rowCount()
+                self._table.insertRow(row)
 
-        self._table.setSortingEnabled(True)
-        if self._similarity_by_ref_id:
-            self._table.sortItems(1, Qt.SortOrder.DescendingOrder)
-        else:
-            self._table.sortItems(0, Qt.SortOrder.AscendingOrder)
-        self._table.resizeColumnsToContents()
-        self._table.clearSelection()
+                name_item = QTableWidgetItem(ref["name"])
+                name_item.setData(Qt.ItemDataRole.UserRole, ref["id"])
+                name_item.setFlags(read_only)
+                self._table.setItem(row, _COL_NAME, name_item)
+
+                sim_item = self._similarity_item_for_ref(ref)
+                sim_item.setFlags(read_only)
+                self._table.setItem(row, _COL_SIMILARITY, sim_item)
+
+                quality_item = QTableWidgetItem(self._quality_text_for_ref(ref))
+                quality_item.setFlags(read_only)
+                self._table.setItem(row, _COL_QUALITY, quality_item)
+
+                desc_item = QTableWidgetItem(ref.get("description", ""))
+                desc_item.setFlags(editable)
+                desc_item.setToolTip("Double-click to edit the description")
+                self._table.setItem(row, _COL_DESCRIPTION, desc_item)
+
+                source_item = QTableWidgetItem(ref.get("source", ""))
+                source_item.setFlags(read_only)
+                source_item.setToolTip(ref.get("source", ""))
+                self._table.setItem(row, _COL_SOURCE, source_item)
+
+                yunit_item = QTableWidgetItem(ref.get("y_unit", ""))
+                yunit_item.setFlags(read_only)
+                self._table.setItem(row, _COL_Y_UNIT, yunit_item)
+
+                created_item = QTableWidgetItem(ref.get("created_at", ""))
+                created_item.setFlags(read_only)
+                self._table.setItem(row, _COL_CREATED_AT, created_item)
+
+            self._table.setSortingEnabled(True)
+            if self._similarity_by_ref_id:
+                self._table.sortItems(_COL_SIMILARITY, Qt.SortOrder.DescendingOrder)
+            else:
+                self._table.sortItems(_COL_NAME, Qt.SortOrder.AscendingOrder)
+            self._table.resizeColumnsToContents()
+            self._table.clearSelection()
+        finally:
+            self._suppress_item_changed = False
+
         self._preview_label.setText("Select a row to preview")
         self._show_empty_preview_plot()
         self._update_button_state()
@@ -372,17 +471,79 @@ class ReferenceLibraryDialog(QDialog):
             )
         else:
             self._search_label.setText(self._search_status_text())
+        self._update_stats_label()
+
+    def _update_stats_label(self) -> None:
+        """Refresh the footer stats line from the current unfiltered library."""
+        total = len(self._refs_all)
+        shown = len(self._refs)
+        if total == 0:
+            self._stats_label.setText(
+                "Library is empty — use Import File… or Choose Folder… to add references."
+            )
+            return
+
+        dates: list[datetime] = []
+        for ref in self._refs_all:
+            raw = str(ref.get("created_at", "")).replace("T", " ")
+            if not raw:
+                continue
+            try:
+                dates.append(datetime.strptime(raw[:19], "%Y-%m-%d %H:%M:%S"))
+            except (ValueError, IndexError):
+                continue
+        if dates:
+            earliest = min(dates).strftime("%Y-%m-%d")
+            latest = max(dates).strftime("%Y-%m-%d")
+            date_fragment = f" | Imported between {earliest} and {latest}"
+        else:
+            date_fragment = ""
+
+        units: dict[str, int] = {}
+        for ref in self._refs_all:
+            unit = str(ref.get("y_unit", "") or "unknown")
+            units[unit] = units.get(unit, 0) + 1
+        unit_fragment = ""
+        if units:
+            unit_fragment = " | " + ", ".join(
+                f"{count}× {unit}" for unit, count in sorted(units.items())
+            )
+
+        shown_fragment = "" if shown == total else f" ({shown} shown after filters)"
+        self._stats_label.setText(
+            f"{total} references in library{shown_fragment}{date_fragment}{unit_fragment}"
+        )
+
+    def _selected_ref_ids(self) -> list[int]:
+        """Return the DB ids of all selected rows, in selection order."""
+        ids: list[int] = []
+        seen: set[int] = set()
+        for item in self._table.selectedItems():
+            if item.column() != _COL_NAME:
+                continue
+            ref_id = item.data(Qt.ItemDataRole.UserRole)
+            if isinstance(ref_id, int) and ref_id not in seen:
+                seen.add(ref_id)
+                ids.append(ref_id)
+        return ids
 
     def _selected_ref_id(self) -> int | None:
-        """Return the DB id of the currently selected row, or None."""
-        selected = self._table.selectedItems()
-        if not selected:
+        """Return the DB id of the currently selected row, or None.
+
+        When multiple rows are selected, returns the currently focused row's
+        id. Used by single-row actions like Rename.
+        """
+        ids = self._selected_ref_ids()
+        if not ids:
             return None
+        # Prefer the focused row if it's part of the selection.
         row = self._table.currentRow()
-        item = self._table.item(row, 0)
-        if item is None:
-            return None
-        return item.data(Qt.ItemDataRole.UserRole)
+        item = self._table.item(row, _COL_NAME) if row >= 0 else None
+        if item is not None:
+            focused = item.data(Qt.ItemDataRole.UserRole)
+            if isinstance(focused, int) and focused in ids:
+                return focused
+        return ids[0]
 
     def _selected_ref(self) -> dict | None:
         """Return the full dict for the selected reference, or None."""
@@ -391,34 +552,54 @@ class ReferenceLibraryDialog(QDialog):
             return None
         return next((r for r in self._refs if r["id"] == ref_id), None)
 
+    def _selected_refs(self) -> list[dict]:
+        """Return full dicts for every selected reference."""
+        ids = self._selected_ref_ids()
+        by_id = {r["id"]: r for r in self._refs}
+        return [by_id[i] for i in ids if i in by_id]
+
     def _on_selection_changed(self) -> None:
         """Update preview and button states when the table selection changes."""
         self._update_button_state()
-        ref = self._selected_ref()
-        if ref is None:
+        refs = self._selected_refs()
+        if not refs:
             self._preview_label.setText("Select a row to preview")
             self._show_empty_preview_plot()
             return
 
-        self._show_reference_preview(ref)
-        n_points = len(ref.get("wavenumbers", []))
-        text = (
-            f"Name: {ref['name']}\n"
-            f"Similarity: {self._similarity_text_for_ref(ref)}\n"
-            f"Quality: {self._quality_text_for_ref(ref)}\n"
-            f"Description: {ref.get('description', '')}\n"
-            f"Source: {ref.get('source', '')}\n"
-            f"Y Unit: {ref.get('y_unit', '')}\n"
-            f"Created: {ref.get('created_at', '')}\n"
-            f"Points: {n_points}"
-        )
+        self._show_reference_preview(refs)
+        if len(refs) == 1:
+            ref = refs[0]
+            n_points = len(ref.get("wavenumbers", []))
+            text = (
+                f"Name: {ref['name']}\n"
+                f"Similarity: {self._similarity_text_for_ref(ref)}\n"
+                f"Quality: {self._quality_text_for_ref(ref)}\n"
+                f"Description: {ref.get('description', '')}\n"
+                f"Source: {ref.get('source', '')}\n"
+                f"Y Unit: {ref.get('y_unit', '')}\n"
+                f"Created: {ref.get('created_at', '')}\n"
+                f"Points: {n_points}"
+            )
+        else:
+            names = ", ".join(r["name"] for r in refs[:5])
+            if len(refs) > 5:
+                names += f" (+{len(refs) - 5} more)"
+            text = f"{len(refs)} references selected:\n{names}"
         self._preview_label.setText(text)
 
     def _update_button_state(self) -> None:
         """Enable/disable action buttons based on whether a row is selected."""
-        has_selection = self._selected_ref_id() is not None
-        self._rename_btn.setEnabled(has_selection)
-        self._delete_btn.setEnabled(has_selection)
+        selected_ids = self._selected_ref_ids()
+        selection_count = len(selected_ids)
+        has_single = selection_count == 1
+        has_any = selection_count > 0
+        self._rename_btn.setEnabled(has_single)
+        self._delete_btn.setEnabled(has_any)
+        self._open_in_main_btn.setEnabled(has_single)
+        self._find_similar_selected_btn.setEnabled(
+            has_single and self._project_library_folder is not None
+        )
         self._clear_search_btn.setEnabled(bool(self._similarity_by_ref_id))
         self._sync_project_library_btn.setEnabled(self._project_library_folder is not None)
         self._find_similar_btn.setEnabled(
@@ -485,14 +666,18 @@ class ReferenceLibraryDialog(QDialog):
         )
         if not paths:
             return
+        self._import_paths([Path(p) for p in paths])
 
+    def _import_paths(self, paths: list[Path]) -> None:
+        """Import a list of `.spa` paths (used by both the file dialog and drag-drop)."""
+        if not paths:
+            return
         imported = 0
         failures: list[str] = []
         active_folder = (
             self._project_library_folder.resolve() if self._project_library_folder else None
         )
-        for raw_path in paths:
-            path = Path(raw_path)
+        for path in paths:
             if active_folder is not None:
                 try:
                     path.resolve().relative_to(active_folder)
@@ -510,6 +695,88 @@ class ReferenceLibraryDialog(QDialog):
         if failures:
             summary += "\n\n" + "\n".join(failures[:3])
         QMessageBox.information(self, "Reference Import Summary", summary)
+
+    # ------------------------------------------------------------------
+    # Drag & drop
+    # ------------------------------------------------------------------
+
+    @staticmethod
+    def _extract_spa_paths(event_mime) -> list[Path]:
+        """Return `.spa` files from a QMimeData URL list (recursing into folders)."""
+        if not event_mime.hasUrls():
+            return []
+        result: list[Path] = []
+        for url in event_mime.urls():
+            if not url.isLocalFile():
+                continue
+            path = Path(url.toLocalFile())
+            if path.is_dir():
+                result.extend(sorted(path.rglob("*.[sS][pP][aA]")))
+            elif path.suffix.lower() == ".spa":
+                result.append(path)
+        return result
+
+    def dragEnterEvent(self, event: QDragEnterEvent) -> None:  # noqa: N802 (Qt override)
+        if self._extract_spa_paths(event.mimeData()):
+            event.acceptProposedAction()
+        else:
+            event.ignore()
+
+    def dragMoveEvent(self, event) -> None:  # noqa: N802 (Qt override)
+        if self._extract_spa_paths(event.mimeData()):
+            event.acceptProposedAction()
+        else:
+            event.ignore()
+
+    def dropEvent(self, event: QDropEvent) -> None:  # noqa: N802 (Qt override)
+        paths = self._extract_spa_paths(event.mimeData())
+        if not paths:
+            event.ignore()
+            return
+        event.acceptProposedAction()
+        self._import_paths(paths)
+
+    # ------------------------------------------------------------------
+    # Keyboard shortcuts
+    # ------------------------------------------------------------------
+
+    def keyPressEvent(self, event: QKeyEvent) -> None:  # noqa: N802 (Qt override)
+        """Handle dialog-level shortcuts.
+
+        * Delete / Backspace → delete the selected reference(s)
+        * F2                 → rename the single selected reference
+        * Enter / Return     → open the selected reference in the main window
+
+        When the user is actively editing a QLineEdit (name filter) or the
+        description cell of the table, we fall through to default behaviour
+        so typing is not intercepted.
+        """
+        focus_widget = self.focusWidget()
+        table_is_editing = self._table.state() == QTableWidget.State.EditingState
+
+        if isinstance(focus_widget, QLineEdit) or table_is_editing:
+            super().keyPressEvent(event)
+            return
+
+        key = event.key()
+        if key in (Qt.Key.Key_Delete, Qt.Key.Key_Backspace):
+            if self._selected_ref_ids():
+                self._on_delete()
+                event.accept()
+                return
+        elif key == Qt.Key.Key_F2:
+            if self._selected_ref_id() is not None:
+                self._on_rename()
+                event.accept()
+                return
+        elif key in (Qt.Key.Key_Return, Qt.Key.Key_Enter):
+            ids = self._selected_ref_ids()
+            if len(ids) == 1:
+                self._on_open_in_main()
+                event.accept()
+                return
+
+        super().keyPressEvent(event)
 
     def _on_find_similar(self) -> None:
         """Rank the reference library by similarity to the current spectrum."""
@@ -547,24 +814,119 @@ class ReferenceLibraryDialog(QDialog):
         self._load_data()
 
     def _on_delete(self) -> None:
-        """Confirm and delete the selected reference spectrum."""
-        ref = self._selected_ref()
-        if ref is None:
+        """Confirm and delete the selected reference spectra (supports multi-select)."""
+        refs = self._selected_refs()
+        if not refs:
             return
+
+        if len(refs) == 1:
+            msg = f'Delete reference spectrum "{refs[0]["name"]}"?\nThis cannot be undone.'
+        else:
+            preview = ", ".join(r["name"] for r in refs[:5])
+            if len(refs) > 5:
+                preview += f" (+{len(refs) - 5} more)"
+            msg = f"Delete {len(refs)} reference spectra?\n{preview}\n\nThis cannot be undone."
 
         answer = QMessageBox.question(
             self,
-            "Delete Reference",
-            f'Delete reference spectrum "{ref["name"]}"?\nThis cannot be undone.',
+            "Delete References" if len(refs) > 1 else "Delete Reference",
+            msg,
             QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.No,
             QMessageBox.StandardButton.No,
         )
         if answer != QMessageBox.StandardButton.Yes:
             return
 
-        self._db.delete_reference_spectrum(ref["id"])
+        for ref in refs:
+            self._db.delete_reference_spectrum(ref["id"])
+        # Drop any stale similarity entries for deleted rows so the next
+        # refresh doesn't try to re-rank ghost ids.
+        for ref in refs:
+            self._similarity_by_ref_id.pop(ref["id"], None)
         self._preview_label.setText("Select a row to preview")
         self._load_data()
+
+    def _on_item_changed(self, item: QTableWidgetItem) -> None:
+        """Persist inline description edits back to the database."""
+        if self._suppress_item_changed:
+            return
+        if item.column() != _COL_DESCRIPTION:
+            return
+        row = item.row()
+        name_item = self._table.item(row, _COL_NAME)
+        if name_item is None:
+            return
+        ref_id = name_item.data(Qt.ItemDataRole.UserRole)
+        if not isinstance(ref_id, int):
+            return
+        new_description = item.text()
+        try:
+            self._db.update_reference_description(ref_id, new_description)
+        except Exception as exc:  # noqa: BLE001
+            QMessageBox.critical(
+                self,
+                "Update Error",
+                f"Failed to update description:\n{exc}",
+            )
+            return
+        # Reflect the new value in the in-memory ref dict without rebuilding
+        # the whole table (which would lose the user's selection).
+        for ref in self._refs_all:
+            if ref["id"] == ref_id:
+                ref["description"] = new_description
+                break
+        for ref in self._refs:
+            if ref["id"] == ref_id:
+                ref["description"] = new_description
+                break
+
+    def _on_open_in_main(self) -> None:
+        """Emit reference_opened for the focused ref, then close the dialog."""
+        ref = self._selected_ref()
+        if ref is None:
+            return
+        source = str(ref.get("source", "") or "")
+        if not source or not Path(source).exists():
+            QMessageBox.warning(
+                self,
+                "Source Missing",
+                "This reference's original .SPA file is not available at:\n"
+                f"{source or '(empty path)'}\n\n"
+                "Re-import the file to update the source path.",
+            )
+            return
+        self.reference_opened.emit(source)
+        self.accept()
+
+    def _on_find_similar_to_selected(self) -> None:
+        """Rank the library using the selected reference as the query spectrum."""
+        if self._project_library_folder is None:
+            return
+        ref = self._selected_ref()
+        if ref is None:
+            return
+        try:
+            query = Spectrum(
+                wavenumbers=ref["wavenumbers"],
+                intensities=ref["intensities"],
+                y_unit=ref.get("y_unit", "Absorbance"),
+            )
+            outcome = self._library_service.search_spectrum(
+                query,
+                top_n=None,
+                auto_import_project_library=False,
+            )
+        except Exception as exc:  # noqa: BLE001
+            QMessageBox.critical(
+                self,
+                "Similarity Search Error",
+                f"Failed to search reference library:\n{exc}",
+            )
+            return
+
+        self._similarity_by_ref_id = {result.ref_id: result.score for result in outcome.results}
+        self._load_data()
+        self._apply_search_outcome_status(outcome)
 
     def _on_rename(self) -> None:
         """Prompt for a new name and rename the selected reference spectrum."""
@@ -675,7 +1037,7 @@ class ReferenceLibraryDialog(QDialog):
 
         self._pg = pg
         self._preview_plot = pg.PlotWidget(background="w")
-        self._preview_plot.setMinimumHeight(200)
+        self._preview_plot.setMinimumHeight(220)
         self._preview_plot.setMenuEnabled(False)
         self._preview_plot.setMouseEnabled(x=False, y=False)
         self._preview_plot.hideButtons()
@@ -687,9 +1049,10 @@ class ReferenceLibraryDialog(QDialog):
             axis_item = self._preview_plot.getAxis(axis)
             axis_item.setPen(pg.mkPen(color="k", width=1))
             axis_item.setTextPen(pg.mkPen(color="k"))
-        self._preview_curve = self._preview_plot.plot(pen=pg.mkPen("k", width=1))
+        self._preview_legend = self._preview_plot.addLegend(offset=(10, 10))
         self._current_spectrum_curve = self._preview_plot.plot(
-            pen=pg.mkPen(color=(0, 100, 200, 160), width=1.5)
+            pen=pg.mkPen(color=(0, 100, 200, 160), width=1.5),
+            name="Current spectrum",
         )
         self._current_spectrum_curve.setVisible(False)
         self._preview_placeholder = pg.TextItem(
@@ -701,11 +1064,24 @@ class ReferenceLibraryDialog(QDialog):
         layout.addWidget(self._preview_plot)
         self._show_empty_preview_plot()
 
+    def _clear_preview_curves(self) -> None:
+        """Remove any previously rendered reference curves from the plot."""
+        if self._preview_plot is None:
+            return
+        for curve in self._preview_curves:
+            self._preview_plot.removeItem(curve)
+            if self._preview_legend is not None:
+                try:
+                    self._preview_legend.removeItem(curve)
+                except Exception:  # noqa: BLE001
+                    pass
+        self._preview_curves = []
+
     def _show_empty_preview_plot(self) -> None:
         """Render an empty preview plot with placeholder text."""
-        if self._preview_plot is None or self._preview_curve is None:
+        if self._preview_plot is None:
             return
-        self._preview_curve.setData([], [])
+        self._clear_preview_curves()
         if self._current_spectrum_curve is not None:
             self._current_spectrum_curve.setData([], [])
             self._current_spectrum_curve.setVisible(False)
@@ -717,44 +1093,63 @@ class ReferenceLibraryDialog(QDialog):
 
     def _on_show_current_spectrum_toggled(self) -> None:
         """Update the current-spectrum overlay curve when the checkbox changes."""
-        ref = self._selected_ref()
-        if ref is not None:
-            self._show_reference_preview(ref)
+        refs = self._selected_refs()
+        if refs:
+            self._show_reference_preview(refs)
         elif self._current_spectrum_curve is not None:
             self._current_spectrum_curve.setData([], [])
             self._current_spectrum_curve.setVisible(False)
 
-    def _show_reference_preview(self, ref: dict) -> None:
-        """Render the selected reference spectrum into the miniature preview plot."""
+    def _show_reference_preview(self, refs: list[dict]) -> None:
+        """Render the selected reference spectra into the miniature preview plot.
+
+        When a single reference is selected, its curve is drawn at native
+        scale. When multiple references are selected (or the
+        "Show current spectrum" checkbox is on), all curves are
+        max-normalized to 0–1 so they share a visual baseline.
+        """
         import numpy as np  # noqa: PLC0415
 
-        if self._preview_plot is None or self._preview_curve is None:
+        if self._preview_plot is None:
             return
         if self._preview_placeholder is not None:
             self._preview_placeholder.setVisible(False)
+
+        pg = self._pg
+        self._clear_preview_curves()
 
         show_current = (
             self._current_spectrum is not None
             and self._current_spectrum_curve is not None
             and self._show_current_spectrum_cb.isChecked()
         )
+        normalize = len(refs) > 1 or show_current
 
-        if show_current:
-            # Normalize both curves to 0–1 range for visual comparison
+        for idx, ref in enumerate(refs):
             ref_y = np.asarray(ref["intensities"], dtype=float)
-            ref_max = np.max(np.abs(ref_y))
-            norm_ref_y = ref_y / ref_max if ref_max > 0 else ref_y
-            self._preview_curve.setData(x=ref["wavenumbers"], y=norm_ref_y)
+            if normalize:
+                ref_max = np.max(np.abs(ref_y))
+                y_data = ref_y / ref_max if ref_max > 0 else ref_y
+            else:
+                y_data = ref_y
+            color = _PREVIEW_COLORS[idx % len(_PREVIEW_COLORS)]
+            pen = pg.mkPen(color=color, width=1)
+            curve = self._preview_plot.plot(
+                x=ref["wavenumbers"],
+                y=y_data,
+                pen=pen,
+                name=ref["name"],
+            )
+            self._preview_curves.append(curve)
 
+        if show_current and self._current_spectrum_curve is not None:
             cur_y = np.asarray(self._current_spectrum.intensities, dtype=float)
             cur_max = np.max(np.abs(cur_y))
             norm_cur_y = cur_y / cur_max if cur_max > 0 else cur_y
             self._current_spectrum_curve.setData(x=self._current_spectrum.wavenumbers, y=norm_cur_y)
             self._current_spectrum_curve.setVisible(True)
-        else:
-            self._preview_curve.setData(x=ref["wavenumbers"], y=ref["intensities"])
-            if self._current_spectrum_curve is not None:
-                self._current_spectrum_curve.setData([], [])
-                self._current_spectrum_curve.setVisible(False)
+        elif self._current_spectrum_curve is not None:
+            self._current_spectrum_curve.setData([], [])
+            self._current_spectrum_curve.setVisible(False)
 
         self._preview_plot.autoRange()

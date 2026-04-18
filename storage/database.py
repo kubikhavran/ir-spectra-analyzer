@@ -379,6 +379,15 @@ class Database:
         )
         self._conn.commit()
 
+    def update_reference_description(self, ref_id: int, description: str) -> None:
+        """Update the description field of a reference spectrum by id."""
+        assert self._conn is not None
+        self._conn.execute(
+            "UPDATE reference_spectra SET description = ? WHERE id = ?",
+            (description, ref_id),
+        )
+        self._conn.commit()
+
     def close(self) -> None:
         """Close the database connection."""
         if self._conn:
