@@ -46,6 +46,6 @@ class CSVExporter:
                         f"{peak.position:.2f}",
                         f"{peak.intensity:.4f}",
                         peak.label,
-                        "",  # vibration assignment — populated when implemented
+                        " / ".join(peak.vibration_labels),
                     ]
                 )

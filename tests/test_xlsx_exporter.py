@@ -18,8 +18,20 @@ class TestXLSXExporter:
     def test_export_peaks_only(self) -> None:
         """Test export with peaks but no spectrum."""
         peaks = [
-            Peak(position=1650.5, intensity=0.85, label="C=O stretch", vibration_id=1),
-            Peak(position=2950.0, intensity=0.92, label="C-H stretch", vibration_id=2),
+            Peak(
+                position=1650.5,
+                intensity=0.85,
+                label="C=O stretch",
+                vibration_ids=[1],
+                vibration_labels=["C=O stretch"],
+            ),
+            Peak(
+                position=2950.0,
+                intensity=0.92,
+                label="C-H stretch",
+                vibration_ids=[2],
+                vibration_labels=["C-H stretch"],
+            ),
         ]
 
         with tempfile.NamedTemporaryFile(suffix=".xlsx", delete=False) as tmp:

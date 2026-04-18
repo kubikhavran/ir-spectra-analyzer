@@ -123,14 +123,14 @@ def test_pdf_generator_omits_metadata_when_disabled(tmp_path: Path, monkeypatch)
 
     project = _make_project()
     called = False
-    original = PDFGenerator._append_metadata_section
+    original = PDFGenerator._append_metadata_and_structure_section
 
     def _spy(self, *args, **kwargs) -> None:
         nonlocal called
         called = True
         return original(self, *args, **kwargs)
 
-    monkeypatch.setattr(PDFGenerator, "_append_metadata_section", _spy)
+    monkeypatch.setattr(PDFGenerator, "_append_metadata_and_structure_section", _spy)
 
     out = tmp_path / "report_without_metadata.pdf"
     PDFGenerator().generate(project, out, options=ReportOptions(include_metadata=False))
@@ -140,26 +140,29 @@ def test_pdf_generator_omits_metadata_when_disabled(tmp_path: Path, monkeypatch)
 
 
 def test_pdf_generator_omits_structures_when_disabled(tmp_path: Path, monkeypatch) -> None:
-    """Structure section should not be appended when disabled in ReportOptions."""
+    """Structure rendering should be skipped when include_structures=False, even though the
+    metadata section itself is still drawn."""
     from reporting.pdf_generator import PDFGenerator, ReportOptions
 
     project = _make_project()
-    project.peaks.append(Peak(position=1500.0, intensity=0.6, smiles="C"))
-    called = False
-    original = PDFGenerator._append_structure_section
+    project.smiles = "CCO"  # project-level SMILES so structure would otherwise be rendered
+    project.peaks.append(Peak(position=1500.0, intensity=0.6))
 
-    def _spy(self, *args, **kwargs) -> None:
-        nonlocal called
-        called = True
-        return original(self, *args, **kwargs)
+    render_calls: list = []
 
-    monkeypatch.setattr(PDFGenerator, "_append_structure_section", _spy)
+    def _fake_render_to_svg(*args, **kwargs) -> str:
+        render_calls.append(kwargs)
+        return "<svg></svg>"
+
+    monkeypatch.setattr(
+        "chemistry.structure_renderer.render_to_svg", _fake_render_to_svg
+    )
 
     out = tmp_path / "report_without_structures.pdf"
     PDFGenerator().generate(project, out, options=ReportOptions(include_structures=False))
 
     assert out.exists()
-    assert not called
+    assert render_calls == [], "render_to_svg should not be called when include_structures=False"
 
 
 def test_spectrum_renderer_render_to_bytes() -> None:
@@ -198,24 +201,26 @@ def test_pdf_with_project_smiles_calls_structure_section(tmp_path, monkeypatch) 
 
 
 def test_pdf_without_project_smiles_skips_structure_section(tmp_path, monkeypatch) -> None:
-    """PDF with empty project.smiles should NOT call _append_structure_section."""
+    """PDF with empty project.smiles should not attempt to render any molecular structure."""
     from reporting.pdf_generator import PDFGenerator, ReportOptions
 
     project = _make_project()
     project.smiles = ""  # no project-level SMILES
+    project.mol_block = ""
+    project.structure_image = None
 
-    called = False
-    original = PDFGenerator._append_structure_section
+    render_calls: list = []
 
-    def _spy(self, *args, **kwargs) -> None:
-        nonlocal called
-        called = True
-        return original(self, *args, **kwargs)
+    def _fake_render_to_svg(*args, **kwargs) -> str:
+        render_calls.append(kwargs)
+        return "<svg></svg>"
 
-    monkeypatch.setattr(PDFGenerator, "_append_structure_section", _spy)
+    monkeypatch.setattr(
+        "chemistry.structure_renderer.render_to_svg", _fake_render_to_svg
+    )
 
     out = tmp_path / "report_no_project_smiles.pdf"
     PDFGenerator().generate(project, out, options=ReportOptions(include_structures=True))
 
     assert out.exists()
-    assert not called
+    assert render_calls == [], "render_to_svg should not be called without SMILES/mol_block"

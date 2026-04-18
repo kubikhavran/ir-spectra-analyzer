@@ -1,3 +1,9 @@
+
+
+
+
+
+
 """
 MoleculeEditorDialog — Dialog for editing molecular structures.
 
@@ -39,14 +45,34 @@ _JSME_CACHE_DIR = Path.home() / ".ir-spectra-analyzer" / "jsme"
 _JSME_JS = _JSME_CACHE_DIR / "jsme.nocache.js"
 _JSME_BASE_URL = "https://unpkg.com/jsme-editor"
 
+# GWT companion stylesheets loaded by the nocache bootstrap. Without these
+# files on disk next to the JS, JSME's element-picker dialog (the popup that
+# opens when the user clicks the "X" button in the side bar to choose
+# elements other than the default C/N/O/S/F/Cl/Br/I/P) renders as an
+# unstyled, effectively invisible GWT DialogBox.
+_JSME_CSS_REFS: tuple[str, ...] = (
+    "jsa.css",
+    "gwt/chrome/chrome.css",
+    "gwt/chrome/mosaic.css",
+)
+
 _JSME_HTML_TEMPLATE = """\
 <!DOCTYPE html>
 <html>
 <head>
 <meta charset="utf-8">
 <style>
-  html, body {{ margin: 0; padding: 0; width: 100%; height: 100%; background: #ffffff; }}
+  html, body {{ margin: 0; padding: 0; width: 100%; background: #ffffff; }}
   #jsme_container {{ width: 100%; }}
+  /* Allow GWT popup panels (element picker, context menus) to overflow their
+     parent jsa-resetDiv containers which default to overflow:hidden. Without
+     this the periodic-table dialog that opens when the user clicks X is
+     clipped and never becomes visible. */
+  .jsa-resetDiv {{ overflow: visible !important; }}
+  /* Ensure GWT popups sit above all JSME overlay divs. */
+  .gwt-PopupPanel,
+  .gwt-DecoratedPopupPanel,
+  .gwt-DialogBox {{ z-index: 99999 !important; }}
 </style>
 <script src="qrc:///qtwebchannel/qwebchannel.js"></script>
 <script src="jsme.nocache.js"></script>
@@ -158,26 +184,30 @@ function sendMolFile() {{
 
 
 def _ensure_jsme_cached() -> Path | None:
-    """Download JSME.nocache.js + companion .cache.js files to local cache.
+    """Download JSME.nocache.js + companion .cache.js and GWT css files.
 
     Parses the nocache loader to find the two GWT permutation hashes and
-    downloads those .cache.js files alongside the loader. All files land in
-    _JSME_CACHE_DIR so the HTML can reference them with relative paths.
+    downloads those .cache.js files alongside the loader. Also downloads the
+    GWT stylesheets (jsa.css + gwt/chrome/*.css) that the nocache loader
+    injects at runtime — those are required for the element-picker dialog to
+    render. All files land in _JSME_CACHE_DIR so the HTML can reference them
+    with relative paths.
 
     Returns the path to jsme.nocache.js, or None on any failure.
     """
     import re  # noqa: PLC0415
 
-    if _JSME_JS.exists():
-        return _JSME_JS
     try:
         _JSME_CACHE_DIR.mkdir(parents=True, exist_ok=True)
 
-        # 1. Download the nocache loader
-        loader_url = f"{_JSME_BASE_URL}/jsme.nocache.js"
-        with urllib.request.urlopen(loader_url, timeout=10) as resp:  # noqa: S310
-            loader_bytes = resp.read()
-        _JSME_JS.write_bytes(loader_bytes)
+        if _JSME_JS.exists():
+            loader_bytes = _JSME_JS.read_bytes()
+        else:
+            # 1. Download the nocache loader
+            loader_url = f"{_JSME_BASE_URL}/jsme.nocache.js"
+            with urllib.request.urlopen(loader_url, timeout=10) as resp:  # noqa: S310
+                loader_bytes = resp.read()
+            _JSME_JS.write_bytes(loader_bytes)
 
         # 2. Find companion .cache.js hashes embedded in the loader
         loader_text = loader_bytes.decode("utf-8", errors="replace")
@@ -195,6 +225,22 @@ def _ensure_jsme_cached() -> Path | None:
                     dest.write_bytes(resp.read())
             except Exception:  # noqa: BLE001
                 pass  # non-fatal: the loader will skip unavailable permutations
+
+        # 4. Download the GWT stylesheets (jsa.css, gwt/chrome/*.css) that the
+        # nocache bootstrap injects at runtime. Without them the GWT DialogBox
+        # that hosts the periodic-table element picker has no layout and the
+        # popup is effectively invisible to the user.
+        for rel in _JSME_CSS_REFS:
+            dest = _JSME_CACHE_DIR / rel
+            if dest.exists() and dest.stat().st_size > 0:
+                continue
+            try:
+                dest.parent.mkdir(parents=True, exist_ok=True)
+                css_url = f"{_JSME_BASE_URL}/{rel}"
+                with urllib.request.urlopen(css_url, timeout=15) as resp:  # noqa: S310
+                    dest.write_bytes(resp.read())
+            except Exception:  # noqa: BLE001
+                pass  # non-fatal: JSME still loads, just without styled popups
 
         return _JSME_JS
     except Exception:  # noqa: BLE001
@@ -265,7 +311,7 @@ class MoleculeEditorDialog(QDialog):
     def __init__(self, initial_smiles: str = "", parent=None) -> None:
         super().__init__(parent)
         self.setWindowTitle("Edit Molecular Structure")
-        self.resize(620, 560)
+        self.resize(620, 680)
 
         self._initial_smiles = initial_smiles
         self._draw_smiles: str = initial_smiles  # updated by JS bridge
@@ -361,9 +407,12 @@ class MoleculeEditorDialog(QDialog):
         vbox.addWidget(self._web_view)
 
         info = QLabel(
-            "Draw a structure above. If the editor does not load, switch to the SMILES tab."
+            "Draw a structure above. For elements not in the side bar (e.g. Na, K, Fe, Mg), "
+            "click the <b>X</b> button, then type the element symbol on the keyboard and "
+            "click the atom you want to replace. Use the SMILES tab if the editor does not load."
         )
         info.setWordWrap(True)
+        info.setTextFormat(Qt.TextFormat.RichText)
         vbox.addWidget(info)
 
         return container

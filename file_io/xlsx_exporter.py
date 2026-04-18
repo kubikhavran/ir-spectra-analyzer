@@ -52,10 +52,8 @@ class XLSXExporter:
         for row, peak in enumerate(peaks, start=2):
             peaks_ws.cell(row=row, column=1, value=round(peak.position, 2))
             peaks_ws.cell(row=row, column=2, value=round(peak.intensity, 4))
-            peaks_ws.cell(row=row, column=3, value=peak.display_label)
-            # Vibration column: show label when a vibration preset is assigned
-            vibration_name = peak.label if peak.vibration_id is not None else ""
-            peaks_ws.cell(row=row, column=4, value=vibration_name)
+            peaks_ws.cell(row=row, column=3, value=peak.label)
+            peaks_ws.cell(row=row, column=4, value=" / ".join(peak.vibration_labels))
 
         # Auto-adjust column widths for Peaks sheet (outside row loop — O(n) not O(n²))
         for col in peaks_ws.columns:

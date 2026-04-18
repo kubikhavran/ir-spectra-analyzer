@@ -213,6 +213,30 @@ class MainWindow(QMainWindow):
         ):
             self._view_menu.addAction(dock.toggleViewAction())
 
+        self._reload_vibration_presets()
+
+    def _reload_vibration_presets(self) -> None:
+        """Fetch vibration presets from the DB and populate the side panel."""
+        if not hasattr(self._db, "get_vibration_presets"):
+            return
+        from core.vibration_presets import VibrationPreset  # noqa: PLC0415
+
+        raw_presets = self._db.get_vibration_presets()
+        presets = [
+            VibrationPreset(
+                name=row["name"],
+                typical_range_min=row["typical_range_min"],
+                typical_range_max=row["typical_range_max"],
+                category=row.get("category", ""),
+                description=row.get("description", ""),
+                color=row.get("color", "#4A90D9"),
+                db_id=row.get("id"),
+                is_builtin=bool(row.get("is_builtin", 1)),
+            )
+            for row in raw_presets
+        ]
+        self._vibration_panel.set_presets(presets)
+
     def _setup_statusbar(self) -> None:
         """Set up status bar with cursor position label."""
         self._status_cursor = QLabel("Ready")
@@ -393,25 +417,8 @@ class MainWindow(QMainWindow):
             )
             self._metadata_panel.set_metadata(metadata)
 
-            # Load vibration presets from DB
-            if hasattr(self._db, "get_vibration_presets"):
-                from core.vibration_presets import VibrationPreset  # noqa: PLC0415
-
-                raw_presets = self._db.get_vibration_presets()
-                presets = [
-                    VibrationPreset(
-                        name=row["name"],
-                        typical_range_min=row["typical_range_min"],
-                        typical_range_max=row["typical_range_max"],
-                        category=row.get("category", ""),
-                        description=row.get("description", ""),
-                        color=row.get("color", "#4A90D9"),
-                        db_id=row.get("id"),
-                        is_builtin=bool(row.get("is_builtin", 1)),
-                    )
-                    for row in raw_presets
-                ]
-                self._vibration_panel.set_presets(presets)
+            # Refresh vibration presets in case the DB was modified externally
+            self._reload_vibration_presets()
 
             # Update molecule structure panel (new project starts with empty SMILES)
             self._molecule_widget.set_structure(
@@ -730,23 +737,7 @@ class MainWindow(QMainWindow):
 
     def _on_vibration_preset_changed(self) -> None:
         """Reload vibration presets after a custom preset is added or deleted."""
-        from core.vibration_presets import VibrationPreset  # noqa: PLC0415
-
-        raw_presets = self._db.get_vibration_presets()
-        presets = [
-            VibrationPreset(
-                name=row["name"],
-                typical_range_min=row["typical_range_min"],
-                typical_range_max=row["typical_range_max"],
-                category=row.get("category", ""),
-                description=row.get("description", ""),
-                color=row.get("color", "#4A90D9"),
-                db_id=row.get("id"),
-                is_builtin=bool(row.get("is_builtin", 1)),
-            )
-            for row in raw_presets
-        ]
-        self._vibration_panel.set_presets(presets)
+        self._reload_vibration_presets()
 
     def _on_structure_edited(self, smiles: str) -> None:
         """Handle SMILES change emitted by MoleculeWidget after dialog acceptance."""
@@ -754,13 +745,18 @@ class MainWindow(QMainWindow):
             return
         from core.commands import SetProjectSMILESCommand  # noqa: PLC0415
 
-        self._undo_stack.push(SetProjectSMILESCommand(self._project, smiles))
+        mol_block = getattr(self._molecule_widget, "_current_mol_block", "") or ""
+        self._undo_stack.push(SetProjectSMILESCommand(self._project, smiles, mol_block))
         self.statusBar().showMessage("Proposed structure updated")
 
     def _on_mol_block_changed(self, mol_block: str) -> None:
-        """Store the MOL block from the molecule editor in the project."""
-        if self._project is not None:
-            self._project.mol_block = mol_block
+        """No-op — mol_block is captured atomically by SetProjectSMILESCommand.
+
+        Kept so the widget's `mol_block_changed` signal still has a registered slot
+        and so future non-undoable callers remain supported without breaking the
+        connection.
+        """
+        return
 
     def _on_delete_peak(self) -> None:
         """Delete the currently selected peak."""
