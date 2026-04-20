@@ -14,6 +14,7 @@ from __future__ import annotations
 from pathlib import Path
 
 from core.peak import Peak
+from core.peak_assignments import build_peak_assignment_rows
 from core.spectrum import Spectrum
 
 
@@ -41,19 +42,23 @@ class XLSXExporter:
         # Create Peaks sheet
         peaks_ws = wb.active
         peaks_ws.title = "Peaks"
+        assignment_rows = build_peak_assignment_rows(
+            peaks,
+            is_dip_spectrum=spectrum.is_dip_spectrum if spectrum is not None else False,
+        )
 
         # Peaks headers
-        peaks_headers = ["Position (cm⁻¹)", "Intensity", "Label", "Vibration"]
+        peaks_headers = ["Position (cm⁻¹)", "Intensity", "Int.", "Assignment"]
         for col, header in enumerate(peaks_headers, start=1):
             cell = peaks_ws.cell(row=1, column=col, value=header)
             cell.font = Font(bold=True)
 
         # Peaks data
-        for row, peak in enumerate(peaks, start=2):
-            peaks_ws.cell(row=row, column=1, value=round(peak.position, 2))
-            peaks_ws.cell(row=row, column=2, value=round(peak.intensity, 4))
-            peaks_ws.cell(row=row, column=3, value=peak.label)
-            peaks_ws.cell(row=row, column=4, value=" / ".join(peak.vibration_labels))
+        for row, assignment_row in enumerate(assignment_rows, start=2):
+            peaks_ws.cell(row=row, column=1, value=assignment_row.position)
+            peaks_ws.cell(row=row, column=2, value=round(assignment_row.intensity, 4))
+            peaks_ws.cell(row=row, column=3, value=assignment_row.intensity_label)
+            peaks_ws.cell(row=row, column=4, value=assignment_row.assignment)
 
         # Auto-adjust column widths for Peaks sheet (outside row loop — O(n) not O(n²))
         for col in peaks_ws.columns:

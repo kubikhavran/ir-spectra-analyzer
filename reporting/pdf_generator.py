@@ -39,6 +39,11 @@ from reportlab.platypus import (
     TableStyle,
 )
 
+from core.peak_assignments import (
+    build_peak_assignment_rows,
+    classify_peak_intensities,
+    peak_assignment_text,
+)
 from core.project import Project
 from reporting.spectrum_renderer import SpectrumRenderer
 
@@ -114,56 +119,6 @@ class ReportOptions:
     include_metadata: bool = True
     dpi: int = 150
     view_x_range: tuple[float, float] | None = None
-
-
-def _classify_peak_intensities(peaks: list, is_dip_spectrum: bool) -> dict[int, str]:
-    """Return a {id(peak): label} mapping where label is 'w', 'm', 's', or 'vs'.
-
-    Classification is relative to the strongest absorption in the set:
-    - vs : >= 90 % of max absorption depth
-    - s  : 70–90 %
-    - m  : 40–70 %
-    - w  :  0–40 %
-
-    For %Transmittance (dip) spectra the absorption depth is approximated as
-    (100 - intensity); for Absorbance spectra the intensity value is used directly.
-    """
-    if not peaks:
-        return {}
-
-    if is_dip_spectrum:
-        depths = {id(p): max(0.0, 100.0 - p.intensity) for p in peaks}
-    else:
-        depths = {id(p): max(0.0, p.intensity) for p in peaks}
-
-    max_depth = max(depths.values()) or 1.0
-
-    result: dict[int, str] = {}
-    for peak in peaks:
-        rel = depths[id(peak)] / max_depth * 100.0
-        if rel >= 90.0:
-            result[id(peak)] = "vs"
-        elif rel >= 70.0:
-            result[id(peak)] = "s"
-        elif rel >= 40.0:
-            result[id(peak)] = "m"
-        else:
-            result[id(peak)] = "w"
-    return result
-
-
-def _peak_has_assignment(peak) -> bool:
-    """Return True when a peak has a real vibration assignment for reporting."""
-    return bool(peak.vibration_labels) or peak.vibration_id is not None
-
-
-def _peak_assignment_text(peak) -> str:
-    """Return the assignment text shown in the PDF table without numeric fallback."""
-    if peak.vibration_labels:
-        return " / ".join(peak.vibration_labels)
-    if peak.vibration_id is not None:
-        return peak.label
-    return ""
 
 
 def _footer(canvas, doc) -> None:  # type: ignore[no-untyped-def]
@@ -318,8 +273,13 @@ class PDFGenerator:
                 options,
             )
 
-        assigned_peaks = [peak for peak in project.peaks if _peak_has_assignment(peak)]
-        sorted_peaks = sorted(assigned_peaks, key=lambda p: p.position, reverse=True)
+        sorted_peaks = [
+            row.peak
+            for row in build_peak_assignment_rows(
+                project.peaks,
+                is_dip_spectrum=spectrum.is_dip_spectrum,
+            )
+        ]
         if options.include_peak_table and sorted_peaks:
             self._append_peak_table_section(
                 story,
@@ -486,7 +446,10 @@ class PDFGenerator:
         """Append the peak assignments table."""
         story.append(Paragraph("Peak assignments", section_style))
 
-        intensity_labels = _classify_peak_intensities(sorted_peaks, is_dip_spectrum)
+        intensity_labels = classify_peak_intensities(
+            sorted_peaks,
+            is_dip_spectrum=is_dip_spectrum,
+        )
 
         col_pos_w = 2.5 * cm
         col_int_w = 2.5 * cm
@@ -508,7 +471,7 @@ class PDFGenerator:
                     Paragraph(str(int(round(peak.position))), table_cell_right),
                     Paragraph(f"{peak.intensity:.4f}", table_cell_right),
                     Paragraph(cls_str, table_cell_right),
-                    Paragraph(_peak_assignment_text(peak), table_cell_style),
+                    Paragraph(peak_assignment_text(peak), table_cell_style),
                 ]
             )
 

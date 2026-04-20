@@ -1,6 +1,6 @@
 [project]
 name = "ir-spectra-analyzer"
-version = "0.4.1"
+version = "0.4.2"
 description = "Professional desktop software for IR spectrum analysis and interpretation"
 requires-python = ">=3.11"
 

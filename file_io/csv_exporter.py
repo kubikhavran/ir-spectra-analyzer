@@ -13,6 +13,7 @@ import csv
 from pathlib import Path
 
 from core.peak import Peak
+from core.peak_assignments import build_peak_assignment_rows
 from core.spectrum import Spectrum
 
 
@@ -38,14 +39,18 @@ class CSVExporter:
         """
         with output_path.open("w", newline="", encoding="utf-8") as f:
             writer = csv.writer(f, delimiter=delimiter)
+            assignment_rows = build_peak_assignment_rows(
+                peaks,
+                is_dip_spectrum=spectrum.is_dip_spectrum if spectrum is not None else False,
+            )
             if include_header:
-                writer.writerow(["Position (cm⁻¹)", "Intensity", "Label", "Vibration"])
-            for peak in peaks:
+                writer.writerow(["Position (cm⁻¹)", "Intensity", "Int.", "Assignment"])
+            for row in assignment_rows:
                 writer.writerow(
                     [
-                        f"{peak.position:.2f}",
-                        f"{peak.intensity:.4f}",
-                        peak.label,
-                        " / ".join(peak.vibration_labels),
+                        str(row.position),
+                        f"{row.intensity:.4f}",
+                        row.intensity_label,
+                        row.assignment,
                     ]
                 )
