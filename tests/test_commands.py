@@ -75,6 +75,38 @@ def test_assign_preset_command_redo_undo():
     assert 42 not in peak.vibration_ids
 
 
+def test_set_peak_vibrations_command_redo_undo():
+    _app()
+    from core.commands import SetPeakVibrationsCommand
+    from core.peak import Peak
+
+    peak = Peak(
+        position=2900.0,
+        intensity=0.8,
+        vibration_ids=[42],
+        vibration_labels=["C-H stretch"],
+    )
+    stack = QUndoStack()
+
+    stack.push(
+        SetPeakVibrationsCommand(
+            peak,
+            vibration_labels=["νas(CH₃) –CH₃–"],
+            vibration_ids=[None],
+        )
+    )
+
+    assert peak.display_label == "νas(CH₃) –CH₃–"
+    assert peak.vibration_labels == ["νas(CH₃) –CH₃–"]
+    assert peak.vibration_ids == [None]
+
+    stack.undo()
+
+    assert peak.display_label == "C-H stretch"
+    assert peak.vibration_labels == ["C-H stretch"]
+    assert peak.vibration_ids == [42]
+
+
 def test_detect_peaks_macro_is_single_undo():
     _app()
     from core.commands import AddPeakCommand

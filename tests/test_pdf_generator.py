@@ -117,6 +117,95 @@ def test_pdf_generator_omits_peak_table_when_disabled(tmp_path: Path, monkeypatc
     assert not called
 
 
+def test_pdf_generator_peak_table_includes_only_assigned_peaks(tmp_path: Path, monkeypatch) -> None:
+    """Peak assignments table should only include peaks with a real vibration assignment."""
+    from reporting.pdf_generator import PDFGenerator
+
+    project = _make_project()
+    project.peaks.extend(
+        [
+            Peak(position=3134.0, intensity=85.3, label="3134"),
+            Peak(
+                position=3030.0,
+                intensity=85.2,
+                vibration_ids=[None],
+                vibration_labels=["ν(CH₃)"],
+            ),
+            Peak(
+                position=2864.0,
+                intensity=86.7,
+                vibration_id=42,
+                label="νas(NH₂)",
+            ),
+        ]
+    )
+
+    captured_positions: list[float] = []
+    original = PDFGenerator._append_peak_table_section
+
+    def _spy(
+        self,
+        story,
+        sorted_peaks,
+        section_style,
+        table_header_style,
+        table_cell_style,
+        table_cell_right,
+        *,
+        is_dip_spectrum=False,
+    ) -> None:
+        captured_positions.extend(peak.position for peak in sorted_peaks)
+        return original(
+            self,
+            story,
+            sorted_peaks,
+            section_style,
+            table_header_style,
+            table_cell_style,
+            table_cell_right,
+            is_dip_spectrum=is_dip_spectrum,
+        )
+
+    monkeypatch.setattr(PDFGenerator, "_append_peak_table_section", _spy)
+
+    out = tmp_path / "report_only_assigned_peaks.pdf"
+    PDFGenerator().generate(project, out)
+
+    assert out.exists()
+    assert captured_positions == [3030.0, 2864.0]
+
+
+def test_pdf_generator_omits_peak_table_when_no_peaks_have_assignments(
+    tmp_path: Path, monkeypatch
+) -> None:
+    """Peak assignments section should be skipped entirely when nothing is assigned."""
+    from reporting.pdf_generator import PDFGenerator
+
+    project = _make_project()
+    project.peaks.extend(
+        [
+            Peak(position=3134.0, intensity=85.3, label="3134"),
+            Peak(position=1967.0, intensity=99.0, label="1967"),
+        ]
+    )
+
+    called = False
+    original = PDFGenerator._append_peak_table_section
+
+    def _spy(self, *args, **kwargs) -> None:
+        nonlocal called
+        called = True
+        return original(self, *args, **kwargs)
+
+    monkeypatch.setattr(PDFGenerator, "_append_peak_table_section", _spy)
+
+    out = tmp_path / "report_without_assigned_peaks.pdf"
+    PDFGenerator().generate(project, out)
+
+    assert out.exists()
+    assert called is False
+
+
 def test_pdf_generator_omits_metadata_when_disabled(tmp_path: Path, monkeypatch) -> None:
     """Metadata section should not be appended when disabled in ReportOptions."""
     from reporting.pdf_generator import PDFGenerator, ReportOptions

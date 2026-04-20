@@ -7,6 +7,7 @@ from core.commands.peak_commands import (
     CorrectBaselineCommand,
     DeletePeakCommand,
     RemovePresetCommand,
+    SetPeakVibrationsCommand,
 )
 from core.commands.set_project_smiles_command import SetProjectSMILESCommand
 
@@ -15,6 +16,7 @@ __all__ = [
     "DeletePeakCommand",
     "AssignPresetCommand",
     "RemovePresetCommand",
+    "SetPeakVibrationsCommand",
     "CorrectBaselineCommand",
     "AssignSMILESCommand",
     "SetProjectSMILESCommand",

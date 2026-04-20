@@ -28,6 +28,7 @@ from PySide6.QtWidgets import (
 )
 
 from core.vibration_presets import VibrationPreset
+from ui.vibration_text_edit import VibrationTextEdit
 
 
 class VibrationPanel(QWidget):
@@ -185,8 +186,8 @@ class _AddVibrationDialog(QDialog):
         layout = QVBoxLayout(self)
         form = QFormLayout()
 
-        self._name_edit = QLineEdit()
-        self._name_edit.setPlaceholderText("e.g. \u03bd(C=O) \u2013CO\u2013O\u2013")
+        self._name_edit = VibrationTextEdit(self)
+        self._name_edit.set_placeholder_text("e.g. \u03bd(C=O) \u2013CO\u2013O\u2013")
         form.addRow("Label:", self._name_edit)
 
         self._rmin_spin = QDoubleSpinBox()

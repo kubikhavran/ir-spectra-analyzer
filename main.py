@@ -27,7 +27,7 @@ def main() -> None:
 
     app = QApplication(sys.argv)
     app.setApplicationName("IR Spectra Analyzer")
-    app.setApplicationVersion("0.4.0")
+    app.setApplicationVersion("0.4.1")
     app.setOrganizationName("IRSpectra")
 
     icon_path = _resource_path("assets/icon.ico")

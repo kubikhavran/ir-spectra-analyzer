@@ -152,6 +152,20 @@ def _classify_peak_intensities(peaks: list, is_dip_spectrum: bool) -> dict[int, 
     return result
 
 
+def _peak_has_assignment(peak) -> bool:
+    """Return True when a peak has a real vibration assignment for reporting."""
+    return bool(peak.vibration_labels) or peak.vibration_id is not None
+
+
+def _peak_assignment_text(peak) -> str:
+    """Return the assignment text shown in the PDF table without numeric fallback."""
+    if peak.vibration_labels:
+        return " / ".join(peak.vibration_labels)
+    if peak.vibration_id is not None:
+        return peak.label
+    return ""
+
+
 def _footer(canvas, doc) -> None:  # type: ignore[no-untyped-def]
     """Draw footer on every page — adapts to actual page size."""
     _f, _, _ = _ensure_fonts()
@@ -304,7 +318,8 @@ class PDFGenerator:
                 options,
             )
 
-        sorted_peaks = sorted(project.peaks, key=lambda p: p.position, reverse=True)
+        assigned_peaks = [peak for peak in project.peaks if _peak_has_assignment(peak)]
+        sorted_peaks = sorted(assigned_peaks, key=lambda p: p.position, reverse=True)
         if options.include_peak_table and sorted_peaks:
             self._append_peak_table_section(
                 story,
@@ -493,7 +508,7 @@ class PDFGenerator:
                     Paragraph(str(int(round(peak.position))), table_cell_right),
                     Paragraph(f"{peak.intensity:.4f}", table_cell_right),
                     Paragraph(cls_str, table_cell_right),
-                    Paragraph(peak.display_label, table_cell_style),
+                    Paragraph(_peak_assignment_text(peak), table_cell_style),
                 ]
             )
 

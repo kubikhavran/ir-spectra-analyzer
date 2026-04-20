@@ -17,6 +17,7 @@ from __future__ import annotations
 from PySide6.QtCore import Qt
 from PySide6.QtGui import QKeySequence, QShortcut, QUndoStack
 from PySide6.QtWidgets import (
+    QDialog,
     QDockWidget,
     QFileDialog,
     QLabel,
@@ -34,6 +35,7 @@ from ui.peak_table_widget import PeakTableWidget
 from ui.spectrum_widget import SpectrumWidget
 from ui.toolbar import MainToolbar
 from ui.vibration_panel import VibrationPanel
+from ui.vibration_text_edit import VibrationTextEditDialog
 
 
 class MainWindow(QMainWindow):
@@ -272,6 +274,7 @@ class MainWindow(QMainWindow):
         self._vibration_panel.preset_deleted.connect(self._on_vibration_preset_changed)
         self._vibration_panel.preset_remove_requested.connect(self._on_remove_vibration)
         self._peak_table.vibration_label_removed.connect(self._on_vibration_label_removed)
+        self._peak_table.vibration_edit_requested.connect(self._on_edit_peak_vibration_requested)
         self._match_results_panel.candidate_selected.connect(self._on_match_candidate_selected)
         self._match_results_panel.import_reference.connect(self._on_import_reference)
         self._molecule_widget.smiles_changed.connect(self._on_structure_edited)
@@ -672,6 +675,68 @@ class MainWindow(QMainWindow):
         self._undo_stack.push(RemovePresetCommand(p, stub_preset))
         self._peak_table.set_peaks(self._project.peaks)
         self._spectrum_widget.set_peaks(self._project.peaks)
+        self._peak_table.select_peak(p)
+
+    def _on_edit_peak_vibration_requested(self, peak) -> None:
+        """Open a dedicated dialog for manual vibration text editing."""
+        if self._project is None:
+            return
+
+        existing_text = " / ".join(peak.vibration_labels)
+        dialog = VibrationTextEditDialog(
+            self,
+            title="Edit Peak Vibration",
+            label="Vibration:",
+            text=existing_text,
+        )
+        if dialog.exec() != QDialog.DialogCode.Accepted:
+            return
+
+        new_text = dialog.value().strip()
+        new_labels = self._parse_vibration_text(new_text)
+        new_ids = self._preserve_vibration_ids(peak, new_labels)
+        if new_labels == peak.vibration_labels and new_ids == peak.vibration_ids:
+            return
+
+        from core.commands import SetPeakVibrationsCommand  # noqa: PLC0415
+
+        self._undo_stack.push(SetPeakVibrationsCommand(peak, new_labels, new_ids))
+        self._peak_table.set_peaks(self._project.peaks)
+        self._peak_table.select_peak(peak)
+        self._spectrum_widget.set_peaks(self._project.peaks)
+
+        if new_labels:
+            self.statusBar().showMessage(
+                f"Updated vibration text for {peak.position:.1f} cm\u207b\u00b9"
+            )
+        else:
+            self.statusBar().showMessage(
+                f"Cleared vibration text for {peak.position:.1f} cm\u207b\u00b9"
+            )
+
+    @staticmethod
+    def _preserve_vibration_ids(peak, new_labels: list[str]) -> list[int | None]:
+        remaining = list(zip(peak.vibration_labels, peak.vibration_ids, strict=False))
+        preserved_ids: list[int | None] = []
+
+        for label in new_labels:
+            match_index = next(
+                (idx for idx, (old_label, _db_id) in enumerate(remaining) if old_label == label),
+                None,
+            )
+            if match_index is None:
+                preserved_ids.append(None)
+                continue
+            _matched_label, matched_id = remaining.pop(match_index)
+            preserved_ids.append(matched_id)
+
+        return preserved_ids
+
+    @staticmethod
+    def _parse_vibration_text(text: str) -> list[str]:
+        if not text:
+            return []
+        return [label.strip() for label in text.split(" / ") if label.strip()]
 
     def _on_preset_clicked_for_assign(self, preset) -> None:
         """Store preset as pending — next peak click in viewer will assign it."""

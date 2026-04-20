@@ -37,7 +37,7 @@ class Peak:
     intensity: float
     label: str = ""
     vibration_id: int | None = None
-    vibration_ids: list[int] = field(default_factory=list)
+    vibration_ids: list[int | None] = field(default_factory=list)
     vibration_labels: list[str] = field(default_factory=list)
     label_offset_x: float = 0.0
     label_offset_y: float = 0.0

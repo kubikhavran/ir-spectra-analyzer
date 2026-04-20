@@ -455,6 +455,24 @@ def test_vibration_panel_filter(qtbot):
     assert "C=O" in panel._list.item(0).text()
 
 
+def test_add_vibration_dialog_supports_symbol_editing(qtbot):
+    """Custom vibration dialog should support Greek letters and index conversion."""
+    from ui.vibration_panel import _AddVibrationDialog
+
+    dialog = _AddVibrationDialog()
+    qtbot.addWidget(dialog)
+
+    dialog._name_edit.set_text("v(CH3) cm-1")
+    dialog._name_edit.line_edit.setSelection(0, 1)
+    dialog._name_edit.insert_text("ν")
+    dialog._name_edit.line_edit.setSelection(4, 1)
+    dialog._name_edit.apply_subscript()
+    dialog._name_edit.line_edit.setSelection(len("ν(CH₃) cm"), 2)
+    dialog._name_edit.apply_superscript()
+
+    assert dialog.get_values()[0] == "ν(CH₃) cm⁻¹"
+
+
 def test_preset_assigned_to_peak_updates_label(qtbot):
     """Assigning a preset updates peak label and is reflected in PeakTableWidget."""
     from core.peak import Peak
@@ -476,6 +494,74 @@ def test_preset_assigned_to_peak_updates_label(qtbot):
     table.set_peaks([peak])  # refresh
 
     assert table._table.item(0, 2).text() == "C-H stretch"
+
+
+def test_peak_table_emits_vibration_edit_request_on_double_click(qtbot):
+    """Double-clicking the vibration column should request the dedicated editor dialog."""
+    from core.peak import Peak
+    from ui.peak_table_widget import PeakTableWidget
+
+    table = PeakTableWidget()
+    qtbot.addWidget(table)
+
+    peak = Peak(position=1715.0, intensity=0.7, vibration_labels=["C=O stretch"])
+    table.set_peaks([peak])
+
+    received = []
+    table.vibration_edit_requested.connect(received.append)
+
+    table._on_cell_double_clicked(0, 3)
+
+    assert received == [peak]
+
+
+def test_main_window_manual_vibration_edit_updates_peak_and_supports_undo(qtbot, monkeypatch):
+    """Manual vibration text editing should update the peak and remain undoable."""
+    from PySide6.QtWidgets import QDialog
+
+    from core.peak import Peak
+    from core.project import Project
+    from ui.main_window import MainWindow
+
+    window = MainWindow(db=_make_mock_db(), settings=_make_mock_settings())
+    qtbot.addWidget(window)
+
+    peak = Peak(
+        position=1715.0,
+        intensity=0.7,
+        vibration_ids=[42],
+        vibration_labels=["C=O stretch"],
+    )
+    window._project = Project(name="Manual vibration", spectrum=_make_spectrum())
+    window._project.peaks.append(peak)
+    window._peak_table.set_peaks(window._project.peaks)
+    window._peak_table.select_peak(peak)
+
+    captured: dict[str, str | None] = {"text": None}
+
+    class _FakeDialog:
+        def __init__(self, parent=None, *, title="", label="", text="") -> None:
+            captured["text"] = text
+
+        def exec(self) -> int:
+            return QDialog.DialogCode.Accepted
+
+        def value(self) -> str:
+            return "δd(CH₃) CH₃–C=O/N/S"
+
+    monkeypatch.setattr("ui.main_window.VibrationTextEditDialog", _FakeDialog)
+
+    window._on_edit_peak_vibration_requested(peak)
+
+    assert captured["text"] == "C=O stretch"
+    assert peak.vibration_labels == ["δd(CH₃) CH₃–C=O/N/S"]
+    assert peak.vibration_ids == [None]
+    assert window._peak_table._table.item(0, 3).text() == "δd(CH₃) CH₃–C=O/N/S"
+
+    window._undo_stack.undo()
+
+    assert peak.vibration_labels == ["C=O stretch"]
+    assert peak.vibration_ids == [42]
 
 
 def test_set_tool_mode_zoom(qtbot):

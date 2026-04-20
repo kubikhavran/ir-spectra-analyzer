@@ -10,7 +10,7 @@ Zodpovědnost:
 
 from __future__ import annotations
 
-from PySide6.QtCore import Signal
+from PySide6.QtCore import Qt, Signal
 from PySide6.QtWidgets import QTableWidget, QTableWidgetItem, QVBoxLayout, QWidget
 
 from core.peak import Peak
@@ -22,6 +22,7 @@ class PeakTableWidget(QWidget):
     peak_selected = Signal(object)  # emits Peak on row selection
     peak_deleted = Signal(object)  # emits Peak on delete action
     vibration_label_removed = Signal(object, str)  # emits (Peak, label_str) on removal
+    vibration_edit_requested = Signal(object)  # emits Peak when vibration text should be edited
 
     def __init__(self, parent=None) -> None:
         super().__init__(parent)
@@ -40,6 +41,7 @@ class PeakTableWidget(QWidget):
         self._table.setSelectionBehavior(self._table.SelectionBehavior.SelectRows)
         self._table.itemSelectionChanged.connect(self._on_selection_changed)
         self._table.itemChanged.connect(self._on_item_changed)
+        self._table.cellDoubleClicked.connect(self._on_cell_double_clicked)
         layout.addWidget(self._table)
 
     def _on_selection_changed(self) -> None:
@@ -63,6 +65,12 @@ class PeakTableWidget(QWidget):
             if label not in new_labels:
                 self.vibration_label_removed.emit(peak, label)
 
+    def _on_cell_double_clicked(self, row: int, column: int) -> None:
+        if column != 3:
+            return
+        if 0 <= row < len(self._peaks):
+            self.vibration_edit_requested.emit(self._peaks[row])
+
     def set_peaks(self, peaks: list[Peak]) -> None:
         """Populate the table with peaks."""
         self._peaks = peaks
@@ -73,7 +81,9 @@ class PeakTableWidget(QWidget):
             self._table.setItem(row, 1, QTableWidgetItem(str(int(round(peak.intensity)))))
             self._table.setItem(row, 2, QTableWidgetItem(peak.label))
             assignment = peak.display_label if peak.vibration_labels else ""
-            self._table.setItem(row, 3, QTableWidgetItem(assignment))
+            vibration_item = QTableWidgetItem(assignment)
+            vibration_item.setFlags(vibration_item.flags() & ~Qt.ItemFlag.ItemIsEditable)
+            self._table.setItem(row, 3, vibration_item)
         self._table.blockSignals(False)
 
     def selected_peak(self) -> Peak | None:
