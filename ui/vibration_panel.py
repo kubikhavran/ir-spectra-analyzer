@@ -81,11 +81,18 @@ class VibrationPanel(QWidget):
         """Track the currently active peak for context menu remove action."""
         self._active_peak = peak
 
+    def clear_peak_context(self) -> None:
+        """Clear active-peak hint and remove range highlighting."""
+        self._active_peak = None
+        self._hint_label.setText("")
+        self._rebuild_list(self._filter_edit.text())
+
     def set_presets(self, presets: list[VibrationPreset]) -> None:
         self._presets = presets
         self._rebuild_list(self._filter_edit.text())
 
     def highlight_for_peak(self, wavenumber: float) -> None:
+        self._rebuild_list(self._filter_edit.text())
         self._hint_label.setText(f"Active peak: {wavenumber:.0f} cm\u207b\u00b9")
         for i in range(self._list.count()):
             item = self._list.item(i)

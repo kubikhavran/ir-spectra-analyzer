@@ -29,6 +29,7 @@ from PySide6.QtWidgets import (
 from app.report_presets import ReportPresetManager
 from storage.database import Database
 from storage.settings import Settings
+from ui.functional_group_panel import FunctionalGroupPanel
 from ui.metadata_panel import MetadataPanel
 from ui.molecule_widget import MoleculeWidget
 from ui.peak_table_widget import PeakTableWidget
@@ -57,6 +58,7 @@ class MainWindow(QMainWindow):
         self._recent_menu: QMenu | None = None
         self._undo_stack = QUndoStack(self)
         self._last_search_refs: list = []  # cached from last _on_match_spectrum call
+        self._vibration_presets_cache: list = []
         self._molecule_widget: MoleculeWidget
         self._report_preset_manager = ReportPresetManager(settings)
         self._pending_preset = None  # preset clicked in VibrationPanel, awaiting peak click
@@ -195,6 +197,19 @@ class MainWindow(QMainWindow):
         self.addDockWidget(Qt.DockWidgetArea.RightDockWidgetArea, self._dock_match)
         self.tabifyDockWidget(self._dock_metadata, self._dock_match)
 
+        # Bottom-right dock: Functional Group Ranking
+        self._functional_group_panel = FunctionalGroupPanel(self)
+        self._dock_functional_groups = QDockWidget("Functional Groups", self)
+        self._dock_functional_groups.setAllowedAreas(Qt.DockWidgetArea.AllDockWidgetAreas)
+        self._dock_functional_groups.setFeatures(dock_features)
+        self._dock_functional_groups.setWidget(self._functional_group_panel)
+        self._dock_functional_groups.setMinimumWidth(320)
+        self.addDockWidget(
+            Qt.DockWidgetArea.RightDockWidgetArea,
+            self._dock_functional_groups,
+        )
+        self.tabifyDockWidget(self._dock_metadata, self._dock_functional_groups)
+
         # Right dock: Molecule Structure
         self._molecule_widget = MoleculeWidget(self)
         self._dock_structure = QDockWidget("Structure", self)
@@ -211,6 +226,7 @@ class MainWindow(QMainWindow):
             self._dock_peaks,
             self._dock_metadata,
             self._dock_match,
+            self._dock_functional_groups,
             self._dock_structure,
         ):
             self._view_menu.addAction(dock.toggleViewAction())
@@ -237,7 +253,9 @@ class MainWindow(QMainWindow):
             )
             for row in raw_presets
         ]
+        self._vibration_presets_cache = presets
         self._vibration_panel.set_presets(presets)
+        self._refresh_functional_group_assignment_preview()
 
     def _setup_statusbar(self) -> None:
         """Set up status bar with cursor position label."""
@@ -254,13 +272,15 @@ class MainWindow(QMainWindow):
         """Refresh UI state after undo/redo operations."""
         if self._project is None or self._project.spectrum is None:
             return
+        preferred_peak = self._peak_table.selected_peak()
         spectrum = (
             self._project.corrected_spectrum
             if self._project.corrected_spectrum is not None
             else self._project.spectrum
         )
         self._spectrum_widget.set_spectrum(spectrum)
-        self._peak_table.set_peaks(self._project.peaks)
+        self._refresh_peak_views(preferred_peak)
+        self._refresh_functional_group_analysis()
 
     def _connect_signals(self) -> None:
         """Wire up inter-component signals."""
@@ -277,6 +297,10 @@ class MainWindow(QMainWindow):
         self._peak_table.vibration_edit_requested.connect(self._on_edit_peak_vibration_requested)
         self._match_results_panel.candidate_selected.connect(self._on_match_candidate_selected)
         self._match_results_panel.import_reference.connect(self._on_import_reference)
+        self._functional_group_panel.group_selected.connect(self._on_functional_group_selected)
+        self._functional_group_panel.suggestion_selected.connect(
+            self._on_functional_group_suggestion_selected
+        )
         self._molecule_widget.smiles_changed.connect(self._on_structure_edited)
         self._molecule_widget.mol_block_changed.connect(self._on_mol_block_changed)
 
@@ -345,6 +369,7 @@ class MainWindow(QMainWindow):
                 self._spectrum_widget.set_spectrum(display_spectrum)
 
             self._peak_table.set_peaks(project.peaks)
+            self._spectrum_widget.set_peaks(project.peaks)
 
             if project.spectrum is not None:
                 from core.metadata import SpectrumMetadata  # noqa: PLC0415
@@ -372,6 +397,7 @@ class MainWindow(QMainWindow):
                 mol_block=getattr(project, "mol_block", ""),
                 image_bytes=project.structure_image,
             )
+            self._refresh_functional_group_analysis()
 
             self.statusBar().showMessage(f"Project loaded: {Path(path).name}")
         except Exception as e:  # noqa: BLE001
@@ -429,6 +455,7 @@ class MainWindow(QMainWindow):
                 mol_block=getattr(self._project, "mol_block", ""),
                 image_bytes=self._project.structure_image,
             )
+            self._refresh_functional_group_analysis()
 
             base = f"Loaded: {Path(path).name} ({spectrum.n_points} points)"
             if self._project.peaks:
@@ -461,8 +488,7 @@ class MainWindow(QMainWindow):
         )
         cmd = AddPeakCommand(self._project, peak)
         self._undo_stack.push(cmd)
-        self._peak_table.set_peaks(self._project.peaks)
-        self._spectrum_widget.set_peaks(self._project.peaks)
+        self._refresh_peak_views(peak)
 
     def _on_detect_peaks(self) -> None:
         """Run automatic peak detection on the loaded spectrum."""
@@ -492,8 +518,7 @@ class MainWindow(QMainWindow):
         for peak in peaks:
             self._undo_stack.push(AddPeakCommand(self._project, peak))
         self._undo_stack.endMacro()
-        self._peak_table.set_peaks(self._project.peaks)
-        self._spectrum_widget.set_peaks(self._project.peaks)
+        self._refresh_peak_views()
         self.statusBar().showMessage(f"Detected {len(self._project.peaks)} peaks")
 
     def _on_correct_baseline(self) -> None:
@@ -530,6 +555,7 @@ class MainWindow(QMainWindow):
         self._undo_stack.push(command)
 
         self._spectrum_widget.set_spectrum(self._project.corrected_spectrum)
+        self._refresh_functional_group_analysis()
         self.statusBar().showMessage("Baseline corrected (Ctrl+Z to undo)")
 
     def _on_export(self) -> None:
@@ -634,6 +660,7 @@ class MainWindow(QMainWindow):
         )
         self._vibration_panel.highlight_for_peak(peak.position)
         self._vibration_panel.set_active_peak(peak)
+        self._set_functional_group_active_peak(peak)
 
     def _on_remove_vibration(self, preset) -> None:
         """Remove a vibration assignment from the currently selected peak."""
@@ -645,8 +672,7 @@ class MainWindow(QMainWindow):
         from core.commands import RemovePresetCommand  # noqa: PLC0415
 
         self._undo_stack.push(RemovePresetCommand(peak, preset))
-        self._peak_table.set_peaks(self._project.peaks)
-        self._spectrum_widget.set_peaks(self._project.peaks)
+        self._refresh_peak_views(peak)
         self.statusBar().showMessage(
             f'Removed "{preset.name}" from peak at {peak.position:.1f} cm\u207b\u00b9'
         )
@@ -673,9 +699,7 @@ class MainWindow(QMainWindow):
             db_id=db_id,
         )
         self._undo_stack.push(RemovePresetCommand(p, stub_preset))
-        self._peak_table.set_peaks(self._project.peaks)
-        self._spectrum_widget.set_peaks(self._project.peaks)
-        self._peak_table.select_peak(p)
+        self._refresh_peak_views(p)
 
     def _on_edit_peak_vibration_requested(self, peak) -> None:
         """Open a dedicated dialog for manual vibration text editing."""
@@ -701,9 +725,7 @@ class MainWindow(QMainWindow):
         from core.commands import SetPeakVibrationsCommand  # noqa: PLC0415
 
         self._undo_stack.push(SetPeakVibrationsCommand(peak, new_labels, new_ids))
-        self._peak_table.set_peaks(self._project.peaks)
-        self._peak_table.select_peak(peak)
-        self._spectrum_widget.set_peaks(self._project.peaks)
+        self._refresh_peak_views(peak)
 
         if new_labels:
             self.statusBar().showMessage(
@@ -759,14 +781,14 @@ class MainWindow(QMainWindow):
             preset = self._pending_preset
             self._pending_preset = None  # consume — next peak click won't re-assign
             self._undo_stack.push(AssignPresetCommand(peak, preset))
-            self._peak_table.set_peaks(self._project.peaks)
-            self._spectrum_widget.set_peaks(self._project.peaks)
+            self._refresh_peak_views(peak)
             status_msg = f'Assigned "{preset.name}" to {peak.position:.1f} cm\u207b\u00b9'
 
         # Always select in table and highlight matching vibrations
         self._peak_table.select_peak(peak)
         self._vibration_panel.highlight_for_peak(peak.position)
         self._vibration_panel.set_active_peak(peak)
+        self._set_functional_group_active_peak(peak)
         self.statusBar().showMessage(status_msg)
 
     def _on_clear_peaks(self) -> None:
@@ -779,8 +801,7 @@ class MainWindow(QMainWindow):
         for peak in list(self._project.peaks):
             self._undo_stack.push(DeletePeakCommand(self._project, peak))
         self._undo_stack.endMacro()
-        self._peak_table.set_peaks(self._project.peaks)
-        self._spectrum_widget.set_peaks(self._project.peaks)
+        self._refresh_peak_views()
         self.statusBar().showMessage("Peaks cleared")
 
     def _on_preset_selected(self, preset) -> None:
@@ -794,8 +815,7 @@ class MainWindow(QMainWindow):
         from core.commands import AssignPresetCommand  # noqa: PLC0415
 
         self._undo_stack.push(AssignPresetCommand(peak, preset))
-        self._peak_table.set_peaks(self._project.peaks)
-        self._spectrum_widget.set_peaks(self._project.peaks)
+        self._refresh_peak_views(peak)
         self.statusBar().showMessage(
             f'Assigned "{preset.name}" to peak at {peak.position:.1f} cm\u207b\u00b9'
         )
@@ -833,8 +853,7 @@ class MainWindow(QMainWindow):
         from core.commands import DeletePeakCommand  # noqa: PLC0415
 
         self._undo_stack.push(DeletePeakCommand(self._project, peak))
-        self._peak_table.set_peaks(self._project.peaks)
-        self._spectrum_widget.set_peaks(self._project.peaks)
+        self._refresh_peak_views()
         self.statusBar().showMessage(f"Deleted peak at {peak.position:.1f} cm\u207b\u00b9")
 
     def _on_delete_peak_object(self, peak: object) -> None:
@@ -844,8 +863,7 @@ class MainWindow(QMainWindow):
         from core.commands import DeletePeakCommand  # noqa: PLC0415
 
         self._undo_stack.push(DeletePeakCommand(self._project, peak))
-        self._peak_table.set_peaks(self._project.peaks)
-        self._spectrum_widget.set_peaks(self._project.peaks)
+        self._refresh_peak_views()
 
     def _on_match_spectrum(self) -> None:
         """Run spectral matching against the reference database."""
@@ -895,6 +913,120 @@ class MainWindow(QMainWindow):
             title=ref["name"],
         )
         self._spectrum_widget.set_overlay_spectra([overlay])
+
+    def _on_functional_group_selected(self, result) -> None:
+        """Highlight diagnostic regions for the selected functional group."""
+        self._spectrum_widget.set_diagnostic_regions(list(result.bands))
+        self._refresh_functional_group_assignment_preview()
+
+    def _on_functional_group_suggestion_selected(self, band) -> None:
+        """Assign a suggested vibration to the selected peak via the existing command path."""
+        if self._project is None:
+            return
+        peak = self._peak_table.selected_peak()
+        if peak is None:
+            self.statusBar().showMessage("Select a peak first, then double-click a suggestion.")
+            return
+        if not band.covers_wavenumber(peak.position):
+            self.statusBar().showMessage("Selected peak is outside the suggested vibration range.")
+            return
+
+        preset = self._find_best_preset_for_band(band, peak.position)
+        if preset is None:
+            self.statusBar().showMessage("No matching vibration preset found for this suggestion.")
+            return
+
+        from core.commands import AssignPresetCommand  # noqa: PLC0415
+
+        self._undo_stack.push(AssignPresetCommand(peak, preset))
+        self._refresh_peak_views(peak)
+        self.statusBar().showMessage(
+            f'Assigned suggested vibration "{preset.name}" to {peak.position:.1f} cm\u207b\u00b9'
+        )
+
+    def _refresh_functional_group_analysis(self) -> None:
+        """Recompute functional-group scores from the current project spectrum."""
+        if self._project is None or self._project.spectrum is None:
+            self._functional_group_panel.clear()
+            self._spectrum_widget.set_diagnostic_regions([])
+            return
+
+        from processing.functional_group_scoring import score_functional_groups  # noqa: PLC0415
+
+        analysis = score_functional_groups(
+            self._project.spectrum,
+            self._project.corrected_spectrum,
+        )
+        self._functional_group_panel.set_results(list(analysis.results))
+        self._set_functional_group_active_peak(self._peak_table.selected_peak())
+
+    def _find_best_preset_for_band(self, band, wavenumber: float):
+        candidate_names = set(band.suggested_preset_names)
+        if not candidate_names:
+            return None
+
+        named_candidates = [
+            preset for preset in self._vibration_presets_cache if preset.name in candidate_names
+        ]
+        if not named_candidates:
+            return None
+
+        covering_candidates = [
+            preset for preset in named_candidates if preset.covers_wavenumber(wavenumber)
+        ]
+        if covering_candidates:
+            named_candidates = covering_candidates
+
+        return min(
+            named_candidates,
+            key=lambda preset: abs(
+                ((preset.typical_range_min + preset.typical_range_max) / 2.0) - wavenumber
+            ),
+        )
+
+    def _set_functional_group_active_peak(self, peak) -> None:
+        self._functional_group_panel.set_active_peak(peak)
+        self._refresh_functional_group_assignment_preview()
+
+    def _refresh_peak_views(self, preferred_peak=None) -> None:
+        if self._project is None:
+            return
+
+        self._peak_table.set_peaks(self._project.peaks)
+        self._spectrum_widget.set_peaks(self._project.peaks)
+
+        active_peak = None
+        if preferred_peak is not None and any(
+            existing_peak is preferred_peak for existing_peak in self._project.peaks
+        ):
+            self._peak_table.select_peak(preferred_peak)
+            active_peak = preferred_peak
+        else:
+            active_peak = self._peak_table.selected_peak()
+
+        if active_peak is not None:
+            self._vibration_panel.highlight_for_peak(active_peak.position)
+            self._vibration_panel.set_active_peak(active_peak)
+        else:
+            self._vibration_panel.clear_peak_context()
+        self._set_functional_group_active_peak(active_peak)
+
+    def _refresh_functional_group_assignment_preview(self) -> None:
+        result = self._functional_group_panel.current_result()
+        peak = self._peak_table.selected_peak()
+        if result is None or peak is None:
+            self._functional_group_panel.set_assignment_preview_map({})
+            return
+
+        preview_map: dict[str, str] = {}
+        for band in result.suggested_bands:
+            if not band.covers_wavenumber(peak.position):
+                continue
+            preset = self._find_best_preset_for_band(band, peak.position)
+            if preset is None:
+                continue
+            preview_map[band.band_id] = preset.name
+        self._functional_group_panel.set_assignment_preview_map(preview_map)
 
     def _on_import_reference(self) -> None:
         """Import a SPA file as a reference spectrum into the database."""

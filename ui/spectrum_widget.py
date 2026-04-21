@@ -18,6 +18,7 @@ from __future__ import annotations
 import numpy as np
 import pyqtgraph as pg
 from PySide6.QtCore import Qt, Signal
+from PySide6.QtGui import QColor
 from PySide6.QtWidgets import (
     QHBoxLayout,
     QLabel,
@@ -163,6 +164,7 @@ class SpectrumWidget(QWidget):
         self._add_peak_mode: bool = False
         self._overlay_alpha: int = 60  # 0–100 percent opacity for reference curves
         self._overlay_spectra_cache: list = []  # keep for redraw on slider change
+        self._diagnostic_regions_cache: list = []
         self._setup_ui()
 
     def _setup_ui(self) -> None:
@@ -242,6 +244,7 @@ class SpectrumWidget(QWidget):
         self._spectrum_curve = self._plot_widget.plot(pen=pg.mkPen("k", width=1))
 
         self._overlay_curves: list = []
+        self._diagnostic_region_items: list = []
 
         # Mouse click for peak picking
         self._plot_widget.scene().sigMouseClicked.connect(self._on_mouse_clicked)
@@ -312,14 +315,10 @@ class SpectrumWidget(QWidget):
         peaks_are_dips = self._spectrum.is_dip_spectrum
         if peaks_are_dips:
             # Labels extend below troughs (%T)
-            self._plot_widget.setYRange(
-                y_min - y_span * 0.20, y_max + y_span * 0.05, padding=0.0
-            )
+            self._plot_widget.setYRange(y_min - y_span * 0.20, y_max + y_span * 0.05, padding=0.0)
         else:
             # Labels extend above peaks (Absorbance)
-            self._plot_widget.setYRange(
-                y_min - y_span * 0.05, y_max + y_span * 0.20, padding=0.0
-            )
+            self._plot_widget.setYRange(y_min - y_span * 0.05, y_max + y_span * 0.20, padding=0.0)
 
     def get_x_view_range(self) -> tuple[float, float]:
         """Return the current visible wavenumber range as (x_min, x_max).
@@ -422,6 +421,11 @@ class SpectrumWidget(QWidget):
             names = [getattr(s, "title", "") or "" for s in spectra]
             self._overlay_name_label.setText(", ".join(n for n in names if n) or "—")
 
+    def set_diagnostic_regions(self, regions: list) -> None:
+        """Highlight diagnostic wavenumber ranges for a selected functional group."""
+        self._diagnostic_regions_cache = list(regions)
+        self._redraw_diagnostic_regions()
+
     def _redraw_overlays(self) -> None:
         """Remove and redraw all overlay curves using current alpha and color settings."""
         for curve in self._overlay_curves:
@@ -440,6 +444,44 @@ class SpectrumWidget(QWidget):
                 pen=pg.mkPen((r, g, b, alpha), width=1.5),
             )
             self._overlay_curves.append(curve)
+
+    def _redraw_diagnostic_regions(self) -> None:
+        for item in self._diagnostic_region_items:
+            self._plot_widget.removeItem(item)
+        self._diagnostic_region_items.clear()
+
+        for region in self._diagnostic_regions_cache:
+            brush, pen = self._diagnostic_region_style(region)
+
+            item = pg.LinearRegionItem(
+                values=(float(region.range_min), float(region.range_max)),
+                brush=brush,
+                pen=pen,
+                movable=False,
+                swapMode="sort",
+            )
+            item.setZValue(-50)
+            self._plot_widget.addItem(item)
+            self._diagnostic_region_items.append(item)
+
+    def _diagnostic_region_style(self, region) -> tuple[QColor, object]:
+        if getattr(region, "is_missing_required", False):
+            brush = QColor("#FDEDEC")
+            brush.setAlpha(28)
+            pen = pg.mkPen(color=QColor("#C0392B"), width=1.4, style=Qt.PenStyle.DashLine)
+            return brush, pen
+
+        if getattr(region, "is_confirmed", False):
+            color = QColor(region.color)
+            brush = QColor(color)
+            brush.setAlpha(56)
+            pen = pg.mkPen(color=color, width=1.2)
+            return brush, pen
+
+        brush = QColor("#FCF3CF")
+        brush.setAlpha(36)
+        pen = pg.mkPen(color=QColor("#AF6E00"), width=1.0, style=Qt.PenStyle.DashLine)
+        return brush, pen
 
     def _on_opacity_changed(self, value: int) -> None:
         """Update overlay opacity when slider changes."""

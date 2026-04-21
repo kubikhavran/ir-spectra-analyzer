@@ -10,6 +10,7 @@ from pathlib import Path
 from PySide6.QtGui import QIcon
 from PySide6.QtWidgets import QApplication
 
+from app.config import APP_NAME, APP_VERSION, ORG_NAME
 from app.runtime_imports import install_project_imports
 
 
@@ -26,9 +27,9 @@ def main() -> None:
     from app.application import Application  # noqa: PLC0415
 
     app = QApplication(sys.argv)
-    app.setApplicationName("IR Spectra Analyzer")
-    app.setApplicationVersion("0.4.2")
-    app.setOrganizationName("IRSpectra")
+    app.setApplicationName(APP_NAME)
+    app.setApplicationVersion(APP_VERSION)
+    app.setOrganizationName(ORG_NAME)
 
     icon_path = _resource_path("assets/icon.ico")
     if icon_path.exists():

@@ -1,4 +1,3 @@
-# -*- mode: python ; coding: utf-8 -*-
 """PyInstaller build spec for IR Spectra Analyzer — macOS .app bundle.
 
 Usage (from the project root, on macOS):
@@ -103,12 +102,12 @@ app = BUNDLE(
     name="IR Spectra Analyzer.app",
     icon=str(ICON_ICNS) if ICON_ICNS.exists() else None,
     bundle_identifier="com.irspectra.analyzer",
-    version="0.4.2",
+    version="0.5.0",
     info_plist={
         "NSPrincipalClass": "NSApplication",
         "NSHighResolutionCapable": True,
         "CFBundleDisplayName": "IR Spectra Analyzer",
-        "CFBundleShortVersionString": "0.4.2",
+        "CFBundleShortVersionString": "0.5.0",
         "LSMinimumSystemVersion": "12.0",
         "NSRequiresAquaSystemAppearance": False,
         "CFBundleDocumentTypes": [
