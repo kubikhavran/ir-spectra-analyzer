@@ -115,21 +115,23 @@ class Database:
             pass  # column already exists
 
     def _seed_vibration_presets(self) -> None:
-        """Insert the full set of IR vibration presets from Table I (VŠCHT Praha).
+        """Insert the builtin IR vibration preset library.
 
-        Clears and re-seeds if the table has fewer than 80 entries (handles
-        upgrade from the old 12-preset default set).
+        The library started from the original VŠCHT Praha table and is extended
+        with additional sourced diagnostic bands used by the functional-group
+        scoring assistant. Re-seeds when the builtin library is outdated.
         """
         assert self._conn is not None
         cursor = self._conn.cursor()
         count_builtin = cursor.execute(
             "SELECT COUNT(*) FROM vibration_presets WHERE is_builtin = 1"
         ).fetchone()[0]
-        first = cursor.execute(
-            "SELECT name FROM vibration_presets WHERE is_builtin = 1 LIMIT 1"
+        has_second_wave = cursor.execute(
+            "SELECT 1 FROM vibration_presets WHERE is_builtin = 1 AND name = ? LIMIT 1",
+            ("ν(N=C=N) carbodiimide",),
         ).fetchone()
-        # Re-seed if count is wrong OR names are still in Czech (legacy)
-        if count_builtin == 116 and first and "isolated" in first[0]:
+        # Re-seed if the builtin library does not contain the current sourced expansion.
+        if count_builtin == 145 and has_second_wave:
             return
         cursor.execute("DELETE FROM vibration_presets WHERE is_builtin = 1")
 
@@ -151,6 +153,7 @@ class Database:
             ("νs(NH₂) –CO–NH₂", 3380.0, 3420.0, "stretch", "", "#F39C12"),
             ("νas(NH₂) –CONH₂", 3320.0, 3360.0, "stretch", "", "#E67E22"),
             ("νs(NH₂) –CONH₂", 3180.0, 3220.0, "stretch", "", "#F39C12"),
+            ("ν(NH) amine salt", 2800.0, 3000.0, "stretch", "", "#E67E22"),
             # C-H stretch
             ("ν(CH) –C≡C–H", 3300.0, 3340.0, "stretch", "", "#9B59B6"),
             ("2×ν(C=O) overtone", 3200.0, 3550.0, "overtone", "", "#BDC3C7"),
@@ -164,15 +167,27 @@ class Database:
             ("νs(CH₂) –CH₂–", 2830.0, 2880.0, "stretch", "", "#8E44AD"),
             ("ν(CH) –CHO", 2810.0, 2830.0, "stretch", "", "#9B59B6"),
             ("ν(CH)+overtone –CHO", 2650.0, 2745.0, "overtone", "", "#BDC3C7"),
+            ("ν(SH) thiol", 2550.0, 2600.0, "stretch", "", "#7D6608"),
             # CO₂, triple bonds
             ("ν(CO₂) ~2350", 2330.0, 2370.0, "stretch", "", "#95A5A6"),
+            ("ν(N=C=O) –N=C=O isocyanate", 2250.0, 2275.0, "stretch", "", "#16A085"),
             ("ν(C≡N) –C≡N", 2200.0, 2270.0, "stretch", "", "#1ABC9C"),
             ("ν(C≡C) –C≡C– disubst.", 2190.0, 2260.0, "stretch", "", "#1ABC9C"),
+            ("ν(N₃) –N₃ azide", 2120.0, 2160.0, "stretch", "", "#16A085"),
+            ("ν(S–C≡N) –SCN thiocyanate", 2140.0, 2160.0, "stretch", "", "#16A085"),
+            ("ν(N=C=N) carbodiimide", 2120.0, 2145.0, "stretch", "", "#16A085"),
+            ("ν(N=C=S) –N=C=S isothiocyanate", 1990.0, 2140.0, "stretch", "", "#16A085"),
+            ("ν(C=C=O) ketene", 2140.0, 2160.0, "stretch", "", "#16A085"),
             ("ν(C≡C) –C≡C–H", 2100.0, 2140.0, "stretch", "", "#1ABC9C"),
+            ("ν(C=C=C) allene", 1925.0, 1990.0, "stretch", "", "#5DADE2"),
             # Ar overtone/combination
             ("Ar overtone/comb.", 1650.0, 2000.0, "overtone", "", "#BDC3C7"),
             ("2×γ(CH) vinyl/vinylidene", 1775.0, 1985.0, "overtone", "", "#BDC3C7"),
             # C=O stretch
+            ("ν(C=O) –COCl acid halide", 1770.0, 1800.0, "stretch", "", "#C0392B"),
+            ("ν(C=O) conj. –COCl acid halide", 1755.0, 1780.0, "stretch", "", "#C0392B"),
+            ("ν(C=O) anhydride asym.", 1800.0, 1825.0, "stretch", "", "#C0392B"),
+            ("ν(C=O) anhydride sym.", 1740.0, 1775.0, "stretch", "", "#C0392B"),
             ("ν(C=O) vinyl/phenyl ester", 1750.0, 1800.0, "stretch", "", "#C0392B"),
             ("ν(C=O) –COOH monomer", 1740.0, 1800.0, "stretch", "", "#C0392B"),
             ("ν(C=O) –CO–O– sat. ester", 1720.0, 1750.0, "stretch", "", "#C0392B"),
@@ -194,6 +209,7 @@ class Database:
             ("ν(C=C) Ar ~1600", 1585.0, 1625.0, "stretch", "", "#2980B9"),
             ("ν(C=C) –C=C–C=C– conj.", 1590.0, 1650.0, "stretch", "", "#5DADE2"),
             # N-H bending (amide / amines)
+            ("δ(NH₃⁺) amine salt", 1510.0, 1610.0, "bend", "", "#E67E22"),
             ("δ(NH₂) amide II –CO–NH₂", 1620.0, 1650.0, "bend", "", "#E67E22"),
             ("δ(NH₂) –NH₂", 1580.0, 1650.0, "bend", "", "#E67E22"),
             ("δ(NH₂) –CO–NH₂", 1590.0, 1620.0, "bend", "", "#E67E22"),
@@ -205,6 +221,11 @@ class Database:
             # NO₂
             ("νas(NO₂) –NO₂", 1485.0, 1570.0, "stretch", "", "#D35400"),
             ("νs(NO₂) –NO₂", 1315.0, 1385.0, "stretch", "", "#D35400"),
+            ("νas(SO₃) sulfate", 1380.0, 1415.0, "stretch", "", "#D35400"),
+            ("νas(SO₂) sulfonyl chloride", 1380.0, 1410.0, "stretch", "", "#D35400"),
+            ("νas(SO₃) sulfonate", 1335.0, 1372.0, "stretch", "", "#D35400"),
+            ("νas(SO₂) sulfone", 1300.0, 1350.0, "stretch", "", "#D35400"),
+            ("νas(SO₂) sulfonamide", 1335.0, 1350.0, "stretch", "", "#D35400"),
             # Ar C=C
             ("ν(C=C) Ar ~1490", 1470.0, 1525.0, "stretch", "", "#2980B9"),
             # C-H bending
@@ -242,12 +263,22 @@ class Database:
             # C-N secondary amine
             ("ν(CN) R₂NH", 1170.0, 1190.0, "stretch", "", "#16A085"),
             # C-O
+            ("ν(CO) Ar–O–R aryl ether", 1200.0, 1275.0, "stretch", "", "#F39C12"),
+            ("ν(CO) CH₂=CH–O– vinyl ether", 1200.0, 1225.0, "stretch", "", "#F39C12"),
             ("ν(CO) –COOH monomer", 1075.0, 1190.0, "stretch", "", "#F39C12"),
+            ("ν(CO–O–CO) anhydride", 900.0, 1300.0, "stretch", "", "#F39C12"),
             ("ν(CC) –CH(CH₃)₂", 1165.0, 1175.0, "stretch", "", "#7F8C8D"),
+            ("ν(CO) R–O–R aliph. ether", 1085.0, 1150.0, "stretch", "", "#F39C12"),
             ("νs(COC) R–CO–O–R' sat.", 1050.0, 1160.0, "stretch", "", "#F39C12"),
             ("ν(CO) R₂CH–OH sec.", 1065.0, 1130.0, "stretch", "", "#F39C12"),
             ("ν(CCC) R–CO–R' ketone", 1080.0, 1120.0, "stretch", "", "#7F8C8D"),
             ("ν(CN) RNH₂", 1000.0, 1100.0, "stretch", "", "#16A085"),
+            ("ν(S=O) sulfoxide", 1030.0, 1070.0, "stretch", "", "#D35400"),
+            ("νs(SO₂) sulfonamide", 1155.0, 1170.0, "stretch", "", "#D35400"),
+            ("νs(SO₃) sulfonate", 1168.0, 1195.0, "stretch", "", "#D35400"),
+            ("νs(SO₂) sulfone", 1130.0, 1170.0, "stretch", "", "#D35400"),
+            ("νs(SO₂) sulfonyl chloride", 1160.0, 1190.0, "stretch", "", "#D35400"),
+            ("νs(SO₃) sulfate", 1185.0, 1200.0, "stretch", "", "#D35400"),
             ("ν(CO) R–OH prim.", 1020.0, 1085.0, "stretch", "", "#F39C12"),
             # OOP alkenes / aldehyde
             ("γ(CH) –CH=CH₂ vinyl", 980.0, 995.0, "oop", "", "#7F8C8D"),

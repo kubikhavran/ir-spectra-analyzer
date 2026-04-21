@@ -352,8 +352,19 @@ class PDFGenerator:
             alignment=TA_RIGHT,
             spaceAfter=0,
         )
-        left_para = Paragraph(project.name, title_style)
-        right_para = Paragraph(spectrum.title or "", title_right_style)
+        project_metadata = getattr(project, "metadata", None)
+        sample_name = (
+            project_metadata.sample_name
+            if project_metadata and project_metadata.sample_name
+            else ""
+        )
+        spectrum_title = (
+            project_metadata.title
+            if project_metadata and project_metadata.title
+            else spectrum.title
+        )
+        left_para = Paragraph(sample_name or project.name, title_style)
+        right_para = Paragraph(spectrum_title or "", title_right_style)
         header_row = Table(
             [[left_para, right_para]],
             colWidths=[_PORT_TEXT_W * 0.6, _PORT_TEXT_W * 0.4],
@@ -510,23 +521,54 @@ class PDFGenerator:
         from chemistry.structure_renderer import render_to_svg, svg_to_png_bytes  # noqa: PLC0415
 
         # ── Build metadata rows ──────────────────────────────────────────────
+        project_metadata = getattr(project, "metadata", None)
         meta_rows: list = []
 
         def _add_row(key: str, value: str | None) -> None:
             if value:
                 meta_rows.append([Paragraph(key, key_style), Paragraph(value, val_style)])
 
-        _add_row("Sample", project.name)
-        _add_row("Client", spectrum.extra_metadata.get("omnic_custom_info_2"))
-        _add_row("Order", spectrum.extra_metadata.get("omnic_custom_info_1"))
-        if spectrum.acquired_at:
-            _add_row("Acquired", spectrum.acquired_at.strftime("%Y-%m-%d %H:%M"))
-        resolution = spectrum.extra_metadata.get("resolution_cm")
+        sample_name = (
+            project_metadata.sample_name
+            if project_metadata and project_metadata.sample_name
+            else ""
+        )
+        client = (
+            project_metadata.extra.get("omnic_client")
+            if project_metadata and project_metadata.extra
+            else None
+        )
+        order = (
+            project_metadata.extra.get("omnic_order")
+            if project_metadata and project_metadata.extra
+            else None
+        )
+        acquired_at = project_metadata.acquired_at if project_metadata else spectrum.acquired_at
+        resolution = (
+            project_metadata.resolution
+            if project_metadata and project_metadata.resolution is not None
+            else spectrum.extra_metadata.get("resolution_cm")
+        )
+        instrument = (
+            project_metadata.instrument if project_metadata and project_metadata.instrument else ""
+        )
+        comment = (
+            project_metadata.comments if project_metadata and project_metadata.comments else ""
+        )
+
+        _add_row("Sample", sample_name or project.name)
+        _add_row("Operator", project_metadata.operator if project_metadata else None)
+        _add_row(
+            "Instrument", instrument or str(spectrum.extra_metadata.get("instrument_serial", ""))
+        )
+        _add_row("Client", client or spectrum.extra_metadata.get("omnic_custom_info_2"))
+        _add_row("Order", order or spectrum.extra_metadata.get("omnic_custom_info_1"))
+        if acquired_at:
+            _add_row("Acquired", acquired_at.strftime("%Y-%m-%d %H:%M"))
         if resolution is not None:
             _add_row("Resolution", f"{resolution:.3f} cm\u207b\u00b9")
-        omnic_comment = spectrum.extra_metadata.get("omnic_comment")
-        if omnic_comment:
-            _add_row("Comment", omnic_comment)
+        if comment or spectrum.extra_metadata.get("omnic_comment"):
+            _add_row("Comment", comment or spectrum.extra_metadata.get("omnic_comment"))
         _add_row("Y unit", spectrum.y_unit.value)
         _x_lo, _x_hi = options.view_x_range if options.view_x_range else (400.0, 3800.0)
         _add_row(

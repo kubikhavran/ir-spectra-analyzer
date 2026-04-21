@@ -9,6 +9,7 @@ os.environ.setdefault("QT_QPA_PLATFORM", "offscreen")
 import numpy as np
 import pytest
 
+from core.metadata import SpectrumMetadata
 from core.peak import Peak
 from core.project import Project
 from core.spectrum import SpectralUnit, Spectrum, XAxisUnit
@@ -154,6 +155,53 @@ def test_project_serializer_vibration_assignment_roundtrip(tmp_path):
     loaded = serializer.load(file_path)
     assert loaded.peaks[0].vibration_id == 42
     assert loaded.peaks[0].label == "P1"
+
+
+def test_project_serializer_multi_vibration_assignment_roundtrip(tmp_path):
+    """Multi-assignment labels, IDs, and manual placement survive save/load."""
+    project = _make_project()
+    project.peaks[0].vibration_ids = [42, None]
+    project.peaks[0].vibration_labels = ["ν(C=O)", "custom note"]
+    project.peaks[0].manual_placement = True
+    project.peaks[0].label_offset_x = 12.5
+    project.peaks[0].label_offset_y = -0.3
+    serializer = ProjectSerializer()
+    file_path = tmp_path / "multi_vib.irproj"
+    serializer.save(project, file_path)
+    loaded = serializer.load(file_path)
+    assert loaded.peaks[0].vibration_ids == [42, None]
+    assert loaded.peaks[0].vibration_labels == ["ν(C=O)", "custom note"]
+    assert loaded.peaks[0].manual_placement is True
+    assert loaded.peaks[0].label_offset_x == pytest.approx(12.5)
+    assert loaded.peaks[0].label_offset_y == pytest.approx(-0.3)
+
+
+def test_project_serializer_metadata_roundtrip(tmp_path):
+    """Project metadata edits survive save/load."""
+    project = _make_project()
+    project.metadata = SpectrumMetadata(
+        title="Edited title",
+        sample_name="Sample A",
+        operator="Analyst X",
+        instrument="iS10",
+        acquired_at=project.spectrum.acquired_at,
+        resolution=4.0,
+        scans=16,
+        comments="Saved comment",
+        extra={"omnic_client": "Client A", "omnic_order": "Order 7"},
+    )
+    serializer = ProjectSerializer()
+    file_path = tmp_path / "metadata.irproj"
+    serializer.save(project, file_path)
+    loaded = serializer.load(file_path)
+    assert loaded.metadata.title == "Edited title"
+    assert loaded.metadata.sample_name == "Sample A"
+    assert loaded.metadata.operator == "Analyst X"
+    assert loaded.metadata.instrument == "iS10"
+    assert loaded.metadata.resolution == pytest.approx(4.0)
+    assert loaded.metadata.scans == 16
+    assert loaded.metadata.comments == "Saved comment"
+    assert loaded.metadata.extra == {"omnic_client": "Client A", "omnic_order": "Order 7"}
 
 
 def test_project_serializer_smiles_roundtrip(tmp_path):

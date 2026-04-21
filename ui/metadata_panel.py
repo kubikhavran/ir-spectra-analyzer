@@ -9,7 +9,7 @@ Zodpovědnost:
 
 from __future__ import annotations
 
-from PySide6.QtCore import Qt
+from PySide6.QtCore import Qt, Signal
 from PySide6.QtWidgets import QFormLayout, QLabel, QLineEdit, QWidget
 
 from core.metadata import SpectrumMetadata
@@ -18,8 +18,12 @@ from core.metadata import SpectrumMetadata
 class MetadataPanel(QWidget):
     """Displays and allows editing of spectrum metadata."""
 
+    metadata_changed = Signal(object)  # emits SpectrumMetadata on editable-field changes
+
     def __init__(self, parent=None) -> None:
         super().__init__(parent)
+        self._metadata = SpectrumMetadata()
+        self._setting_metadata = False
         self._setup_ui()
 
     def _setup_ui(self) -> None:
@@ -27,6 +31,9 @@ class MetadataPanel(QWidget):
         self._title_edit = QLineEdit()
         self._sample_edit = QLineEdit()
         self._operator_edit = QLineEdit()
+        self._title_edit.textChanged.connect(self._on_editable_fields_changed)
+        self._sample_edit.textChanged.connect(self._on_editable_fields_changed)
+        self._operator_edit.textChanged.connect(self._on_editable_fields_changed)
         self._instrument_label = QLabel()
         self._date_label = QLabel()
         self._client_label = QLabel()
@@ -52,12 +59,46 @@ class MetadataPanel(QWidget):
         Args:
             metadata: Spectrum metadata to display.
         """
+        self._metadata = SpectrumMetadata(
+            title=metadata.title,
+            sample_name=metadata.sample_name,
+            operator=metadata.operator,
+            instrument=metadata.instrument,
+            acquired_at=metadata.acquired_at,
+            resolution=metadata.resolution,
+            scans=metadata.scans,
+            comments=metadata.comments,
+            extra=dict(metadata.extra),
+        )
+        self._setting_metadata = True
         self._title_edit.setText(metadata.title)
         self._sample_edit.setText(metadata.sample_name)
         self._operator_edit.setText(metadata.operator)
         self._instrument_label.setText(metadata.instrument)
+        self._date_label.setText("")
         if metadata.acquired_at:
             self._date_label.setText(metadata.acquired_at.strftime("%Y-%m-%d %H:%M"))
         self._client_label.setText(metadata.extra.get("omnic_client", ""))
         self._order_label.setText(metadata.extra.get("omnic_order", ""))
         self._comment_label.setText(metadata.comments or "")
+        self._setting_metadata = False
+
+    def current_metadata(self) -> SpectrumMetadata:
+        """Return the current metadata, including editable user fields."""
+        return SpectrumMetadata(
+            title=self._title_edit.text().strip(),
+            sample_name=self._sample_edit.text().strip(),
+            operator=self._operator_edit.text().strip(),
+            instrument=self._metadata.instrument,
+            acquired_at=self._metadata.acquired_at,
+            resolution=self._metadata.resolution,
+            scans=self._metadata.scans,
+            comments=self._metadata.comments,
+            extra=dict(self._metadata.extra),
+        )
+
+    def _on_editable_fields_changed(self) -> None:
+        if self._setting_metadata:
+            return
+        self._metadata = self.current_metadata()
+        self.metadata_changed.emit(self.current_metadata())

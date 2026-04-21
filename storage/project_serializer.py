@@ -10,6 +10,7 @@ from typing import Any
 
 import numpy as np
 
+from core.metadata import SpectrumMetadata
 from core.peak import Peak
 from core.project import Project
 from core.spectrum import Spectrum
@@ -71,6 +72,7 @@ class ProjectSerializer:
             "corrected_spectrum": self._spectrum_to_dict(project.corrected_spectrum)
             if project.corrected_spectrum
             else None,
+            "metadata": self._metadata_to_dict(project.metadata),
             "peaks": [self._peak_to_dict(p) for p in project.peaks],
         }
 
@@ -87,6 +89,7 @@ class ProjectSerializer:
             smiles=data.get("smiles", ""),
             spectrum=spectrum,
             peaks=[self._peak_from_dict(p) for p in data.get("peaks", [])],
+            metadata=self._metadata_from_dict(data.get("metadata")),
             created_at=self._iso_to_datetime(data.get("created_at")),
             updated_at=self._iso_to_datetime(data.get("updated_at")),
             db_id=data.get("db_id"),
@@ -137,6 +140,36 @@ class ProjectSerializer:
             x_unit=XAxisUnit(x_unit_value) if x_unit_value else XAxisUnit.WAVENUMBER,
             comments=data.get("comments", ""),
             extra_metadata=data.get("extra_metadata", {}) or {},
+        )
+
+    @staticmethod
+    def _metadata_to_dict(metadata: SpectrumMetadata) -> dict[str, Any]:
+        return {
+            "title": metadata.title,
+            "sample_name": metadata.sample_name,
+            "operator": metadata.operator,
+            "instrument": metadata.instrument,
+            "acquired_at": ProjectSerializer._datetime_to_iso(metadata.acquired_at),
+            "resolution": metadata.resolution,
+            "scans": metadata.scans,
+            "comments": metadata.comments,
+            "extra": metadata.extra or {},
+        }
+
+    @staticmethod
+    def _metadata_from_dict(data: dict[str, Any] | None) -> SpectrumMetadata:
+        if not isinstance(data, dict):
+            return SpectrumMetadata()
+        return SpectrumMetadata(
+            title=data.get("title", ""),
+            sample_name=data.get("sample_name", ""),
+            operator=data.get("operator", ""),
+            instrument=data.get("instrument", ""),
+            acquired_at=ProjectSerializer._iso_to_datetime(data.get("acquired_at")),
+            resolution=data.get("resolution"),
+            scans=data.get("scans"),
+            comments=data.get("comments", ""),
+            extra=data.get("extra", {}) or {},
         )
 
     @staticmethod

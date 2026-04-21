@@ -7,6 +7,7 @@ import os
 os.environ.setdefault("QT_QPA_PLATFORM", "offscreen")
 
 import numpy as np
+import pytest
 
 
 def _gaussian(wn: np.ndarray, center: float, width: float, height: float) -> np.ndarray:
@@ -79,6 +80,51 @@ def test_functional_group_scoring_ranks_nitrile_first():
     assert analysis.results[0].score >= 60.0
     assert analysis.results[0].source_links
     assert analysis.results[0].bands[0].source_links
+
+
+@pytest.mark.parametrize(
+    ("group_id", "features", "minimum_score"),
+    [
+        ("acid_halide", [(1792.0, 7.0, 0.95)], 60.0),
+        ("anhydride", [(1812.0, 8.0, 0.90), (1760.0, 8.0, 0.82)], 70.0),
+        ("aliphatic_ether", [(1120.0, 12.0, 0.70)], 55.0),
+        ("aryl_ether", [(1245.0, 10.0, 0.58), (1600.0, 9.0, 0.20), (1500.0, 9.0, 0.18)], 55.0),
+        ("amine_salt", [(2920.0, 55.0, 0.42), (1560.0, 12.0, 0.24), (1105.0, 14.0, 0.18)], 55.0),
+        (
+            "aromatic_amine",
+            [
+                (3400.0, 45.0, 0.18),
+                (1305.0, 12.0, 0.28),
+                (1600.0, 10.0, 0.20),
+                (1500.0, 10.0, 0.18),
+            ],
+            55.0,
+        ),
+        ("azide", [(2145.0, 6.0, 1.00)], 70.0),
+        ("isocyanate", [(2265.0, 6.0, 1.00), (1410.0, 10.0, 0.22)], 70.0),
+        ("thiocyanate", [(2150.0, 6.0, 0.88)], 45.0),
+        ("carbodiimide", [(2132.0, 6.0, 0.92)], 60.0),
+        ("isothiocyanate", [(2065.0, 8.0, 0.82)], 50.0),
+        ("allene", [(1955.0, 8.0, 0.55)], 55.0),
+        ("thiol", [(2570.0, 7.0, 0.34)], 55.0),
+        ("sulfoxide", [(1048.0, 10.0, 0.95)], 65.0),
+        ("sulfone", [(1325.0, 9.0, 0.62), (1145.0, 9.0, 0.55)], 65.0),
+        ("sulfonamide", [(3360.0, 45.0, 0.16), (1343.0, 8.0, 0.52), (1162.0, 8.0, 0.44)], 60.0),
+        ("sulfonyl_chloride", [(1392.0, 8.0, 0.58), (1175.0, 8.0, 0.48)], 60.0),
+        ("sulfate", [(1400.0, 8.0, 0.55), (1192.0, 8.0, 0.44)], 55.0),
+        ("sulfonate", [(1352.0, 8.0, 0.58), (1180.0, 8.0, 0.46)], 60.0),
+        ("vinyl_ether", [(1210.0, 8.0, 0.52), (3075.0, 10.0, 0.14), (988.0, 8.0, 0.30)], 60.0),
+    ],
+)
+def test_functional_group_scoring_ranks_expanded_groups_first(group_id, features, minimum_score):
+    from processing.functional_group_scoring import score_functional_groups
+
+    spectrum = _make_absorbance_spectrum(features, title=group_id)
+
+    analysis = score_functional_groups(spectrum)
+
+    assert analysis.results[0].group_id == group_id
+    assert analysis.results[0].score >= minimum_score
 
 
 def test_functional_group_scoring_ranks_amine_above_alcohol_for_amine_pattern():
@@ -211,9 +257,7 @@ def test_functional_group_panel_shows_results_and_suggestions(qtbot):
     panel.set_results(list(analysis.results))
     panel.set_active_peak(Peak(position=2245.0, intensity=1.10))
     nitrile = next(result for result in analysis.results if result.group_id == "nitrile")
-    panel.set_assignment_preview_map(
-        {nitrile.suggested_bands[0].band_id: "ν(C≡N) –C≡N"}
-    )
+    panel.set_assignment_preview_map({nitrile.suggested_bands[0].band_id: "ν(C≡N) –C≡N"})
 
     assert panel._group_list.count() >= 1
     assert "Nitrile" in panel._group_list.item(0).text()

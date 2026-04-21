@@ -16,6 +16,7 @@ from __future__ import annotations
 from dataclasses import dataclass, field
 from datetime import datetime
 
+from core.metadata import SpectrumMetadata
 from core.peak import Peak
 from core.spectrum import Spectrum
 
@@ -37,6 +38,7 @@ class Project:
     spectrum: Spectrum | None = None
     corrected_spectrum: Spectrum | None = None
     peaks: list[Peak] = field(default_factory=list)
+    metadata: SpectrumMetadata = field(default_factory=SpectrumMetadata)
     smiles: str = ""
     mol_block: str = ""  # V2000 MOL block with 2D coords (preserves user layout)
     structure_image: bytes = field(default=b"")

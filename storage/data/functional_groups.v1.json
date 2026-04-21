@@ -892,6 +892,1009 @@
           "label": "Terminal alkyne paired bands"
         }
       ]
+    },
+    {
+      "id": "acid_halide",
+      "name": "Acid Halide",
+      "color": "#922B21",
+      "summary": "High-frequency acyl halide carbonyl without broad O-H support.",
+      "source_refs": ["sigma"],
+      "bands": [
+        {
+          "id": "acid_halide_co",
+          "label": "Acyl halide C=O stretch",
+          "range_min": 1755.0,
+          "range_max": 1810.0,
+          "expected_intensity": "vs",
+          "shape": "sharp",
+          "role": "required",
+          "weight": 1.35,
+          "reliability": 1.15,
+          "channel": "sharp_corrected",
+          "suggested_preset_names": [
+            "ν(C=O) –COCl acid halide",
+            "ν(C=O) conj. –COCl acid halide"
+          ],
+          "source_refs": ["sigma"]
+        },
+        {
+          "id": "acid_halide_oh_exclusion",
+          "label": "Broad O-H exclusion",
+          "range_min": 2500.0,
+          "range_max": 3550.0,
+          "expected_intensity": "s",
+          "shape": "broad",
+          "role": "exclusion",
+          "weight": 0.9,
+          "reliability": 0.8,
+          "channel": "broad_raw",
+          "source_refs": ["sigma"]
+        }
+      ]
+    },
+    {
+      "id": "anhydride",
+      "name": "Anhydride",
+      "color": "#A93226",
+      "summary": "Diagnostic paired anhydride carbonyl bands at high frequency.",
+      "source_refs": ["sigma"],
+      "bands": [
+        {
+          "id": "anhydride_upper_co",
+          "label": "Anhydride upper C=O stretch",
+          "range_min": 1800.0,
+          "range_max": 1825.0,
+          "expected_intensity": "vs",
+          "shape": "sharp",
+          "role": "required",
+          "weight": 1.25,
+          "reliability": 1.1,
+          "channel": "sharp_corrected",
+          "suggested_preset_names": [
+            "ν(C=O) anhydride asym."
+          ],
+          "source_refs": ["sigma"]
+        },
+        {
+          "id": "anhydride_lower_co",
+          "label": "Anhydride lower C=O stretch",
+          "range_min": 1740.0,
+          "range_max": 1775.0,
+          "expected_intensity": "vs",
+          "shape": "sharp",
+          "role": "required",
+          "weight": 1.15,
+          "reliability": 1.05,
+          "channel": "sharp_corrected",
+          "suggested_preset_names": [
+            "ν(C=O) anhydride sym."
+          ],
+          "source_refs": ["sigma"]
+        }
+      ],
+      "coherence_rules": [
+        {
+          "band_ids": ["anhydride_upper_co", "anhydride_lower_co"],
+          "bonus": 0.65,
+          "threshold": 0.42,
+          "label": "Anhydride carbonyl pair"
+        }
+      ]
+    },
+    {
+      "id": "aliphatic_ether",
+      "name": "Aliphatic Ether",
+      "color": "#B9770E",
+      "summary": "Strong C-O stretch without OH or carbonyl evidence.",
+      "source_refs": ["sigma"],
+      "bands": [
+        {
+          "id": "aliphatic_ether_co",
+          "label": "Aliphatic ether C-O stretch",
+          "range_min": 1085.0,
+          "range_max": 1150.0,
+          "expected_intensity": "s",
+          "shape": "sharp",
+          "role": "required",
+          "weight": 0.85,
+          "reliability": 0.78,
+          "channel": "sharp_corrected",
+          "suggested_preset_names": [
+            "ν(CO) R–O–R aliph. ether"
+          ],
+          "source_refs": ["sigma"]
+        },
+        {
+          "id": "aliphatic_ether_oh_exclusion",
+          "label": "Alcohol O-H exclusion",
+          "range_min": 3200.0,
+          "range_max": 3550.0,
+          "expected_intensity": "s",
+          "shape": "broad",
+          "role": "exclusion",
+          "weight": 0.8,
+          "reliability": 0.75,
+          "channel": "broad_raw",
+          "source_refs": ["sigma"]
+        },
+        {
+          "id": "aliphatic_ether_carbonyl_exclusion",
+          "label": "Carbonyl exclusion",
+          "range_min": 1680.0,
+          "range_max": 1815.0,
+          "expected_intensity": "s",
+          "shape": "sharp",
+          "role": "exclusion",
+          "weight": 0.9,
+          "reliability": 0.9,
+          "channel": "sharp_corrected",
+          "source_refs": ["sigma"]
+        }
+      ]
+    },
+    {
+      "id": "aryl_ether",
+      "name": "Aryl Ether",
+      "color": "#AF601A",
+      "summary": "Aryl ether C-O stretch reinforced by aromatic ring evidence.",
+      "source_refs": ["sigma", "msu"],
+      "bands": [
+        {
+          "id": "aryl_ether_co",
+          "label": "Aryl ether C-O stretch",
+          "range_min": 1200.0,
+          "range_max": 1275.0,
+          "expected_intensity": "s",
+          "shape": "sharp",
+          "role": "required",
+          "weight": 0.95,
+          "reliability": 0.82,
+          "channel": "sharp_corrected",
+          "suggested_preset_names": [
+            "ν(CO) Ar–O–R aryl ether"
+          ],
+          "source_refs": ["sigma"]
+        },
+        {
+          "id": "aryl_ether_ring",
+          "label": "Aromatic ring support",
+          "range_min": 1490.0,
+          "range_max": 1625.0,
+          "expected_intensity": "m",
+          "shape": "paired",
+          "role": "supporting",
+          "weight": 0.7,
+          "reliability": 0.75,
+          "channel": "sharp_corrected",
+          "suggested_preset_names": [
+            "ν(C=C) Ar ~1600",
+            "ν(C=C) Ar conj. ~1580",
+            "ν(C=C) Ar ~1490"
+          ],
+          "source_refs": ["sigma", "msu"]
+        },
+        {
+          "id": "aryl_ether_carbonyl_exclusion",
+          "label": "Carbonyl exclusion",
+          "range_min": 1680.0,
+          "range_max": 1815.0,
+          "expected_intensity": "s",
+          "shape": "sharp",
+          "role": "exclusion",
+          "weight": 0.9,
+          "reliability": 0.9,
+          "channel": "sharp_corrected",
+          "source_refs": ["sigma"]
+        }
+      ],
+      "coherence_rules": [
+        {
+          "band_ids": ["aryl_ether_co", "aryl_ether_ring"],
+          "bonus": 0.25,
+          "threshold": 0.38,
+          "label": "Aryl ether ring + C-O coherence"
+        }
+      ]
+    },
+    {
+      "id": "amine_salt",
+      "name": "Amine Salt",
+      "color": "#CA6F1E",
+      "summary": "Broad ammonium N-H stretch with NH₃⁺ bending support.",
+      "source_refs": ["sigma"],
+      "bands": [
+        {
+          "id": "amine_salt_nh",
+          "label": "Amine salt N-H stretch",
+          "range_min": 2800.0,
+          "range_max": 3000.0,
+          "expected_intensity": "s",
+          "shape": "broad",
+          "role": "required",
+          "weight": 1.0,
+          "reliability": 0.95,
+          "channel": "broad_raw",
+          "suggested_preset_names": [
+            "ν(NH) amine salt"
+          ],
+          "source_refs": ["sigma"]
+        },
+        {
+          "id": "amine_salt_bend",
+          "label": "NH₃⁺ bending",
+          "range_min": 1510.0,
+          "range_max": 1610.0,
+          "expected_intensity": "m",
+          "shape": "sharp",
+          "role": "supporting",
+          "weight": 0.75,
+          "reliability": 0.75,
+          "channel": "sharp_corrected",
+          "suggested_preset_names": [
+            "δ(NH₃⁺) amine salt"
+          ],
+          "source_refs": ["sigma"]
+        },
+        {
+          "id": "amine_salt_cn",
+          "label": "Amine C-N support",
+          "range_min": 1000.0,
+          "range_max": 1250.0,
+          "expected_intensity": "m",
+          "shape": "sharp",
+          "role": "supporting",
+          "weight": 0.55,
+          "reliability": 0.55,
+          "channel": "sharp_corrected",
+          "suggested_preset_names": [
+            "ν(CN) RNH₂",
+            "ν(CN) R₂NH"
+          ],
+          "source_refs": ["sigma"]
+        },
+        {
+          "id": "amine_salt_carbonyl_exclusion",
+          "label": "Carbonyl exclusion",
+          "range_min": 1630.0,
+          "range_max": 1815.0,
+          "expected_intensity": "s",
+          "shape": "sharp",
+          "role": "exclusion",
+          "weight": 0.85,
+          "reliability": 0.9,
+          "channel": "sharp_corrected",
+          "source_refs": ["sigma"]
+        }
+      ],
+      "coherence_rules": [
+        {
+          "band_ids": ["amine_salt_nh", "amine_salt_bend"],
+          "bonus": 0.28,
+          "threshold": 0.35,
+          "label": "Amine salt NH₃⁺ pattern"
+        }
+      ]
+    },
+    {
+      "id": "aromatic_amine",
+      "name": "Aromatic Amine",
+      "color": "#D68910",
+      "summary": "Aromatic amine C-N stretch with N-H and ring support.",
+      "source_refs": ["sigma", "msu"],
+      "bands": [
+        {
+          "id": "aromatic_amine_nh",
+          "label": "Aromatic amine N-H stretch",
+          "range_min": 3300.0,
+          "range_max": 3500.0,
+          "expected_intensity": "m",
+          "shape": "broad",
+          "role": "required",
+          "weight": 0.95,
+          "reliability": 0.8,
+          "channel": "broad_raw",
+          "suggested_preset_names": [
+            "νas(NH₂) –NH₂",
+            "ν(NH) –NH–",
+            "νs(NH₂) –NH₂"
+          ],
+          "source_refs": ["sigma", "msu"]
+        },
+        {
+          "id": "aromatic_amine_cn",
+          "label": "Aromatic amine C-N stretch",
+          "range_min": 1260.0,
+          "range_max": 1360.0,
+          "expected_intensity": "m",
+          "shape": "sharp",
+          "role": "required",
+          "weight": 0.9,
+          "reliability": 0.85,
+          "channel": "sharp_corrected",
+          "suggested_preset_names": [
+            "ν(CN) Ar–NH₂ aniline",
+            "ν(CN) Ar₂NH/Ar–NH–R"
+          ],
+          "source_refs": ["sigma", "msu"]
+        },
+        {
+          "id": "aromatic_amine_ring",
+          "label": "Aromatic ring support",
+          "range_min": 1490.0,
+          "range_max": 1625.0,
+          "expected_intensity": "m",
+          "shape": "paired",
+          "role": "supporting",
+          "weight": 0.75,
+          "reliability": 0.8,
+          "channel": "sharp_corrected",
+          "suggested_preset_names": [
+            "ν(C=C) Ar ~1600",
+            "ν(C=C) Ar conj. ~1580",
+            "ν(C=C) Ar ~1490"
+          ],
+          "source_refs": ["sigma", "msu"]
+        }
+      ],
+      "coherence_rules": [
+        {
+          "band_ids": ["aromatic_amine_nh", "aromatic_amine_cn", "aromatic_amine_ring"],
+          "bonus": 0.4,
+          "threshold": 0.38,
+          "label": "Aromatic amine diagnostic triad"
+        }
+      ]
+    },
+    {
+      "id": "azide",
+      "name": "Azide",
+      "color": "#117A65",
+      "summary": "Isolated strong azide stretch in the 2120–2160 cm⁻¹ region.",
+      "source_refs": ["sigma"],
+      "bands": [
+        {
+          "id": "azide_n3",
+          "label": "Azide N₃ stretch",
+          "range_min": 2120.0,
+          "range_max": 2160.0,
+          "expected_intensity": "s",
+          "shape": "sharp",
+          "role": "required",
+          "weight": 1.25,
+          "reliability": 1.0,
+          "channel": "sharp_corrected",
+          "suggested_preset_names": [
+            "ν(N₃) –N₃ azide"
+          ],
+          "source_refs": ["sigma"]
+        }
+      ]
+    },
+    {
+      "id": "isocyanate",
+      "name": "Isocyanate",
+      "color": "#0E6655",
+      "summary": "Strong N=C=O stretch with optional lower-frequency NCO support.",
+      "source_refs": ["sigma"],
+      "bands": [
+        {
+          "id": "isocyanate_nco",
+          "label": "Isocyanate N=C=O stretch",
+          "range_min": 2250.0,
+          "range_max": 2275.0,
+          "expected_intensity": "s",
+          "shape": "sharp",
+          "role": "required",
+          "weight": 1.3,
+          "reliability": 1.05,
+          "channel": "sharp_corrected",
+          "suggested_preset_names": [
+            "ν(N=C=O) –N=C=O isocyanate"
+          ],
+          "source_refs": ["sigma"]
+        },
+        {
+          "id": "isocyanate_secondary",
+          "label": "Lower-frequency NCO support",
+          "range_min": 1340.0,
+          "range_max": 1460.0,
+          "expected_intensity": "m",
+          "shape": "sharp",
+          "role": "supporting",
+          "weight": 0.45,
+          "reliability": 0.45,
+          "channel": "sharp_corrected",
+          "suggested_preset_names": [
+            "νs(NCO) –N=C=O"
+          ],
+          "source_refs": ["sigma"]
+        }
+      ],
+      "coherence_rules": [
+        {
+          "band_ids": ["isocyanate_nco", "isocyanate_secondary"],
+          "bonus": 0.18,
+          "threshold": 0.35,
+          "label": "Isocyanate dual-band support"
+        }
+      ]
+    },
+    {
+      "id": "thiocyanate",
+      "name": "Thiocyanate",
+      "color": "#148F77",
+      "summary": "Sharp thiocyanate band slightly above the azide region.",
+      "source_refs": ["sigma"],
+      "bands": [
+        {
+          "id": "thiocyanate_scn",
+          "label": "Thiocyanate S-C≡N stretch",
+          "range_min": 2140.0,
+          "range_max": 2160.0,
+          "expected_intensity": "s",
+          "shape": "sharp",
+          "role": "required",
+          "weight": 1.1,
+          "reliability": 0.9,
+          "channel": "sharp_corrected",
+          "suggested_preset_names": [
+            "ν(S–C≡N) –SCN thiocyanate"
+          ],
+          "source_refs": ["sigma"]
+        }
+      ]
+    },
+    {
+      "id": "allene",
+      "name": "Allene",
+      "color": "#1F618D",
+      "summary": "Allene cumulene stretch in the overtone-free 1925–1990 cm⁻¹ window.",
+      "source_refs": ["sigma"],
+      "bands": [
+        {
+          "id": "allene_ccc",
+          "label": "Allene C=C=C stretch",
+          "range_min": 1925.0,
+          "range_max": 1990.0,
+          "expected_intensity": "m",
+          "shape": "sharp",
+          "role": "required",
+          "weight": 1.0,
+          "reliability": 0.9,
+          "channel": "sharp_corrected",
+          "suggested_preset_names": [
+            "ν(C=C=C) allene"
+          ],
+          "source_refs": ["sigma"]
+        },
+        {
+          "id": "allene_carbonyl_exclusion",
+          "label": "Carbonyl exclusion",
+          "range_min": 1700.0,
+          "range_max": 1825.0,
+          "expected_intensity": "s",
+          "shape": "sharp",
+          "role": "exclusion",
+          "weight": 1.1,
+          "reliability": 1.0,
+          "channel": "sharp_corrected",
+          "source_refs": ["sigma"]
+        }
+      ]
+    },
+    {
+      "id": "thiol",
+      "name": "Thiol",
+      "color": "#7D6608",
+      "summary": "Weak but diagnostic S-H stretch around 2550–2600 cm⁻¹.",
+      "source_refs": ["sigma", "msu"],
+      "bands": [
+        {
+          "id": "thiol_sh",
+          "label": "Thiol S-H stretch",
+          "range_min": 2550.0,
+          "range_max": 2600.0,
+          "expected_intensity": "w",
+          "shape": "sharp",
+          "role": "required",
+          "weight": 0.95,
+          "reliability": 0.9,
+          "channel": "broad_raw",
+          "suggested_preset_names": [
+            "ν(SH) thiol"
+          ],
+          "source_refs": ["sigma", "msu"]
+        },
+        {
+          "id": "thiol_oh_exclusion",
+          "label": "Broad O-H exclusion",
+          "range_min": 3200.0,
+          "range_max": 3550.0,
+          "expected_intensity": "s",
+          "shape": "broad",
+          "role": "exclusion",
+          "weight": 0.7,
+          "reliability": 0.7,
+          "channel": "broad_raw",
+          "source_refs": ["sigma"]
+        }
+      ]
+    },
+    {
+      "id": "sulfoxide",
+      "name": "Sulfoxide",
+      "color": "#AF601A",
+      "summary": "Very strong sulfoxide S=O stretch near 1030–1070 cm⁻¹.",
+      "source_refs": ["sigma", "msu"],
+      "bands": [
+        {
+          "id": "sulfoxide_so",
+          "label": "Sulfoxide S=O stretch",
+          "range_min": 1030.0,
+          "range_max": 1070.0,
+          "expected_intensity": "vs",
+          "shape": "sharp",
+          "role": "required",
+          "weight": 1.15,
+          "reliability": 1.0,
+          "channel": "sharp_corrected",
+          "suggested_preset_names": [
+            "ν(S=O) sulfoxide"
+          ],
+          "source_refs": ["sigma", "msu"]
+        },
+        {
+          "id": "sulfoxide_oh_exclusion",
+          "label": "Alcohol O-H exclusion",
+          "range_min": 3200.0,
+          "range_max": 3550.0,
+          "expected_intensity": "s",
+          "shape": "broad",
+          "role": "exclusion",
+          "weight": 0.5,
+          "reliability": 0.6,
+          "channel": "broad_raw",
+          "source_refs": ["sigma"]
+        }
+      ]
+    },
+    {
+      "id": "sulfone",
+      "name": "Sulfone",
+      "color": "#BA4A00",
+      "summary": "Characteristic SO₂ doublet with strong high- and low-frequency components.",
+      "source_refs": ["sigma", "msu"],
+      "bands": [
+        {
+          "id": "sulfone_asym",
+          "label": "Sulfone SO₂ asymmetric stretch",
+          "range_min": 1300.0,
+          "range_max": 1350.0,
+          "expected_intensity": "s",
+          "shape": "sharp",
+          "role": "required",
+          "weight": 1.0,
+          "reliability": 0.95,
+          "channel": "sharp_corrected",
+          "suggested_preset_names": [
+            "νas(SO₂) sulfone"
+          ],
+          "source_refs": ["sigma", "msu"]
+        },
+        {
+          "id": "sulfone_sym",
+          "label": "Sulfone SO₂ symmetric stretch",
+          "range_min": 1130.0,
+          "range_max": 1170.0,
+          "expected_intensity": "s",
+          "shape": "sharp",
+          "role": "required",
+          "weight": 1.0,
+          "reliability": 0.95,
+          "channel": "sharp_corrected",
+          "suggested_preset_names": [
+            "νs(SO₂) sulfone"
+          ],
+          "source_refs": ["sigma", "msu"]
+        }
+      ],
+      "coherence_rules": [
+        {
+          "band_ids": ["sulfone_asym", "sulfone_sym"],
+          "bonus": 0.45,
+          "threshold": 0.42,
+          "label": "Sulfone SO₂ pair"
+        }
+      ]
+    },
+    {
+      "id": "sulfonamide",
+      "name": "Sulfonamide",
+      "color": "#CA6F1E",
+      "summary": "Sulfonamide SO₂ pair supported by N-H stretching.",
+      "source_refs": ["sigma", "msu"],
+      "bands": [
+        {
+          "id": "sulfonamide_nh",
+          "label": "Sulfonamide N-H stretch",
+          "range_min": 3300.0,
+          "range_max": 3500.0,
+          "expected_intensity": "m",
+          "shape": "broad",
+          "role": "supporting",
+          "weight": 0.6,
+          "reliability": 0.7,
+          "channel": "broad_raw",
+          "suggested_preset_names": [
+            "νas(NH₂) –NH₂",
+            "ν(NH) –NH–",
+            "νs(NH₂) –NH₂"
+          ],
+          "source_refs": ["sigma", "msu"]
+        },
+        {
+          "id": "sulfonamide_asym",
+          "label": "Sulfonamide SO₂ asymmetric stretch",
+          "range_min": 1335.0,
+          "range_max": 1350.0,
+          "expected_intensity": "s",
+          "shape": "sharp",
+          "role": "required",
+          "weight": 1.0,
+          "reliability": 0.9,
+          "channel": "sharp_corrected",
+          "suggested_preset_names": [
+            "νas(SO₂) sulfonamide"
+          ],
+          "source_refs": ["sigma", "msu"]
+        },
+        {
+          "id": "sulfonamide_sym",
+          "label": "Sulfonamide SO₂ symmetric stretch",
+          "range_min": 1155.0,
+          "range_max": 1170.0,
+          "expected_intensity": "s",
+          "shape": "sharp",
+          "role": "required",
+          "weight": 0.95,
+          "reliability": 0.9,
+          "channel": "sharp_corrected",
+          "suggested_preset_names": [
+            "νs(SO₂) sulfonamide"
+          ],
+          "source_refs": ["sigma", "msu"]
+        }
+      ],
+      "coherence_rules": [
+        {
+          "band_ids": ["sulfonamide_asym", "sulfonamide_sym", "sulfonamide_nh"],
+          "bonus": 0.35,
+          "threshold": 0.35,
+          "label": "Sulfonamide SO₂ + N-H triad"
+        }
+      ]
+    },
+    {
+      "id": "sulfonyl_chloride",
+      "name": "Sulfonyl Chloride",
+      "color": "#D35400",
+      "summary": "Sulfonyl chloride SO₂ pair at higher frequency than sulfones.",
+      "source_refs": ["sigma", "msu"],
+      "bands": [
+        {
+          "id": "sulfonyl_chloride_asym",
+          "label": "Sulfonyl chloride SO₂ asymmetric stretch",
+          "range_min": 1380.0,
+          "range_max": 1410.0,
+          "expected_intensity": "s",
+          "shape": "sharp",
+          "role": "required",
+          "weight": 1.05,
+          "reliability": 0.95,
+          "channel": "sharp_corrected",
+          "suggested_preset_names": [
+            "νas(SO₂) sulfonyl chloride"
+          ],
+          "source_refs": ["sigma", "msu"]
+        },
+        {
+          "id": "sulfonyl_chloride_sym",
+          "label": "Sulfonyl chloride SO₂ symmetric stretch",
+          "range_min": 1160.0,
+          "range_max": 1190.0,
+          "expected_intensity": "s",
+          "shape": "sharp",
+          "role": "required",
+          "weight": 1.0,
+          "reliability": 0.95,
+          "channel": "sharp_corrected",
+          "suggested_preset_names": [
+            "νs(SO₂) sulfonyl chloride"
+          ],
+          "source_refs": ["sigma", "msu"]
+        },
+        {
+          "id": "sulfonyl_chloride_nh_exclusion",
+          "label": "N-H exclusion",
+          "range_min": 3300.0,
+          "range_max": 3500.0,
+          "expected_intensity": "m",
+          "shape": "broad",
+          "role": "exclusion",
+          "weight": 0.55,
+          "reliability": 0.65,
+          "channel": "broad_raw",
+          "source_refs": ["sigma"]
+        }
+      ],
+      "coherence_rules": [
+        {
+          "band_ids": ["sulfonyl_chloride_asym", "sulfonyl_chloride_sym"],
+          "bonus": 0.4,
+          "threshold": 0.4,
+          "label": "Sulfonyl chloride SO₂ pair"
+        }
+      ]
+    },
+    {
+      "id": "carbodiimide",
+      "name": "Carbodiimide",
+      "color": "#0E6655",
+      "summary": "Sharp N=C=N absorption in the narrow 2145–2120 cm⁻¹ window.",
+      "source_refs": ["sigma"],
+      "bands": [
+        {
+          "id": "carbodiimide_ncn",
+          "label": "Carbodiimide N=C=N stretch",
+          "range_min": 2120.0,
+          "range_max": 2145.0,
+          "expected_intensity": "s",
+          "shape": "sharp",
+          "role": "required",
+          "weight": 1.25,
+          "reliability": 1.0,
+          "channel": "sharp_corrected",
+          "suggested_preset_names": [
+            "ν(N=C=N) carbodiimide"
+          ],
+          "source_refs": ["sigma"]
+        },
+        {
+          "id": "carbodiimide_high_exclusion",
+          "label": "High-side azide / thiocyanate exclusion",
+          "range_min": 2145.0,
+          "range_max": 2175.0,
+          "expected_intensity": "s",
+          "shape": "sharp",
+          "role": "exclusion",
+          "weight": 0.75,
+          "reliability": 0.8,
+          "channel": "sharp_corrected",
+          "source_refs": ["sigma"]
+        }
+      ]
+    },
+    {
+      "id": "isothiocyanate",
+      "name": "Isothiocyanate",
+      "color": "#117864",
+      "summary": "Strong N=C=S band in the 2140–1990 cm⁻¹ region.",
+      "source_refs": ["sigma"],
+      "bands": [
+        {
+          "id": "isothiocyanate_ncs",
+          "label": "Isothiocyanate N=C=S stretch",
+          "range_min": 1990.0,
+          "range_max": 2140.0,
+          "expected_intensity": "s",
+          "shape": "sharp",
+          "role": "required",
+          "weight": 1.1,
+          "reliability": 0.78,
+          "channel": "sharp_corrected",
+          "suggested_preset_names": [
+            "ν(N=C=S) –N=C=S isothiocyanate"
+          ],
+          "source_refs": ["sigma"]
+        },
+        {
+          "id": "isothiocyanate_high_exclusion",
+          "label": "High-side azide / thiocyanate exclusion",
+          "range_min": 2140.0,
+          "range_max": 2175.0,
+          "expected_intensity": "s",
+          "shape": "sharp",
+          "role": "exclusion",
+          "weight": 0.8,
+          "reliability": 0.85,
+          "channel": "sharp_corrected",
+          "source_refs": ["sigma"]
+        }
+      ]
+    },
+    {
+      "id": "sulfate",
+      "name": "Sulfate",
+      "color": "#BA4A00",
+      "summary": "Paired sulfate SO₃ stretches at high and mid frequency.",
+      "source_refs": ["sigma"],
+      "bands": [
+        {
+          "id": "sulfate_asym",
+          "label": "Sulfate SO₃ asymmetric stretch",
+          "range_min": 1380.0,
+          "range_max": 1415.0,
+          "expected_intensity": "s",
+          "shape": "sharp",
+          "role": "required",
+          "weight": 1.0,
+          "reliability": 0.9,
+          "channel": "sharp_corrected",
+          "suggested_preset_names": [
+            "νas(SO₃) sulfate"
+          ],
+          "source_refs": ["sigma"]
+        },
+        {
+          "id": "sulfate_sym",
+          "label": "Sulfate SO₃ symmetric stretch",
+          "range_min": 1185.0,
+          "range_max": 1200.0,
+          "expected_intensity": "s",
+          "shape": "sharp",
+          "role": "required",
+          "weight": 0.95,
+          "reliability": 0.88,
+          "channel": "sharp_corrected",
+          "suggested_preset_names": [
+            "νs(SO₃) sulfate"
+          ],
+          "source_refs": ["sigma"]
+        }
+      ],
+      "coherence_rules": [
+        {
+          "band_ids": ["sulfate_asym", "sulfate_sym"],
+          "bonus": 0.4,
+          "threshold": 0.4,
+          "label": "Sulfate SO₃ pair"
+        }
+      ]
+    },
+    {
+      "id": "sulfonate",
+      "name": "Sulfonate",
+      "color": "#CA6F1E",
+      "summary": "Characteristic sulfonate SO₃ pair with separated high and low bands.",
+      "source_refs": ["sigma"],
+      "bands": [
+        {
+          "id": "sulfonate_asym",
+          "label": "Sulfonate SO₃ asymmetric stretch",
+          "range_min": 1335.0,
+          "range_max": 1372.0,
+          "expected_intensity": "s",
+          "shape": "sharp",
+          "role": "required",
+          "weight": 1.0,
+          "reliability": 0.92,
+          "channel": "sharp_corrected",
+          "suggested_preset_names": [
+            "νas(SO₃) sulfonate"
+          ],
+          "source_refs": ["sigma"]
+        },
+        {
+          "id": "sulfonate_sym",
+          "label": "Sulfonate SO₃ symmetric stretch",
+          "range_min": 1168.0,
+          "range_max": 1195.0,
+          "expected_intensity": "s",
+          "shape": "sharp",
+          "role": "required",
+          "weight": 0.95,
+          "reliability": 0.9,
+          "channel": "sharp_corrected",
+          "suggested_preset_names": [
+            "νs(SO₃) sulfonate"
+          ],
+          "source_refs": ["sigma"]
+        },
+        {
+          "id": "sulfonate_nh_exclusion",
+          "label": "N-H exclusion",
+          "range_min": 3300.0,
+          "range_max": 3500.0,
+          "expected_intensity": "m",
+          "shape": "broad",
+          "role": "exclusion",
+          "weight": 0.45,
+          "reliability": 0.6,
+          "channel": "broad_raw",
+          "source_refs": ["sigma"]
+        }
+      ],
+      "coherence_rules": [
+        {
+          "band_ids": ["sulfonate_asym", "sulfonate_sym"],
+          "bonus": 0.42,
+          "threshold": 0.4,
+          "label": "Sulfonate SO₃ pair"
+        }
+      ]
+    },
+    {
+      "id": "vinyl_ether",
+      "name": "Vinyl Ether",
+      "color": "#B9770E",
+      "summary": "Vinyl ether C-O band supported by alkene evidence.",
+      "source_refs": ["sigma"],
+      "bands": [
+        {
+          "id": "vinyl_ether_co",
+          "label": "Vinyl ether C-O stretch",
+          "range_min": 1200.0,
+          "range_max": 1225.0,
+          "expected_intensity": "s",
+          "shape": "sharp",
+          "role": "required",
+          "weight": 0.95,
+          "reliability": 0.9,
+          "channel": "sharp_corrected",
+          "suggested_preset_names": [
+            "ν(CO) CH₂=CH–O– vinyl ether"
+          ],
+          "source_refs": ["sigma"]
+        },
+        {
+          "id": "vinyl_ether_ch",
+          "label": "Vinyl =C-H stretch",
+          "range_min": 3000.0,
+          "range_max": 3100.0,
+          "expected_intensity": "m",
+          "shape": "sharp",
+          "role": "supporting",
+          "weight": 0.6,
+          "reliability": 0.65,
+          "channel": "broad_raw",
+          "suggested_preset_names": [
+            "ν(CH) =CH–",
+            "νas(CH₂) >C=CH₂"
+          ],
+          "source_refs": ["sigma"]
+        },
+        {
+          "id": "vinyl_ether_oop",
+          "label": "Vinyl out-of-plane bend",
+          "range_min": 905.0,
+          "range_max": 995.0,
+          "expected_intensity": "s",
+          "shape": "sharp",
+          "role": "supporting",
+          "weight": 0.7,
+          "reliability": 0.7,
+          "channel": "sharp_corrected",
+          "suggested_preset_names": [
+            "γ(CH) –CH=CH₂ vinyl",
+            "γ(CH) R–CH=CH₂ terminal"
+          ],
+          "source_refs": ["sigma"]
+        }
+      ],
+      "coherence_rules": [
+        {
+          "band_ids": ["vinyl_ether_co", "vinyl_ether_ch"],
+          "bonus": 0.18,
+          "threshold": 0.35,
+          "label": "Vinyl ether C-O + =C-H coherence"
+        },
+        {
+          "band_ids": ["vinyl_ether_co", "vinyl_ether_oop"],
+          "bonus": 0.22,
+          "threshold": 0.35,
+          "label": "Vinyl ether C-O + vinyl bend coherence"
+        }
+      ]
     }
   ]
 }

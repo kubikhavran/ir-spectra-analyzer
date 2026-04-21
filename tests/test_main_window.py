@@ -620,6 +620,25 @@ def test_add_to_recent_dedupes(qtbot):
     assert saved.count("/old/a.spa") == 1
 
 
+def test_open_recent_routes_irproj_to_project_loader(qtbot, monkeypatch):
+    """Recent project files must reopen through the project loader, not SPA import."""
+    from ui.main_window import MainWindow
+
+    window = MainWindow(db=_make_mock_db(), settings=_make_mock_settings())
+    qtbot.addWidget(window)
+
+    project_calls: list[str] = []
+    spectrum_calls: list[str] = []
+    monkeypatch.setattr(window, "_load_project_from_path", lambda path: project_calls.append(path))
+    monkeypatch.setattr(window, "_load_spectrum", lambda path: spectrum_calls.append(path))
+
+    window._open_recent_path("/tmp/test.irproj")
+    window._open_recent_path("/tmp/test.spa")
+
+    assert project_calls == ["/tmp/test.irproj"]
+    assert spectrum_calls == ["/tmp/test.spa"]
+
+
 def test_delete_peak_shortcut(qtbot):
     """_on_delete_peak removes selected peak from project and refreshes UI."""
     from unittest.mock import MagicMock
@@ -692,6 +711,75 @@ def test_main_window_save_and_open_project(qtbot, tmp_path):
     assert window._project.name == "Test"
     assert len(window._project.peaks) == 1
     assert window._project.peaks[0].vibration_id == 99
+
+
+def test_main_window_save_and_open_project_restores_metadata_and_vibrations(qtbot, tmp_path):
+    from unittest.mock import patch
+
+    from core.peak import Peak
+    from core.project import Project
+    from core.spectrum import Spectrum
+    from ui.main_window import MainWindow
+
+    db = _make_mock_db()
+    settings = _make_mock_settings()
+    window = MainWindow(db=db, settings=settings)
+    qtbot.addWidget(window)
+
+    wn = np.linspace(400.0, 4000.0, 10)
+    spectrum = Spectrum(wavenumbers=wn, intensities=np.linspace(0.0, 1.0, 10), title="Raw Title")
+    project = Project(name="Project Name", spectrum=spectrum)
+    project.peaks.append(
+        Peak(
+            position=1250.0,
+            intensity=0.5,
+            label="P1",
+            vibration_id=99,
+            vibration_ids=[99, None],
+            vibration_labels=["ν(C=O)", "custom note"],
+            manual_placement=True,
+            label_offset_x=8.0,
+            label_offset_y=-0.2,
+        )
+    )
+    window._project = project
+    window._peak_table.set_peaks(project.peaks)
+    window._metadata_panel._title_edit.setText("Edited Title")
+    window._metadata_panel._sample_edit.setText("Sample A")
+    window._metadata_panel._operator_edit.setText("Analyst X")
+
+    project_path = tmp_path / "restored_project.irproj"
+
+    with patch(
+        "ui.main_window.QFileDialog.getSaveFileName",
+        return_value=(str(project_path), "IR Project Files (*.irproj)"),
+    ):
+        window._on_save_project()
+
+    window._project = None
+    window._spectrum_widget._spectrum = None
+
+    with patch(
+        "ui.main_window.QFileDialog.getOpenFileName",
+        return_value=(str(project_path), "IR Project Files (*.irproj)"),
+    ):
+        window._on_open_project()
+
+    assert window._project is not None
+    assert len(window._project.peaks) == 1
+    loaded_peak = window._project.peaks[0]
+    assert loaded_peak.vibration_ids == [99, None]
+    assert loaded_peak.vibration_labels == ["ν(C=O)", "custom note"]
+    assert loaded_peak.manual_placement is True
+    assert loaded_peak.label_offset_x == pytest.approx(8.0)
+    assert loaded_peak.label_offset_y == pytest.approx(-0.2)
+    assert window._peak_table._table.item(0, 3).text() == "ν(C=O) / custom note"
+    assert window._metadata_panel._title_edit.text() == "Edited Title"
+    assert window._metadata_panel._sample_edit.text() == "Sample A"
+    assert window._metadata_panel._operator_edit.text() == "Analyst X"
+    assert window._project.metadata.title == "Edited Title"
+    assert window._project.metadata.sample_name == "Sample A"
+    assert window._project.metadata.operator == "Analyst X"
 
 
 def test_export_dialog_defaults_to_all_report_sections_enabled(qtbot):

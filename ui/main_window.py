@@ -14,6 +14,8 @@ Architektonické pravidlo:
 
 from __future__ import annotations
 
+from datetime import datetime
+
 from PySide6.QtCore import Qt
 from PySide6.QtGui import QKeySequence, QShortcut, QUndoStack
 from PySide6.QtWidgets import (
@@ -288,6 +290,7 @@ class MainWindow(QMainWindow):
         self._spectrum_widget.peak_selected_in_viewer.connect(self._on_peak_selected_in_viewer)
         self._spectrum_widget.peak_delete_requested.connect(self._on_delete_peak_object)
         self._peak_table.peak_selected.connect(self._on_peak_selected)
+        self._metadata_panel.metadata_changed.connect(self._on_metadata_changed)
         self._vibration_panel.preset_selected.connect(self._on_preset_selected)
         self._vibration_panel.preset_clicked_for_assign.connect(self._on_preset_clicked_for_assign)
         self._vibration_panel.preset_added.connect(self._on_vibration_preset_changed)
@@ -303,6 +306,125 @@ class MainWindow(QMainWindow):
         )
         self._molecule_widget.smiles_changed.connect(self._on_structure_edited)
         self._molecule_widget.mol_block_changed.connect(self._on_mol_block_changed)
+
+    @staticmethod
+    def _metadata_is_meaningful(metadata) -> bool:
+        if metadata is None:
+            return False
+        return any(
+            (
+                metadata.title,
+                metadata.sample_name,
+                metadata.operator,
+                metadata.instrument,
+                metadata.acquired_at,
+                metadata.resolution is not None,
+                metadata.scans is not None,
+                metadata.comments,
+                metadata.extra,
+            )
+        )
+
+    @staticmethod
+    def _build_metadata_from_spectrum(spectrum, *, sample_name: str = ""):
+        from pathlib import Path  # noqa: PLC0415
+
+        from core.metadata import SpectrumMetadata  # noqa: PLC0415
+
+        resolved_sample = sample_name
+        if not resolved_sample and spectrum.source_path:
+            resolved_sample = Path(spectrum.source_path).stem
+
+        return SpectrumMetadata(
+            title=spectrum.title,
+            sample_name=resolved_sample,
+            operator="",
+            instrument=str(spectrum.extra_metadata.get("instrument_serial", "")),
+            acquired_at=spectrum.acquired_at,
+            resolution=spectrum.extra_metadata.get("resolution_cm"),
+            scans=spectrum.extra_metadata.get("scans"),
+            comments=spectrum.extra_metadata.get("omnic_comment", spectrum.comments),
+            extra={
+                "omnic_client": spectrum.extra_metadata.get("omnic_custom_info_2", ""),
+                "omnic_order": spectrum.extra_metadata.get("omnic_custom_info_1", ""),
+            },
+        )
+
+    def _resolved_project_metadata(self, project, *, sample_name: str = ""):
+        if self._metadata_is_meaningful(getattr(project, "metadata", None)):
+            return project.metadata
+        if project.spectrum is None:
+            from core.metadata import SpectrumMetadata  # noqa: PLC0415
+
+            return SpectrumMetadata(sample_name=sample_name)
+        return self._build_metadata_from_spectrum(project.spectrum, sample_name=sample_name)
+
+    def _apply_project_to_ui(self, project, *, recent_path: str | None = None) -> None:
+        from pathlib import Path  # noqa: PLC0415
+
+        self._project = project
+        self._undo_stack.clear()
+        if recent_path:
+            self._add_to_recent(recent_path)
+
+        self._spectrum_widget.set_overlay_spectra([])
+        display_spectrum = project.corrected_spectrum or project.spectrum
+        if display_spectrum is not None:
+            self._spectrum_widget.set_spectrum(display_spectrum)
+
+        self._reload_vibration_presets()
+        self._refresh_peak_views()
+
+        sample_name = ""
+        if project.spectrum is not None:
+            if project.spectrum.source_path is not None:
+                sample_name = Path(project.spectrum.source_path).stem
+            elif recent_path and not recent_path.lower().endswith(".irproj"):
+                sample_name = Path(recent_path).stem
+
+        project.metadata = self._resolved_project_metadata(project, sample_name=sample_name)
+        self._metadata_panel.set_metadata(project.metadata)
+
+        self._molecule_widget.set_structure(
+            project.smiles,
+            mol_block=getattr(project, "mol_block", ""),
+            image_bytes=project.structure_image,
+        )
+        self._refresh_functional_group_analysis()
+
+    def _sync_project_metadata_from_panel(self) -> None:
+        if self._project is None:
+            return
+        self._on_metadata_changed(self._metadata_panel.current_metadata())
+
+    def _open_recent_path(self, path: str) -> None:
+        if path.lower().endswith(".irproj"):
+            self._load_project_from_path(path)
+            return
+        self._load_spectrum(path)
+
+    def _load_project_from_path(self, path: str) -> None:
+        from pathlib import Path  # noqa: PLC0415
+
+        from storage.project_serializer import ProjectSerializer  # noqa: PLC0415
+
+        project = ProjectSerializer().load(path)
+        self._apply_project_to_ui(project, recent_path=path)
+        self.statusBar().showMessage(f"Project loaded: {Path(path).name}")
+
+    def _on_metadata_changed(self, metadata) -> None:
+        if self._project is None:
+            return
+
+        self._project.metadata = metadata
+        self._project.updated_at = datetime.now()
+
+        if self._project.spectrum is not None:
+            self._project.spectrum.title = metadata.title
+            self._project.spectrum.comments = metadata.comments
+        if self._project.corrected_spectrum is not None:
+            self._project.corrected_spectrum.title = metadata.title
+            self._project.corrected_spectrum.comments = metadata.comments
 
     # --- Event handlers ---
 
@@ -332,11 +454,12 @@ class MainWindow(QMainWindow):
         if not path:
             return
 
-        from pathlib import Path  # noqa: PLC0415
-
-        from storage.project_serializer import ProjectSerializer  # noqa: PLC0415
-
         try:
+            from pathlib import Path  # noqa: PLC0415
+
+            from storage.project_serializer import ProjectSerializer  # noqa: PLC0415
+
+            self._sync_project_metadata_from_panel()
             ProjectSerializer().save(self._project, path)
             self.statusBar().showMessage(f"Project saved: {Path(path).name}")
             self._add_to_recent(path)
@@ -354,52 +477,8 @@ class MainWindow(QMainWindow):
         if not path:
             return
 
-        from pathlib import Path  # noqa: PLC0415
-
-        from storage.project_serializer import ProjectSerializer  # noqa: PLC0415
-
         try:
-            project = ProjectSerializer().load(path)
-            self._project = project
-            self._undo_stack.clear()
-            self._add_to_recent(path)
-
-            display_spectrum = project.corrected_spectrum or project.spectrum
-            if display_spectrum is not None:
-                self._spectrum_widget.set_spectrum(display_spectrum)
-
-            self._peak_table.set_peaks(project.peaks)
-            self._spectrum_widget.set_peaks(project.peaks)
-
-            if project.spectrum is not None:
-                from core.metadata import SpectrumMetadata  # noqa: PLC0415
-
-                spectrum = project.spectrum
-                metadata = SpectrumMetadata(
-                    title=spectrum.title,
-                    sample_name=Path(spectrum.source_path).stem if spectrum.source_path else "",
-                    operator="",
-                    instrument=str(spectrum.extra_metadata.get("instrument_serial", "")),
-                    acquired_at=spectrum.acquired_at,
-                    resolution=spectrum.extra_metadata.get("resolution_cm"),
-                    scans=None,
-                    comments=spectrum.extra_metadata.get("omnic_comment", spectrum.comments),
-                    extra={
-                        "omnic_client": spectrum.extra_metadata.get("omnic_custom_info_2", ""),
-                        "omnic_order": spectrum.extra_metadata.get("omnic_custom_info_1", ""),
-                    },
-                )
-                self._metadata_panel.set_metadata(metadata)
-
-            # Update molecule structure panel with the saved project-level SMILES
-            self._molecule_widget.set_structure(
-                project.smiles,
-                mol_block=getattr(project, "mol_block", ""),
-                image_bytes=project.structure_image,
-            )
-            self._refresh_functional_group_analysis()
-
-            self.statusBar().showMessage(f"Project loaded: {Path(path).name}")
+            self._load_project_from_path(path)
         except Exception as e:  # noqa: BLE001
             QMessageBox.critical(self, "Open Error", f"Failed to open project:\n{e}")
 
@@ -407,7 +486,6 @@ class MainWindow(QMainWindow):
         """Load a spectrum file and update the UI."""
         from pathlib import Path  # noqa: PLC0415
 
-        from core.metadata import SpectrumMetadata  # noqa: PLC0415
         from core.peak import Peak  # noqa: PLC0415
         from core.project import Project  # noqa: PLC0415
         from file_io.format_registry import FormatRegistry  # noqa: PLC0415
@@ -421,41 +499,11 @@ class MainWindow(QMainWindow):
             ]
             loaded_peaks.sort(key=lambda peak: peak.position, reverse=True)
             self._project = Project(name=Path(path).stem, spectrum=spectrum, peaks=loaded_peaks)
-            self._undo_stack.clear()
-            self._add_to_recent(path)
-
-            # Update spectrum viewer
-            self._spectrum_widget.set_spectrum(spectrum)
-            self._peak_table.set_peaks(self._project.peaks)
-            self._spectrum_widget.set_peaks(self._project.peaks)
-
-            # Update metadata panel
-            metadata = SpectrumMetadata(
-                title=spectrum.title,
+            self._project.metadata = self._build_metadata_from_spectrum(
+                spectrum,
                 sample_name=Path(path).stem,
-                operator="",
-                instrument=str(spectrum.extra_metadata.get("instrument_serial", "")),
-                acquired_at=spectrum.acquired_at,
-                resolution=spectrum.extra_metadata.get("resolution_cm"),
-                scans=None,
-                comments=spectrum.extra_metadata.get("omnic_comment", spectrum.comments),
-                extra={
-                    "omnic_client": spectrum.extra_metadata.get("omnic_custom_info_2", ""),
-                    "omnic_order": spectrum.extra_metadata.get("omnic_custom_info_1", ""),
-                },
             )
-            self._metadata_panel.set_metadata(metadata)
-
-            # Refresh vibration presets in case the DB was modified externally
-            self._reload_vibration_presets()
-
-            # Update molecule structure panel (new project starts with empty SMILES)
-            self._molecule_widget.set_structure(
-                self._project.smiles,
-                mol_block=getattr(self._project, "mol_block", ""),
-                image_bytes=self._project.structure_image,
-            )
-            self._refresh_functional_group_analysis()
+            self._apply_project_to_ui(self._project, recent_path=path)
 
             base = f"Loaded: {Path(path).name} ({spectrum.n_points} points)"
             if self._project.peaks:
@@ -563,6 +611,7 @@ class MainWindow(QMainWindow):
         if self._project is None or self._project.spectrum is None:
             self.statusBar().showMessage("No spectrum loaded")
             return
+        self._sync_project_metadata_from_panel()
 
         from ui.dialogs.export_dialog import ExportDialog  # noqa: PLC0415
 
@@ -1061,7 +1110,7 @@ class MainWindow(QMainWindow):
             return
         for path in recent:
             action = self._recent_menu.addAction(path)
-            action.triggered.connect(lambda checked=False, p=path: self._load_spectrum(p))
+            action.triggered.connect(lambda checked=False, p=path: self._open_recent_path(p))
 
     def _add_to_recent(self, path: str) -> None:
         """Add path to recent files list (max 5, deduped, newest first)."""
