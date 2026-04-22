@@ -462,14 +462,12 @@ class PDFGenerator:
             is_dip_spectrum=is_dip_spectrum,
         )
 
-        col_pos_w = 2.5 * cm
-        col_int_w = 2.5 * cm
-        col_cls_w = 1.5 * cm
-        col_assign_w = _PORT_TEXT_W - col_pos_w - col_int_w - col_cls_w
+        col_pos_w = 3.0 * cm
+        col_cls_w = 1.6 * cm
+        col_assign_w = _PORT_TEXT_W - col_pos_w - col_cls_w
 
         header_row = [
             Paragraph("Position (cm\u207b\u00b9)", table_header_style),
-            Paragraph("Intensity", table_header_style),
             Paragraph("Int.", table_header_style),
             Paragraph("Assignment", table_header_style),
         ]
@@ -480,7 +478,6 @@ class PDFGenerator:
             data_rows.append(
                 [
                     Paragraph(str(int(round(peak.position))), table_cell_right),
-                    Paragraph(f"{peak.intensity:.4f}", table_cell_right),
                     Paragraph(cls_str, table_cell_right),
                     Paragraph(peak_assignment_text(peak), table_cell_style),
                 ]
@@ -489,7 +486,7 @@ class PDFGenerator:
         table_data = [header_row] + data_rows
         peaks_table = Table(
             table_data,
-            colWidths=[col_pos_w, col_int_w, col_cls_w, col_assign_w],
+            colWidths=[col_pos_w, col_cls_w, col_assign_w],
         )
 
         ts = TableStyle(

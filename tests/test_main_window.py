@@ -91,7 +91,70 @@ def test_spectrum_widget_set_peaks(qtbot):
     assert len(widget._peaks) == 1
     labels = [item for item in widget._peak_items if isinstance(item, _DraggableLabel)]
     assert len(labels) == 1
+    assert labels[0].textItem.font().pointSizeF() == pytest.approx(8.0)
     assert labels[0]._data_y == pytest.approx(0.5 + 0.065 * np.ptp(spectrum.intensities))
+
+
+def test_spectrum_widget_auto_arrange_labels_avoids_overlap_and_curve(qtbot):
+    from core.peak import Peak
+    from core.spectrum import Spectrum
+    from ui.spectrum_widget import SpectrumWidget, _DraggableLabel
+
+    widget = SpectrumWidget()
+    widget.resize(1200, 700)
+    qtbot.addWidget(widget)
+
+    wavenumbers = np.linspace(4000.0, 400.0, 3601)
+    centers = [1702.0, 1694.0, 1686.0, 1678.0, 1669.0, 1661.0, 1653.0, 917.0, 902.0, 889.0, 874.0]
+    intensities = np.full_like(wavenumbers, 0.08, dtype=float)
+    for idx, center in enumerate(centers):
+        intensities += (0.42 - idx * 0.015) * np.exp(
+            -0.5 * ((wavenumbers - center) / 10.5) ** 2
+        )
+    spectrum = Spectrum(wavenumbers=wavenumbers, intensities=intensities, title="Crowded")
+    peaks = [
+        Peak(
+            position=center,
+            intensity=float(np.interp(center, wavenumbers[::-1], intensities[::-1])),
+        )
+        for center in centers
+    ]
+
+    widget.set_spectrum(spectrum)
+    widget.set_peaks(peaks)
+
+    placements = widget.compute_auto_label_placements()
+    assert len(placements) == len(peaks)
+    assert all(offset_x == pytest.approx(0.0) for _peak, offset_x, _offset_y in placements)
+
+    for peak, offset_x, offset_y in placements:
+        peak.label_offset_x = offset_x
+        peak.label_offset_y = offset_y
+        peak.manual_placement = True
+    widget.set_peaks(peaks)
+    widget.reset_view()
+
+    labels = [item for item in widget._peak_items if isinstance(item, _DraggableLabel)]
+    assert all(label._data_x == pytest.approx(label._peak_x) for label in labels)
+    assert len({round(label._data_y, 3) for label in labels}) >= 4
+
+    rects = []
+    for label in labels:
+        rect = label.mapRectToParent(label.boundingRect())
+        rects.append(
+            (
+                min(float(rect.left()), float(rect.right())),
+                max(float(rect.left()), float(rect.right())),
+                min(float(rect.top()), float(rect.bottom())),
+                max(float(rect.top()), float(rect.bottom())),
+            )
+        )
+
+    for _idx, rect in enumerate(rects):
+        x0, x1, y0, _y1 = rect
+        sample_x = np.linspace(x0, x1, 12)
+        curve_y = np.array([widget._intensity_at(x) for x in sample_x], dtype=float)
+        assert y0 > float(np.max(curve_y))
 
 
 def test_spectrum_widget_places_auto_labels_below_dip_like_percent_style_spectrum(qtbot):
@@ -198,8 +261,8 @@ def test_sideways_label_uses_shorter_diagonal_segment(qtbot):
     assert y_data is not None
     assert y_data[0] == pytest.approx(80.0)
     assert y_data[2] == pytest.approx(100.0)
-    assert y_data[1] == pytest.approx(93.0)
-    assert (y_data[2] - y_data[1]) == pytest.approx(7.0)
+    assert y_data[1] == pytest.approx(99.0)
+    assert (y_data[2] - y_data[1]) == pytest.approx(1.0)
 
 
 def test_sideways_label_uses_shorter_diagonal_segment_for_transmittance(qtbot):
@@ -227,8 +290,8 @@ def test_sideways_label_uses_shorter_diagonal_segment_for_transmittance(qtbot):
     assert y_data is not None
     assert y_data[0] == pytest.approx(88.0)
     assert y_data[2] == pytest.approx(68.0)
-    assert y_data[1] == pytest.approx(75.0)
-    assert (y_data[1] - y_data[2]) == pytest.approx(7.0)
+    assert y_data[1] == pytest.approx(69.0)
+    assert (y_data[1] - y_data[2]) == pytest.approx(1.0)
 
 
 def test_manual_peak_labels_anchor_to_curve_level_for_transmittance(qtbot):
@@ -288,6 +351,56 @@ def test_manual_peak_click_uses_interpolated_curve_intensity(qtbot):
     assert observed[1000.0] == pytest.approx(0.81)
     assert observed[1452.0] == pytest.approx(0.55)
     assert observed[3000.0] == pytest.approx(0.32)
+
+
+def test_main_window_arrange_peak_labels_is_undoable(qtbot):
+    from core.peak import Peak
+    from core.project import Project
+    from core.spectrum import Spectrum
+    from ui.main_window import MainWindow
+
+    window = MainWindow(db=_make_mock_db(), settings=_make_mock_settings())
+    qtbot.addWidget(window)
+
+    wavenumbers = np.linspace(4000.0, 400.0, 3601)
+    intensities = (
+        0.08
+        + 0.40 * np.exp(-0.5 * ((wavenumbers - 3000.0) / 18.0) ** 2)
+        + 0.38 * np.exp(-0.5 * ((wavenumbers - 2988.0) / 18.0) ** 2)
+        + 0.36 * np.exp(-0.5 * ((wavenumbers - 2976.0) / 18.0) ** 2)
+    )
+    spectrum = Spectrum(wavenumbers=wavenumbers, intensities=intensities, title="Arrange")
+    peaks = [
+        Peak(
+            position=3000.0,
+            intensity=float(np.interp(3000.0, wavenumbers[::-1], intensities[::-1])),
+        ),
+        Peak(
+            position=2988.0,
+            intensity=float(np.interp(2988.0, wavenumbers[::-1], intensities[::-1])),
+        ),
+        Peak(
+            position=2976.0,
+            intensity=float(np.interp(2976.0, wavenumbers[::-1], intensities[::-1])),
+        ),
+    ]
+    window._project = Project(name="Arrange", spectrum=spectrum, peaks=peaks)
+    window._spectrum_widget.set_spectrum(spectrum)
+    window._refresh_peak_views(peaks[0])
+
+    original = [(peak.label_offset_x, peak.label_offset_y, peak.manual_placement) for peak in peaks]
+
+    window._on_arrange_peak_labels()
+
+    arranged = [(peak.label_offset_x, peak.label_offset_y, peak.manual_placement) for peak in peaks]
+    assert any(current != previous for current, previous in zip(arranged, original, strict=False))
+    assert all(peak.manual_placement for peak in peaks)
+    assert all(peak.label_offset_x == pytest.approx(0.0) for peak in peaks)
+
+    window._undo_stack.undo()
+
+    restored = [(peak.label_offset_x, peak.label_offset_y, peak.manual_placement) for peak in peaks]
+    assert restored == original
 
 
 def test_peak_table_set_peaks(qtbot):

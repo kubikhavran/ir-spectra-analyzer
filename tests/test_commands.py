@@ -107,6 +107,40 @@ def test_set_peak_vibrations_command_redo_undo():
     assert peak.vibration_ids == [42]
 
 
+def test_set_peak_label_placements_command_redo_undo():
+    _app()
+    from core.commands import SetPeakLabelPlacementsCommand
+    from core.peak import Peak
+
+    first = Peak(position=2900.0, intensity=0.8)
+    second = Peak(position=1700.0, intensity=0.5, manual_placement=True, label_offset_x=4.0)
+    stack = QUndoStack()
+
+    stack.push(
+        SetPeakLabelPlacementsCommand(
+            [
+                (first, 12.0, 0.15),
+                (second, -8.0, 0.22),
+            ]
+        )
+    )
+
+    assert first.manual_placement is True
+    assert first.label_offset_x == 12.0
+    assert first.label_offset_y == 0.15
+    assert second.label_offset_x == -8.0
+    assert second.label_offset_y == 0.22
+
+    stack.undo()
+
+    assert first.manual_placement is False
+    assert first.label_offset_x == 0.0
+    assert first.label_offset_y == 0.0
+    assert second.manual_placement is True
+    assert second.label_offset_x == 4.0
+    assert second.label_offset_y == 0.0
+
+
 def test_detect_peaks_macro_is_single_undo():
     _app()
     from core.commands import AddPeakCommand

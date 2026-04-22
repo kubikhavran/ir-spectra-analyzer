@@ -145,6 +145,7 @@ class MainWindow(QMainWindow):
         if self._toolbar._clear_peaks_action is not None:
             self._toolbar._clear_peaks_action.triggered.connect(self._on_clear_peaks)
         self._toolbar.correct_baseline.connect(self._on_correct_baseline)
+        self._toolbar.arrange_labels.connect(self._on_arrange_peak_labels)
         self._toolbar.match_spectrum.connect(self._on_match_spectrum)
 
     def _setup_central_widget(self) -> None:
@@ -852,6 +853,34 @@ class MainWindow(QMainWindow):
         self._undo_stack.endMacro()
         self._refresh_peak_views()
         self.statusBar().showMessage("Peaks cleared")
+
+    def _on_arrange_peak_labels(self) -> None:
+        """Auto-arrange peak labels without disturbing existing workflow until requested."""
+        if self._project is None or not self._project.peaks:
+            self.statusBar().showMessage("No peaks available to arrange")
+            return
+
+        placements = self._spectrum_widget.compute_auto_label_placements()
+        if not placements:
+            self.statusBar().showMessage("No peak labels available to arrange")
+            return
+
+        if all(
+            abs(peak.label_offset_x - offset_x) <= 1e-6
+            and abs(peak.label_offset_y - offset_y) <= 1e-6
+            and peak.manual_placement
+            for peak, offset_x, offset_y in placements
+        ):
+            self.statusBar().showMessage("Peak labels are already arranged")
+            return
+
+        from core.commands import SetPeakLabelPlacementsCommand  # noqa: PLC0415
+
+        preferred_peak = self._peak_table.selected_peak()
+        self._undo_stack.push(SetPeakLabelPlacementsCommand(placements))
+        self._refresh_peak_views(preferred_peak)
+        self._spectrum_widget.reset_view()
+        self.statusBar().showMessage("Peak labels arranged")
 
     def _on_preset_selected(self, preset) -> None:
         """Assign the selected vibration preset to the currently active peak."""

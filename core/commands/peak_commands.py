@@ -122,6 +122,35 @@ class SetPeakVibrationsCommand(QUndoCommand):
         self._peak.vibration_id = self._old_vibration_id
 
 
+class SetPeakLabelPlacementsCommand(QUndoCommand):
+    """Updates peak label offsets in bulk (undoable)."""
+
+    def __init__(
+        self,
+        placements: list[tuple[Peak, float, float]],
+    ) -> None:
+        super().__init__("Arrange peak labels")
+        self._new_placements = [
+            (peak, offset_x, offset_y) for peak, offset_x, offset_y in placements
+        ]
+        self._old_placements = [
+            (peak, peak.label_offset_x, peak.label_offset_y, peak.manual_placement)
+            for peak, _offset_x, _offset_y in placements
+        ]
+
+    def redo(self) -> None:
+        for peak, offset_x, offset_y in self._new_placements:
+            peak.label_offset_x = offset_x
+            peak.label_offset_y = offset_y
+            peak.manual_placement = True
+
+    def undo(self) -> None:
+        for peak, offset_x, offset_y, manual_placement in self._old_placements:
+            peak.label_offset_x = offset_x
+            peak.label_offset_y = offset_y
+            peak.manual_placement = manual_placement
+
+
 class CorrectBaselineCommand(QUndoCommand):
     """Applies baseline correction to the project (undoable)."""
 

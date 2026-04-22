@@ -117,6 +117,56 @@ def test_pdf_generator_omits_peak_table_when_disabled(tmp_path: Path, monkeypatc
     assert not called
 
 
+def test_pdf_peak_table_omits_numeric_peak_intensity_column(monkeypatch) -> None:
+    """PDF peak table should keep qualitative intensity class but omit raw peak intensity."""
+    from reportlab.lib.styles import getSampleStyleSheet
+
+    from reporting.pdf_generator import PDFGenerator
+
+    peak = Peak(position=2864.0, intensity=86.7, vibration_id=42, label="νas(NH₂)")
+    peak.vibration_ids = [42]
+    peak.vibration_labels = ["νas(NH₂)"]
+
+    captured: dict[str, object] = {}
+    original_table = PDFGenerator._append_peak_table_section.__globals__["Table"]
+
+    class _TableSpy:
+        def __init__(self, table_data, colWidths=None) -> None:  # noqa: N803
+            captured["table_data"] = table_data
+            captured["col_widths"] = colWidths
+
+        def setStyle(self, style) -> None:  # noqa: N802
+            captured["style"] = style
+
+    monkeypatch.setitem(PDFGenerator._append_peak_table_section.__globals__, "Table", _TableSpy)
+
+    styles = getSampleStyleSheet()
+    story: list[object] = []
+    PDFGenerator()._append_peak_table_section(
+        story,
+        [peak],
+        styles["Heading2"],
+        styles["Normal"],
+        styles["Normal"],
+        styles["Normal"],
+        is_dip_spectrum=True,
+    )
+
+    monkeypatch.setitem(
+        PDFGenerator._append_peak_table_section.__globals__, "Table", original_table
+    )
+
+    table_data = captured["table_data"]
+    assert len(table_data[0]) == 3
+    assert len(table_data[1]) == 3
+    assert [cell.getPlainText() for cell in table_data[0]] == [
+        "Position (cm⁻¹)",
+        "Int.",
+        "Assignment",
+    ]
+    assert len(captured["col_widths"]) == 3
+
+
 def test_pdf_generator_peak_table_includes_only_assigned_peaks(tmp_path: Path, monkeypatch) -> None:
     """Peak assignments table should only include peaks with a real vibration assignment."""
     from reporting.pdf_generator import PDFGenerator
@@ -243,9 +293,7 @@ def test_pdf_generator_omits_structures_when_disabled(tmp_path: Path, monkeypatc
         render_calls.append(kwargs)
         return "<svg></svg>"
 
-    monkeypatch.setattr(
-        "chemistry.structure_renderer.render_to_svg", _fake_render_to_svg
-    )
+    monkeypatch.setattr("chemistry.structure_renderer.render_to_svg", _fake_render_to_svg)
 
     out = tmp_path / "report_without_structures.pdf"
     PDFGenerator().generate(project, out, options=ReportOptions(include_structures=False))
@@ -304,9 +352,7 @@ def test_pdf_without_project_smiles_skips_structure_section(tmp_path, monkeypatc
         render_calls.append(kwargs)
         return "<svg></svg>"
 
-    monkeypatch.setattr(
-        "chemistry.structure_renderer.render_to_svg", _fake_render_to_svg
-    )
+    monkeypatch.setattr("chemistry.structure_renderer.render_to_svg", _fake_render_to_svg)
 
     out = tmp_path / "report_no_project_smiles.pdf"
     PDFGenerator().generate(project, out, options=ReportOptions(include_structures=True))
