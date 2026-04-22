@@ -39,6 +39,7 @@ from ui.models.reference_library_table_model import (
     COL_SIMILARITY,
     COL_SOURCE,
     COL_Y_UNIT,
+    ReferenceLibraryFilterProxyModel,
     ReferenceLibraryTableModel,
     ReferenceLibraryTableView,
 )
@@ -107,9 +108,11 @@ class ReferenceLibraryDialog(QDialog):
 
         self._table_model = ReferenceLibraryTableModel(self)
         self._table_model.description_edited.connect(self._on_description_edited)
+        self._table_proxy = ReferenceLibraryFilterProxyModel(self)
+        self._table_proxy.setSourceModel(self._table_model)
 
         self._table = ReferenceLibraryTableView(self)
-        self._table.setModel(self._table_model)
+        self._table.setModel(self._table_proxy)
         self._table.setEditTriggers(
             ReferenceLibraryTableView.EditTrigger.DoubleClicked
             | ReferenceLibraryTableView.EditTrigger.EditKeyPressed
@@ -317,16 +320,24 @@ class ReferenceLibraryDialog(QDialog):
         self._on_filter_changed()
 
     def _on_filter_changed(self) -> None:
-        """Re-apply active filters and refresh the table."""
-        self._populate_table(self._apply_filters(self._refs_all))
+        """Re-apply active filters through the proxy model and refresh visible state."""
+        date_from, date_to = self._current_filter_date_range()
+        self._table_proxy.set_filters(
+            name_query=self._filter_name.text(),
+            yunit_filter=self._filter_yunit.currentText(),
+            date_from=date_from,
+            date_to=date_to,
+        )
+        self._refresh_visible_refs()
+        self._table.clearSelection()
+        self._preview_label.setText("Select a row to preview")
+        self._show_empty_preview_plot()
+        self._update_button_state()
+        self._update_stats_label()
 
-    def _apply_filters(self, refs: list[dict]) -> list[dict]:
-        """Return the subset of refs that pass all active filters."""
-        name_query = self._filter_name.text().strip().lower()
-        yunit_filter = self._filter_yunit.currentText()
+    def _current_filter_date_range(self) -> tuple[datetime | None, datetime | None]:
+        """Return the active date-range filter as Python datetimes."""
         date_preset = self._filter_date_preset.currentText()
-
-        # Compute date boundary
         now = datetime.now()
         date_from: datetime | None = None
         date_to: datetime | None = None
@@ -345,68 +356,34 @@ class ReferenceLibraryDialog(QDialog):
             qto = self._filter_date_to.date()
             date_from = datetime(qfrom.year(), qfrom.month(), qfrom.day())
             date_to = datetime(qto.year(), qto.month(), qto.day(), 23, 59, 59)
-
-        result = []
-        for ref in refs:
-            # Name filter
-            if name_query and name_query not in str(ref.get("name", "")).lower():
-                continue
-
-            # Y-unit filter
-            if yunit_filter != "All":
-                ref_unit = str(ref.get("y_unit", "")).strip()
-                if ref_unit.lower() != yunit_filter.lower():
-                    continue
-
-            # Date filter
-            if date_from is not None or date_to is not None:
-                created_str = str(ref.get("created_at", ""))
-                try:
-                    # SQLite format: "2024-01-15 12:34:56" or "2024-01-15T12:34:56"
-                    created_str = created_str.replace("T", " ")
-                    created = datetime.strptime(created_str[:19], "%Y-%m-%d %H:%M:%S")
-                except (ValueError, IndexError):
-                    created = None
-                if created is not None:
-                    if date_from is not None and created < date_from:
-                        continue
-                    if date_to is not None and created > date_to:
-                        continue
-
-            result.append(ref)
-
-        return result
+        return date_from, date_to
 
     # ------------------------------------------------------------------
     # Table population (split from _load_data for filter reuse)
     # ------------------------------------------------------------------
 
     def _populate_table(self, refs: list[dict]) -> None:
-        """Fill the table widget from a (pre-filtered) list of reference dicts."""
+        """Fill the table model from reference dicts and let the proxy filter/sort them."""
         prepared_refs = []
         for ref in refs:
             prepared = dict(ref)
             prepared["_similarity_score"] = self._similarity_by_ref_id.get(int(ref["id"]))
             prepared_refs.append(prepared)
 
-        self._refs = prepared_refs
         self._table_model.set_rows(prepared_refs)
+        self._on_filter_changed()
         if self._similarity_by_ref_id:
             self._table.sortByColumn(COL_SIMILARITY, Qt.SortOrder.DescendingOrder)
         else:
             self._table.sortByColumn(COL_NAME, Qt.SortOrder.AscendingOrder)
-        self._table.clearSelection()
-
-        self._preview_label.setText("Select a row to preview")
-        self._show_empty_preview_plot()
-        self._update_button_state()
+        self._refresh_visible_refs()
 
     def _load_data(self) -> None:
         """Fetch all reference spectra from DB and populate the table."""
         self._project_library_folder = self._library_service.discover_project_library_folder()
         self._refs_all = self._library_service.get_library_references()
 
-        self._populate_table(self._apply_filters(self._refs_all))
+        self._populate_table(self._refs_all)
 
         self._library_label.setText(self._project_library_status_text())
         if self._similarity_by_ref_id:
@@ -461,11 +438,14 @@ class ReferenceLibraryDialog(QDialog):
     def _selected_ref_ids(self) -> list[int]:
         """Return the DB ids of all selected rows, in selection order."""
         selection_model = self._table.selectionModel()
+        table_model = self._table.model()
         if selection_model is None:
             return []
         ids: list[int] = []
         for index in selection_model.selectedRows(COL_NAME):
-            ref_id = self._table_model.data(index, Qt.ItemDataRole.UserRole)
+            if table_model is None:
+                continue
+            ref_id = table_model.data(index, Qt.ItemDataRole.UserRole)
             if isinstance(ref_id, int):
                 ids.append(ref_id)
         return ids
@@ -480,10 +460,11 @@ class ReferenceLibraryDialog(QDialog):
         if not ids:
             return None
         # Prefer the focused row if it's part of the selection.
-        row = self._table.currentRow()
-        if row >= 0:
-            focused = self._table_model.data(
-                self._table_model.index(row, COL_NAME),
+        current_index = self._table.currentIndex()
+        table_model = self._table.model()
+        if current_index.isValid() and table_model is not None:
+            focused = table_model.data(
+                current_index.siblingAtColumn(COL_NAME),
                 Qt.ItemDataRole.UserRole,
             )
             if isinstance(focused, int) and focused in ids:
@@ -1302,3 +1283,14 @@ class ReferenceLibraryDialog(QDialog):
                 if existing.get("id") == ref_id:
                     collection[index] = merged
                     break
+
+    def _refresh_visible_refs(self) -> None:
+        """Refresh the cached filtered rows from the current proxy-model view."""
+        refs: list[dict] = []
+        for row in range(self._table_proxy.rowCount()):
+            proxy_index = self._table_proxy.index(row, COL_NAME)
+            source_index = self._table_proxy.mapToSource(proxy_index)
+            ref = self._table_model.row_dict(source_index.row())
+            if ref is not None:
+                refs.append(ref)
+        self._refs = refs

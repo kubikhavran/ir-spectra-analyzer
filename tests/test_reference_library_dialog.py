@@ -550,6 +550,24 @@ def test_show_all_clears_similarity_ranking(qtbot, db):
     assert dlg._search_label.text() == "Similarity search: not run yet"
 
 
+def test_name_filter_uses_proxy_model_and_updates_visible_rows(qtbot, db):
+    """Name filtering should be handled by the proxy model and shrink the visible table."""
+    folder = Path("/tmp/reference-library")
+    _add_ref(db, "Acetone", folder)
+    _add_ref(db, "Benzene", folder)
+    _add_ref(db, "Acetic acid", folder)
+
+    dlg = ReferenceLibraryDialog(db, library_service=_FakeLibraryService(db, folder))
+    qtbot.addWidget(dlg)
+
+    dlg._filter_name.setText("acet")
+
+    assert dlg._table.rowCount() == 2
+    assert dlg._table.item(0, 0).text() == "Acetic acid"
+    assert dlg._table.item(1, 0).text() == "Acetone"
+    assert "(2 shown after filters)" in dlg._stats_label.text()
+
+
 def test_show_current_spectrum_checkbox_disabled_when_no_current_spectrum(qtbot, db):
     """The 'Show current spectrum' checkbox is disabled when current_spectrum is None."""
     dlg = ReferenceLibraryDialog(db, current_spectrum=None)

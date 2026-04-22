@@ -3,8 +3,9 @@
 from __future__ import annotations
 
 from dataclasses import dataclass
+from datetime import datetime
 
-from PySide6.QtCore import QAbstractTableModel, QModelIndex, Qt, Signal
+from PySide6.QtCore import QAbstractTableModel, QModelIndex, QSortFilterProxyModel, Qt, Signal
 from PySide6.QtWidgets import QTableView
 
 from matching.quality import match_quality_label
@@ -166,6 +167,12 @@ class ReferenceLibraryTableModel(QAbstractTableModel):
             )
             break
 
+    def row_dict(self, row_index: int) -> dict | None:
+        """Return the backing row dict for a given source-model row index."""
+        if row_index < 0 or row_index >= len(self._rows):
+            return None
+        return self._rows[row_index]
+
     @staticmethod
     def _similarity_score(row: dict) -> float | None:
         raw = row.get("_similarity_score")
@@ -189,11 +196,98 @@ class ReferenceLibraryTableModel(QAbstractTableModel):
         return str(row.get("name", "")).casefold()
 
 
+class ReferenceLibraryFilterProxyModel(QSortFilterProxyModel):
+    """Proxy model that owns filtering and sorting for the library dialog."""
+
+    def __init__(self, parent=None) -> None:
+        super().__init__(parent)
+        self._name_query = ""
+        self._yunit_filter = "All"
+        self._date_from: datetime | None = None
+        self._date_to: datetime | None = None
+        self.setDynamicSortFilter(True)
+
+    def set_filters(
+        self,
+        *,
+        name_query: str,
+        yunit_filter: str,
+        date_from: datetime | None,
+        date_to: datetime | None,
+    ) -> None:
+        """Update active filters and invalidate the proxy rows."""
+        self.beginFilterChange()
+        self._name_query = name_query.strip().lower()
+        self._yunit_filter = yunit_filter
+        self._date_from = date_from
+        self._date_to = date_to
+        self.endFilterChange(QSortFilterProxyModel.Direction.Rows)
+
+    def filterAcceptsRow(  # noqa: N802
+        self,
+        source_row: int,
+        source_parent: QModelIndex,
+    ) -> bool:
+        model = self.sourceModel()
+        if not isinstance(model, ReferenceLibraryTableModel):
+            return True
+        ref = model.row_dict(source_row)
+        if ref is None:
+            return False
+
+        if self._name_query and self._name_query not in str(ref.get("name", "")).lower():
+            return False
+
+        if self._yunit_filter != "All":
+            ref_unit = str(ref.get("y_unit", "")).strip()
+            if ref_unit.lower() != self._yunit_filter.lower():
+                return False
+
+        if self._date_from is not None or self._date_to is not None:
+            created = self._parse_created_at(str(ref.get("created_at", "")))
+            if created is not None:
+                if self._date_from is not None and created < self._date_from:
+                    return False
+                if self._date_to is not None and created > self._date_to:
+                    return False
+
+        return super().filterAcceptsRow(source_row, source_parent)
+
+    def lessThan(self, left: QModelIndex, right: QModelIndex) -> bool:  # noqa: N802
+        model = self.sourceModel()
+        if not isinstance(model, ReferenceLibraryTableModel):
+            return super().lessThan(left, right)
+
+        left_row = model.row_dict(left.row())
+        right_row = model.row_dict(right.row())
+        if left_row is None or right_row is None:
+            return super().lessThan(left, right)
+
+        column = left.column()
+        left_key = model._sort_key(left_row, column)
+        right_key = model._sort_key(right_row, column)
+        if left_key == right_key:
+            left_name = str(left_row.get("name", "")).casefold()
+            right_name = str(right_row.get("name", "")).casefold()
+            return left_name < right_name
+        return left_key < right_key
+
+    @staticmethod
+    def _parse_created_at(value: str) -> datetime | None:
+        raw = value.replace("T", " ").strip()
+        if not raw:
+            return None
+        try:
+            return datetime.strptime(raw[:19], "%Y-%m-%d %H:%M:%S")
+        except (ValueError, IndexError):
+            return None
+
+
 @dataclass
 class _TableCellProxy:
     """Small compatibility wrapper for tests and dialog helper methods."""
 
-    model: ReferenceLibraryTableModel
+    model: QAbstractTableModel | QSortFilterProxyModel
     row_value: int
     column_value: int
 
@@ -239,8 +333,6 @@ class ReferenceLibraryTableView(QTableView):
         if model is None or row < 0 or column < 0:
             return None
         if row >= model.rowCount() or column >= model.columnCount():
-            return None
-        if not isinstance(model, ReferenceLibraryTableModel):
             return None
         return _TableCellProxy(model, row, column)
 
