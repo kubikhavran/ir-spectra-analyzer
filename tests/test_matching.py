@@ -291,6 +291,52 @@ def test_search_engine_reuses_cached_reference_vectors(monkeypatch):
     assert len(calls) == 5
 
 
+def test_search_engine_reranks_close_candidates_on_fine_grid():
+    from matching.search_engine import SearchEngine
+
+    wn = np.linspace(400.0, 4000.0, 3601)
+
+    def _narrow_gaussian(center: float) -> np.ndarray:
+        return np.exp(-0.5 * ((wn - center) / 1.5) ** 2)
+
+    query = _narrow_gaussian(1712.0)
+    target = _narrow_gaussian(1710.0)
+    distractor = _narrow_gaussian(1709.5)
+
+    refs = [
+        {
+            "id": 1,
+            "name": "target",
+            "wavenumbers": wn,
+            "intensities": target,
+            "y_unit": "Absorbance",
+        },
+        {
+            "id": 2,
+            "name": "distractor",
+            "wavenumbers": wn,
+            "intensities": distractor,
+            "y_unit": "Absorbance",
+        },
+    ]
+    engine = SearchEngine()
+    engine.load_references(refs)
+
+    coarse_results = engine.search(wn, query, top_n=2, query_y_unit="Absorbance")
+    assert coarse_results[0].name == "distractor"
+
+    reranked = engine.rerank_candidates(
+        wn,
+        query,
+        refs,
+        query_y_unit="Absorbance",
+        coarse_scores={result.ref_id: result.score for result in coarse_results},
+    )
+
+    assert reranked[0].name == "target"
+    assert reranked[0].score > reranked[1].score
+
+
 def test_search_engine_real_fixture_exact_match_has_meaningful_gap():
     """Real reference spectra should not collapse into indistinguishable near-1.0 scores."""
     from pathlib import Path

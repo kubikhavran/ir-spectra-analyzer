@@ -35,8 +35,8 @@ def test_match_results_panel_set_results(qtbot):
     assert "Strong" in panel._list.item(1).text()
     assert panel._list.currentRow() == 0
     assert (
-        panel._status_label.toolTip() == "Similarity score is an internal cosine metric "
-        "(band shape + first derivative). Not equivalent to OMNIC HQI."
+        panel._status_label.toolTip() == "Similarity score is an internal spectral metric "
+        "(coarse cosine search + fine rerank). Not equivalent to OMNIC HQI."
     )
 
 

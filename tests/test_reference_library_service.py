@@ -224,3 +224,46 @@ def test_search_spectrum_backfills_missing_feature_rows(db, tmp_path):
         source_prefix=normalize_source_path(folder),
         feature_version=MATCH_FEATURE_VERSION,
     )
+
+
+def test_search_spectrum_uses_fine_rerank_for_close_shortlist_candidates(db, tmp_path):
+    folder = tmp_path / "library"
+    folder.mkdir()
+
+    wn = np.linspace(400.0, 4000.0, 3601)
+
+    def _narrow_gaussian(center: float) -> np.ndarray:
+        return np.exp(-0.5 * ((wn - center) / 1.5) ** 2)
+
+    query = _narrow_gaussian(1712.0)
+    target = _narrow_gaussian(1710.0)
+    distractor = _narrow_gaussian(1709.5)
+
+    db.add_reference_spectrum(
+        "target",
+        wn,
+        target,
+        source=str(folder / "target.spa"),
+        y_unit=SpectralUnit.ABSORBANCE.value,
+    )
+    db.add_reference_spectrum(
+        "distractor",
+        wn,
+        distractor,
+        source=str(folder / "distractor.spa"),
+        y_unit=SpectralUnit.ABSORBANCE.value,
+    )
+
+    service = ReferenceLibraryService(db)
+    service.set_selected_library_folder(folder)
+
+    from core.spectrum import Spectrum
+
+    outcome = service.search_spectrum(
+        Spectrum(wavenumbers=wn, intensities=query, y_unit=SpectralUnit.ABSORBANCE),
+        top_n=2,
+        auto_import_project_library=False,
+    )
+
+    assert [result.name for result in outcome.results] == ["target", "distractor"]
+    assert outcome.results[0].score > outcome.results[1].score

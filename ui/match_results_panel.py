@@ -44,8 +44,8 @@ class MatchResultsPanel(QWidget):
         self._status_label = QLabel("No results")
         self._status_label.setStyleSheet("color: gray; font-size: 9pt;")
         self._status_label.setToolTip(
-            "Similarity score is an internal cosine metric "
-            "(band shape + first derivative). Not equivalent to OMNIC HQI."
+            "Similarity score is an internal spectral metric "
+            "(coarse cosine search + fine rerank). Not equivalent to OMNIC HQI."
         )
         header.addWidget(self._status_label)
         header.addStretch()

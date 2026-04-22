@@ -44,6 +44,8 @@ from ui.vibration_text_edit import VibrationTextEditDialog
 class MainWindow(QMainWindow):
     """Main application window with dockable analysis panels."""
 
+    _MATCH_RESULTS_LIMIT = 20
+
     def __init__(
         self,
         db: Database,
@@ -973,7 +975,7 @@ class MainWindow(QMainWindow):
             project_root=self._reference_library_service.project_root,
             selected_library_folder=self._reference_library_service.selected_library_folder(),
             spectrum=spectrum,
-            top_n=10,
+            top_n=self._MATCH_RESULTS_LIMIT,
             auto_import_project_library=True,
         )
         thread = QThread(self)
@@ -994,7 +996,10 @@ class MainWindow(QMainWindow):
     def _execute_match_spectrum_search(self, spectrum) -> None:
         """Run spectral matching synchronously (used for tests/in-memory DB)."""
         try:
-            outcome = self._reference_library_service.search_spectrum(spectrum, top_n=10)
+            outcome = self._reference_library_service.search_spectrum(
+                spectrum,
+                top_n=self._MATCH_RESULTS_LIMIT,
+            )
         except Exception as e:  # noqa: BLE001
             QMessageBox.critical(self, "Match Error", f"Matching failed:\n{e}")
             return

@@ -38,6 +38,7 @@ class ReferenceLibraryService:
     """Application-layer service for project reference library workflows."""
 
     _DEFAULT_LIBRARY_CANDIDATES = (Path("reference library_1"),)
+    _RERANK_CANDIDATE_COUNT = 25
 
     def __init__(
         self,
@@ -182,14 +183,16 @@ class ReferenceLibraryService:
             feature_version=MATCH_FEATURE_VERSION,
         )
         self._search_engine.load_references(search_rows)
-        results = tuple(
+        coarse_top_n = None if top_n is None else max(int(top_n), self._RERANK_CANDIDATE_COUNT)
+        coarse_results = tuple(
             self._search_engine.search(
                 spectrum.wavenumbers,
                 spectrum.intensities,
-                top_n=top_n,
+                top_n=coarse_top_n,
                 query_y_unit=spectrum.y_unit,
             )
         )
+        results = tuple(self._rerank_results(spectrum, coarse_results=coarse_results, top_n=top_n))
         return ReferenceSearchOutcome(
             results=results,
             references=references,
@@ -252,6 +255,50 @@ class ReferenceLibraryService:
                 commit=False,
             )
         self._db.commit()
+
+    def _rerank_results(
+        self,
+        spectrum: Spectrum,
+        *,
+        coarse_results: tuple[MatchResult, ...],
+        top_n: int | None,
+    ) -> list[MatchResult]:
+        """Refine the top coarse candidates on a finer 1 cm⁻¹ grid."""
+        if not coarse_results:
+            return []
+
+        shortlist_size = min(len(coarse_results), self._RERANK_CANDIDATE_COUNT)
+        hydrated_candidates: list[dict] = []
+        coarse_scores: dict[int, float] = {}
+        for result in coarse_results[:shortlist_size]:
+            ref = self.get_reference_spectrum(result.ref_id)
+            if ref is None:
+                continue
+            hydrated_candidates.append(ref)
+            coarse_scores[result.ref_id] = result.score
+
+        if not hydrated_candidates:
+            return list(coarse_results if top_n is None else coarse_results[:top_n])
+
+        reranked = self._search_engine.rerank_candidates(
+            spectrum.wavenumbers,
+            spectrum.intensities,
+            hydrated_candidates,
+            query_y_unit=spectrum.y_unit,
+            coarse_scores=coarse_scores,
+        )
+        reranked_ids = {result.ref_id for result in reranked}
+
+        combined: list[MatchResult] = list(reranked)
+        for result in coarse_results:
+            if result.ref_id in reranked_ids:
+                continue
+            combined.append(result)
+
+        combined.sort(key=lambda result: result.score, reverse=True)
+        if top_n is None:
+            return combined
+        return combined[:top_n]
 
     def _load_selected_library_folder(self) -> Path | None:
         """Load the persisted active library folder from settings, if available."""

@@ -6,6 +6,8 @@ import os
 
 os.environ.setdefault("QT_QPA_PLATFORM", "offscreen")
 
+from types import SimpleNamespace
+
 import numpy as np
 import pytest
 
@@ -454,6 +456,35 @@ def test_main_window_load_spectrum_updates_widget(qtbot, tmp_path):
             sys.modules["file_io.format_registry"] = original
 
     assert window._spectrum_widget._spectrum is not None
+
+
+def test_main_window_match_spectrum_requests_twenty_results(qtbot):
+    from unittest.mock import MagicMock
+
+    from core.project import Project
+    from ui.main_window import MainWindow
+
+    spectrum = _make_spectrum()
+    db = _make_mock_db()
+    db.is_in_memory = True
+    settings = _make_mock_settings()
+    window = MainWindow(db=db, settings=settings)
+    qtbot.addWidget(window)
+    window._project = Project(name="Match", spectrum=spectrum)
+
+    service = MagicMock()
+    service.search_spectrum.return_value = SimpleNamespace(
+        results=(),
+        references=(),
+        imported_summary=None,
+        library_folder=None,
+        reference_count=0,
+    )
+    window._reference_library_service = service
+
+    window._on_match_spectrum()
+
+    service.search_spectrum.assert_called_once_with(spectrum, top_n=20)
 
 
 def test_main_window_load_spectrum_uses_stored_annotated_peaks(qtbot, tmp_path):
