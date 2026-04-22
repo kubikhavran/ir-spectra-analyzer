@@ -112,6 +112,8 @@ class ReportOptions:
         view_x_range: Optional (x_min, x_max) visible wavenumber range from the viewer.
             When set, the PDF plot and X range metadata row use this range instead of
             the full data extent. Defaults to (400.0, 3800.0) when None.
+        view_y_range: Optional (y_min, y_max) visible y-axis range from the viewer.
+        diagnostic_regions: Runtime-only diagnostic overlays currently visible in the viewer.
     """
 
     include_structures: bool = True
@@ -119,6 +121,8 @@ class ReportOptions:
     include_metadata: bool = True
     dpi: int = 150
     view_x_range: tuple[float, float] | None = None
+    view_y_range: tuple[float, float] | None = None
+    diagnostic_regions: tuple[object, ...] = ()
 
 
 def _footer(canvas, doc) -> None:  # type: ignore[no-untyped-def]
@@ -248,6 +252,8 @@ class PDFGenerator:
             text_height=_LAND_TEXT_H,
             x_min=_x_min,
             x_max=_x_max,
+            y_view_range=options.view_y_range,
+            diagnostic_regions=options.diagnostic_regions,
         )
 
         # Switch to portrait for subsequent pages, then page break
@@ -398,6 +404,8 @@ class PDFGenerator:
         text_height: float | None = None,
         x_min: float = 400.0,
         x_max: float = 3800.0,
+        y_view_range: tuple[float, float] | None = None,
+        diagnostic_regions: tuple[object, ...] = (),
     ) -> None:
         """Append the rendered spectrum image section."""
         # Compute figsize in inches from the available frame dimensions.
@@ -422,6 +430,8 @@ class PDFGenerator:
             figsize=(fig_w_in, fig_h_in),
             x_min=x_min,
             x_max=x_max,
+            y_view_range=y_view_range,
+            diagnostic_regions=diagnostic_regions,
         )
         img_buf = io.BytesIO(png_bytes)
 

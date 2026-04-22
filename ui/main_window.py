@@ -303,6 +303,9 @@ class MainWindow(QMainWindow):
         self._match_results_panel.candidate_selected.connect(self._on_match_candidate_selected)
         self._match_results_panel.import_reference.connect(self._on_import_reference)
         self._functional_group_panel.group_selected.connect(self._on_functional_group_selected)
+        self._functional_group_panel.diagnostic_visibility_changed.connect(
+            self._on_functional_group_region_visibility_changed
+        )
         self._functional_group_panel.suggestion_selected.connect(
             self._on_functional_group_suggestion_selected
         )
@@ -650,6 +653,8 @@ class MainWindow(QMainWindow):
         if report_options is None:
             report_options = ReportOptions()
         report_options.view_x_range = self._spectrum_widget.get_x_view_range()
+        report_options.view_y_range = self._spectrum_widget.get_y_view_range()
+        report_options.diagnostic_regions = ()
 
         try:
             builder = ReportBuilder()
@@ -1059,6 +1064,10 @@ class MainWindow(QMainWindow):
         """Highlight diagnostic regions for the selected functional group."""
         self._spectrum_widget.set_diagnostic_regions(list(result.bands))
         self._refresh_functional_group_assignment_preview()
+
+    def _on_functional_group_region_visibility_changed(self, visible: bool) -> None:
+        """Show or hide functional-group diagnostic overlays in the spectrum view."""
+        self._spectrum_widget.set_diagnostic_regions_visible(visible)
 
     def _on_functional_group_suggestion_selected(self, band) -> None:
         """Assign a suggested vibration to the selected peak via the existing command path."""

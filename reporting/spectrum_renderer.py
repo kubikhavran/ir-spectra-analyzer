@@ -25,6 +25,7 @@ import io
 from pathlib import Path
 
 import numpy as np
+from matplotlib import colors as mcolors
 
 from core.peak import Peak
 from core.spectrum import SpectralUnit
@@ -48,6 +49,8 @@ class SpectrumRenderer:
         figsize: tuple[float, float] = (7.5, 3.2),
         x_min: float = 400.0,
         x_max: float = 3800.0,
+        y_view_range: tuple[float, float] | None = None,
+        diagnostic_regions: tuple[object, ...] | list[object] = (),
     ) -> bytes:
         """Render spectrum with peak annotations to PNG bytes in memory.
 
@@ -78,8 +81,24 @@ class SpectrumRenderer:
         fig.patch.set_facecolor("white")
         ax.set_facecolor("white")
 
+        if diagnostic_regions:
+            for region in diagnostic_regions:
+                facecolor, edgecolor, linestyle, linewidth, alpha = self._diagnostic_region_style(
+                    region
+                )
+                ax.axvspan(
+                    float(region.range_min),
+                    float(region.range_max),
+                    facecolor=facecolor,
+                    edgecolor=edgecolor,
+                    linestyle=linestyle,
+                    linewidth=linewidth,
+                    alpha=alpha,
+                    zorder=0.1,
+                )
+
         # --- Plot spectrum ---
-        ax.plot(wavenumbers, intensities, color="black", linewidth=0.8, antialiased=True)
+        ax.plot(wavenumbers, intensities, color="black", linewidth=0.8, antialiased=True, zorder=1.0)
 
         # --- X-axis: inverted, OMNIC-style ticks ---
         ax.invert_xaxis()
@@ -107,23 +126,18 @@ class SpectrumRenderer:
         )
         ax.tick_params(axis="y", which="minor", length=3, width=0.6, direction="in", right=True)
 
-        # Use only data within the visible window for Y fitting
-        _vis_mask = (wavenumbers >= _plot_x_lo) & (wavenumbers <= _plot_x_hi)
-        _vis_y = intensities[_vis_mask] if _vis_mask.any() else intensities
-        _y_min = float(np.min(_vis_y))
-        _y_max = float(np.max(_vis_y))
-        _y_span = max(_y_max - _y_min, 1e-9)
-
-        if is_dip_spectrum or y_unit == SpectralUnit.TRANSMITTANCE:
-            # Dip-style (%T): peaks go down, labels extend below — add headroom below
-            ax.set_ylim(bottom=_y_min - _y_span * 0.22, top=_y_max + _y_span * 0.05)
-            ax.yaxis.set_major_locator(ticker.AutoLocator())
-            ax.yaxis.set_minor_locator(ticker.AutoMinorLocator(2))
-        else:
-            # Absorbance / peak-style: labels extend above — add headroom above
-            ax.set_ylim(bottom=max(0.0, _y_min - _y_span * 0.05), top=_y_max + _y_span * 0.22)
-            ax.yaxis.set_major_locator(ticker.AutoLocator())
-            ax.yaxis.set_minor_locator(ticker.AutoMinorLocator(2))
+        _y_min, _y_max = self._resolve_y_limits(
+            wavenumbers=wavenumbers,
+            intensities=intensities,
+            peaks=peaks,
+            x_min=_plot_x_lo,
+            x_max=_plot_x_hi,
+            y_view_range=y_view_range,
+            is_dip_spectrum=is_dip_spectrum or y_unit == SpectralUnit.TRANSMITTANCE,
+        )
+        ax.set_ylim(bottom=_y_min, top=_y_max)
+        ax.yaxis.set_major_locator(ticker.AutoLocator())
+        ax.yaxis.set_minor_locator(ticker.AutoMinorLocator(2))
 
         # --- Labels ---
         ax.set_xlabel("Wavenumber (cm⁻¹)", fontsize=_fs_label, labelpad=4, fontfamily="sans-serif")
@@ -140,38 +154,41 @@ class SpectrumRenderer:
         # For dip-type spectra (%T) the line goes DOWN from the apex and the
         # label sits below, matching the live PyQtGraph viewer behaviour.
         if peaks:
-            y_lo, y_hi = ax.get_ylim()
-            y_span = y_hi - y_lo
-            label_gap = y_span * 0.015
-            tick_height = y_span * 0.055
+            data_y_span = float(np.ptp(intensities))
+            if data_y_span == 0:
+                data_y_span = 1.0
 
             for peak in peaks:
-                apex_y = peak.intensity
-                if is_dip_spectrum:
-                    line_end = max(apex_y - tick_height, y_lo + abs(y_lo) * 0.03)
-                    text_y = line_end - label_gap
-                    va = "top"
-                else:
-                    line_end = min(apex_y + tick_height, y_hi * 0.97)
-                    text_y = line_end + label_gap
-                    va = "bottom"
+                label_x, label_y = self._label_position(
+                    peak,
+                    data_y_span=data_y_span,
+                    is_dip_spectrum=is_dip_spectrum,
+                )
+                leader_points = self._leader_points(
+                    peak_x=peak.position,
+                    peak_y=peak.intensity,
+                    label_x=label_x,
+                    label_y=label_y,
+                )
                 ax.plot(
-                    [peak.position, peak.position],
-                    [apex_y, line_end],
+                    [point[0] for point in leader_points],
+                    [point[1] for point in leader_points],
                     color="black",
                     linewidth=0.7,
                     solid_capstyle="butt",
+                    zorder=1.2,
                 )
                 ax.text(
-                    peak.position,
-                    text_y,
+                    label_x,
+                    label_y,
                     str(int(round(peak.position))),
                     rotation=90,
-                    va=va,
+                    va="bottom" if label_y >= peak.intensity else "top",
                     ha="center",
                     fontsize=_fs_peak,
                     fontfamily="sans-serif",
                     color="black",
+                    zorder=1.3,
                 )
 
         # --- X-axis limits: use the requested visible range ---
@@ -207,6 +224,116 @@ class SpectrumRenderer:
             is_dip_spectrum: When True, peak labels are placed below the apex.
         """
         png_bytes = self.render_to_bytes(
-            wavenumbers, intensities, peaks, dpi=dpi, y_unit=y_unit, is_dip_spectrum=is_dip_spectrum
+            wavenumbers,
+            intensities,
+            peaks,
+            dpi=dpi,
+            y_unit=y_unit,
+            is_dip_spectrum=is_dip_spectrum,
         )
         output_path.write_bytes(png_bytes)
+
+    @staticmethod
+    def _label_position(
+        peak: Peak,
+        *,
+        data_y_span: float,
+        is_dip_spectrum: bool,
+    ) -> tuple[float, float]:
+        """Return the same label position used by the live spectrum viewer."""
+        default_offset = (-data_y_span if is_dip_spectrum else data_y_span) * 0.065
+        if peak.manual_placement:
+            return (
+                float(peak.position + peak.label_offset_x),
+                float(peak.intensity + peak.label_offset_y),
+            )
+        return (float(peak.position), float(peak.intensity + default_offset))
+
+    @staticmethod
+    def _leader_points(
+        *,
+        peak_x: float,
+        peak_y: float,
+        label_x: float,
+        label_y: float,
+    ) -> tuple[tuple[float, float], tuple[float, float], tuple[float, float]]:
+        """Return the 3-point leader geometry matching the live PyQtGraph viewer."""
+        label_offset = label_y - peak_y
+        diagonal_factor = 1.0 if abs(label_x - peak_x) <= 1e-6 else 0.05
+        elbow_y = label_y - (label_offset * diagonal_factor)
+        if label_offset > 0:
+            elbow_y = max(peak_y, elbow_y)
+        else:
+            elbow_y = min(peak_y, elbow_y)
+        return (
+            (float(peak_x), float(peak_y)),
+            (float(peak_x), float(elbow_y)),
+            (float(label_x), float(label_y)),
+        )
+
+    @classmethod
+    def _resolve_y_limits(
+        cls,
+        *,
+        wavenumbers: np.ndarray,
+        intensities: np.ndarray,
+        peaks: list[Peak],
+        x_min: float,
+        x_max: float,
+        y_view_range: tuple[float, float] | None,
+        is_dip_spectrum: bool,
+    ) -> tuple[float, float]:
+        """Resolve the y-axis limits, matching the live viewer's auto-fit when possible."""
+        if y_view_range is not None:
+            return (float(min(y_view_range)), float(max(y_view_range)))
+
+        visible_mask = (wavenumbers >= x_min) & (wavenumbers <= x_max)
+        visible_y = intensities[visible_mask] if visible_mask.any() else intensities
+        y_min = float(np.min(visible_y))
+        y_max = float(np.max(visible_y))
+        data_y_span = max(y_max - y_min, 1e-9)
+
+        visible_peaks = [peak for peak in peaks if x_min <= peak.position <= x_max]
+        if visible_peaks:
+            label_margin = data_y_span * 0.08
+            label_y_values = [
+                cls._label_position(
+                    peak,
+                    data_y_span=data_y_span,
+                    is_dip_spectrum=is_dip_spectrum,
+                )[1]
+                for peak in visible_peaks
+            ]
+            if label_y_values:
+                if is_dip_spectrum:
+                    y_min = min(y_min, min(label_y_values) - label_margin)
+                else:
+                    y_max = max(y_max, max(label_y_values) + label_margin)
+
+        if is_dip_spectrum:
+            return (y_min - data_y_span * 0.20, y_max + data_y_span * 0.05)
+        return (max(0.0, y_min - data_y_span * 0.05), y_max + data_y_span * 0.20)
+
+    @staticmethod
+    def _diagnostic_region_style(
+        region,
+    ) -> tuple[tuple[float, float, float], tuple[float, float, float], str, float, float]:
+        """Return a Matplotlib style tuple mirroring the live viewer overlays."""
+        if getattr(region, "is_missing_required", False):
+            return (
+                mcolors.to_rgb("#FDEDEC"),
+                mcolors.to_rgb("#C0392B"),
+                "--",
+                1.2,
+                0.35,
+            )
+        if getattr(region, "is_confirmed", False):
+            color = mcolors.to_rgb(region.color)
+            return (color, color, "-", 1.0, 0.18)
+        return (
+            mcolors.to_rgb("#FCF3CF"),
+            mcolors.to_rgb("#AF6E00"),
+            "--",
+            1.0,
+            0.24,
+        )

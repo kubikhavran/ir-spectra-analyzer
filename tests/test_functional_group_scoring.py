@@ -314,3 +314,29 @@ def test_spectrum_widget_styles_missing_required_region(qtbot):
 
     assert brush.alpha() > 0
     assert pen.color().name().lower() == "#c0392b"
+
+
+def test_spectrum_widget_can_hide_and_restore_diagnostic_regions(qtbot):
+    from processing.functional_group_scoring import score_functional_groups
+    from ui.spectrum_widget import SpectrumWidget
+
+    spectrum = _make_absorbance_spectrum(
+        [
+            (1710.0, 16.0, 0.90),
+            (1260.0, 24.0, 0.40),
+        ],
+        title="Ester-like",
+    )
+    analysis = score_functional_groups(spectrum)
+
+    widget = SpectrumWidget()
+    qtbot.addWidget(widget)
+    widget.set_spectrum(spectrum)
+    widget.set_diagnostic_regions(list(analysis.results[0].bands))
+    assert len(widget._diagnostic_region_items) == len(analysis.results[0].bands)
+
+    widget.set_diagnostic_regions_visible(False)
+    assert len(widget._diagnostic_region_items) == 0
+
+    widget.set_diagnostic_regions_visible(True)
+    assert len(widget._diagnostic_region_items) == len(analysis.results[0].bands)

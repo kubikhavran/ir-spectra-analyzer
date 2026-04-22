@@ -152,3 +152,91 @@ def test_clear_peaks_clears_peak_context_from_side_panels(qtbot):
     assert window._functional_group_panel._assignment_preview_map == {}
     assert "Select a peak" in window._functional_group_panel._peak_info_label.text()
     assert window._vibration_panel._hint_label.text() == ""
+
+
+def test_assigning_suggestion_preserves_selected_functional_group(qtbot, monkeypatch):
+    from core.functional_groups import (
+        DiagnosticBandMatch,
+        FunctionalGroupAnalysis,
+        FunctionalGroupScore,
+    )
+    from core.peak import Peak
+    from core.project import Project
+    from ui.main_window import MainWindow
+
+    peak = Peak(position=1559.0, intensity=0.45)
+    spectrum = _make_nitrile_spectrum()
+    band = DiagnosticBandMatch(
+        band_id="phenol_ring",
+        label="Aromatic ring stretches",
+        range_min=1490.0,
+        range_max=1625.0,
+        role="supporting",
+        confidence=68.0,
+        presence=0.7,
+        intensity_match=0.7,
+        shape_match=0.7,
+        center_fit=0.7,
+        matched_wavenumber=1559.0,
+        matched_intensity=0.45,
+        expected_intensity="m",
+        observed_intensity_class="vs",
+        color="#7D3C98",
+        suggested_preset_names=("ν(C=C) Ar conj. ~1580",),
+        source_refs=(),
+        source_links=(),
+    )
+    analysis = FunctionalGroupAnalysis(
+        results=(
+            FunctionalGroupScore(
+                group_id="amine_salt",
+                group_name="Amine Salt",
+                color="#F39C12",
+                score=79.2,
+                summary="",
+                bands=(),
+            ),
+            FunctionalGroupScore(
+                group_id="phenol",
+                group_name="Phenol",
+                color="#7D3C98",
+                score=43.2,
+                summary="",
+                bands=(band,),
+            ),
+        )
+    )
+
+    monkeypatch.setattr(
+        "processing.functional_group_scoring.score_functional_groups",
+        lambda *args, **kwargs: analysis,
+    )
+
+    db = MagicMock()
+    db.get_vibration_presets.return_value = [
+        {
+            "id": 1,
+            "name": "ν(C=C) Ar conj. ~1580",
+            "typical_range_min": 1490.0,
+            "typical_range_max": 1625.0,
+            "category": "stretch",
+            "description": "",
+            "color": "#1ABC9C",
+            "is_builtin": 1,
+        }
+    ]
+
+    window = MainWindow(db=db, settings=_make_settings())
+    qtbot.addWidget(window)
+    window._project = Project(name="Functional", spectrum=spectrum, peaks=[peak])
+    window._spectrum_widget.set_spectrum(spectrum)
+    window._refresh_peak_views(peak)
+    window._refresh_functional_group_analysis()
+
+    window._functional_group_panel._group_list.setCurrentRow(1)
+    window._refresh_functional_group_assignment_preview()
+
+    window._on_functional_group_suggestion_selected(band)
+
+    assert peak.vibration_labels == ["ν(C=C) Ar conj. ~1580"]
+    assert window._functional_group_panel.current_result().group_id == "phenol"

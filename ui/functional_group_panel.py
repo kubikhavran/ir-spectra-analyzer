@@ -5,6 +5,7 @@ from __future__ import annotations
 from PySide6.QtCore import QSignalBlocker, Qt, Signal
 from PySide6.QtGui import QColor
 from PySide6.QtWidgets import (
+    QCheckBox,
     QLabel,
     QListWidget,
     QListWidgetItem,
@@ -18,6 +19,7 @@ class FunctionalGroupPanel(QWidget):
 
     group_selected = Signal(object)  # emits FunctionalGroupScore
     suggestion_selected = Signal(object)  # emits DiagnosticBandMatch
+    diagnostic_visibility_changed = Signal(bool)
 
     def __init__(self, parent=None) -> None:
         super().__init__(parent)
@@ -38,6 +40,11 @@ class FunctionalGroupPanel(QWidget):
             "It is not a statistically calibrated probability."
         )
         layout.addWidget(self._status_label)
+
+        self._show_regions_checkbox = QCheckBox("Show highlighted regions in spectrum")
+        self._show_regions_checkbox.setChecked(True)
+        self._show_regions_checkbox.toggled.connect(self.diagnostic_visibility_changed.emit)
+        layout.addWidget(self._show_regions_checkbox)
 
         self._group_list = QListWidget()
         self._group_list.currentRowChanged.connect(self._on_group_row_changed)
@@ -82,6 +89,11 @@ class FunctionalGroupPanel(QWidget):
         self._detail_label.setText("Diagnostic vibrations")
 
     def set_results(self, results: list) -> None:
+        previous_group_id = None
+        current = self.current_result()
+        if current is not None:
+            previous_group_id = current.group_id
+
         self._results = list(results)
         self._group_list.clear()
         self._detail_list.clear()
@@ -101,13 +113,25 @@ class FunctionalGroupPanel(QWidget):
             item.setForeground(QColor(result.color))
             self._group_list.addItem(item)
 
+        selected_row = 0
+        if previous_group_id is not None:
+            selected_row = next(
+                (
+                    index
+                    for index, result in enumerate(results)
+                    if result.group_id == previous_group_id
+                ),
+                0,
+            )
+
         blocker = QSignalBlocker(self._group_list)
-        self._group_list.setCurrentRow(0)
+        self._group_list.setCurrentRow(selected_row)
         del blocker
-        self._rebuild_group_info(results[0])
-        self._rebuild_peak_info(results[0])
-        self.group_selected.emit(results[0])
-        self._rebuild_detail_list(results[0])
+        selected_result = results[selected_row]
+        self._rebuild_group_info(selected_result)
+        self._rebuild_peak_info(selected_result)
+        self.group_selected.emit(selected_result)
+        self._rebuild_detail_list(selected_result)
 
     def set_active_peak(self, peak) -> None:
         self._active_peak = peak

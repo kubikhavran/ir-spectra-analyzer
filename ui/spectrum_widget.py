@@ -183,6 +183,7 @@ class SpectrumWidget(QWidget):
         self._overlay_alpha: int = 60  # 0–100 percent opacity for reference curves
         self._overlay_spectra_cache: list = []  # keep for redraw on slider change
         self._diagnostic_regions_cache: list = []
+        self._diagnostic_regions_visible: bool = True
         self._setup_ui()
 
     def _setup_ui(self) -> None:
@@ -365,6 +366,20 @@ class SpectrumWidget(QWidget):
         vb = self._plot_widget.getPlotItem().vb
         x_range = vb.viewRange()[0]  # [[xmin, xmax], [ymin, ymax]]
         return (float(min(x_range)), float(max(x_range)))
+
+    def get_y_view_range(self) -> tuple[float, float]:
+        """Return the current visible y-axis range as (y_min, y_max)."""
+        vb = self._plot_widget.getPlotItem().vb
+        y_range = vb.viewRange()[1]
+        return (float(min(y_range)), float(max(y_range)))
+
+    def diagnostic_regions(self) -> tuple[object, ...]:
+        """Return the currently cached diagnostic regions."""
+        return tuple(self._diagnostic_regions_cache)
+
+    def diagnostic_regions_visible(self) -> bool:
+        """Return whether diagnostic-region overlays are currently shown."""
+        return self._diagnostic_regions_visible
 
     def set_peaks(self, peaks: list[Peak]) -> None:
         """Update peak annotations in the viewer.
@@ -607,6 +622,11 @@ class SpectrumWidget(QWidget):
         self._diagnostic_regions_cache = list(regions)
         self._redraw_diagnostic_regions()
 
+    def set_diagnostic_regions_visible(self, visible: bool) -> None:
+        """Show or hide the currently selected functional-group region overlays."""
+        self._diagnostic_regions_visible = bool(visible)
+        self._redraw_diagnostic_regions()
+
     def _redraw_overlays(self) -> None:
         """Remove and redraw all overlay curves using current alpha and color settings."""
         for curve in self._overlay_curves:
@@ -630,6 +650,9 @@ class SpectrumWidget(QWidget):
         for item in self._diagnostic_region_items:
             self._plot_widget.removeItem(item)
         self._diagnostic_region_items.clear()
+
+        if not self._diagnostic_regions_visible:
+            return
 
         for region in self._diagnostic_regions_cache:
             brush, pen = self._diagnostic_region_style(region)

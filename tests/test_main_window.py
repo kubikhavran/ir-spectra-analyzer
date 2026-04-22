@@ -1015,6 +1015,64 @@ def test_main_window_export_pdf_uses_selected_report_options(qtbot, tmp_path):
     builder.build_with_options.assert_called_once_with(window._project, output_path, options)
 
 
+def test_main_window_export_pdf_passes_view_ranges_but_not_diagnostic_regions(
+    qtbot, tmp_path
+):
+    """PDF export should use the current viewer ranges but omit functional-group overlays."""
+    from unittest.mock import MagicMock, patch
+
+    from core.functional_groups import DiagnosticBandMatch
+    from core.peak import Peak
+    from core.project import Project
+    from reporting.pdf_generator import ReportOptions
+    from ui.main_window import MainWindow
+
+    window = MainWindow(db=_make_mock_db(), settings=_make_mock_settings())
+    qtbot.addWidget(window)
+    spectrum = _make_spectrum()
+    window._project = Project(name="Test", spectrum=spectrum, peaks=[Peak(position=1200.0, intensity=0.5)])
+    window._spectrum_widget.set_spectrum(spectrum)
+    window._spectrum_widget.set_peaks(window._project.peaks)
+    window._spectrum_widget._plot_widget.setXRange(900.0, 1800.0, padding=0.0)
+    window._spectrum_widget._plot_widget.setYRange(10.0, 90.0, padding=0.0)
+
+    region = DiagnosticBandMatch(
+        band_id="region",
+        label="Region",
+        range_min=1000.0,
+        range_max=1200.0,
+        role="supporting",
+        confidence=80.0,
+        presence=0.8,
+        intensity_match=0.8,
+        shape_match=0.8,
+        center_fit=0.8,
+        matched_wavenumber=1100.0,
+        matched_intensity=0.4,
+        expected_intensity="m",
+        observed_intensity_class="m",
+        color="#2980B9",
+    )
+    window._spectrum_widget.set_diagnostic_regions([region])
+
+    output_path = tmp_path / "report.pdf"
+    builder = MagicMock()
+    options = ReportOptions()
+
+    with (
+        patch(
+            "ui.main_window.QFileDialog.getSaveFileName",
+            return_value=(str(output_path), "PDF Files (*.pdf)"),
+        ),
+        patch("reporting.report_builder.ReportBuilder", return_value=builder),
+    ):
+        window._export_pdf(options)
+
+    assert options.view_x_range == (900.0, 1800.0)
+    assert options.view_y_range == (10.0, 90.0)
+    assert options.diagnostic_regions == ()
+
+
 # ---------------------------------------------------------------------------
 # Project-level SMILES tests
 # ---------------------------------------------------------------------------

@@ -314,6 +314,62 @@ def test_spectrum_renderer_render_to_bytes() -> None:
     assert result[:4] == b"\x89PNG"
 
 
+def test_spectrum_renderer_respects_manual_peak_label_offsets(monkeypatch) -> None:
+    """Renderer should place peak labels using the same stored offsets as the live viewer."""
+    import matplotlib.axes._axes as maxes
+
+    from reporting.spectrum_renderer import SpectrumRenderer
+
+    captured_positions: list[tuple[float, float, str]] = []
+    original_text = maxes.Axes.text
+
+    def _spy_text(self, x, y, s, *args, **kwargs):
+        captured_positions.append((float(x), float(y), str(s)))
+        return original_text(self, x, y, s, *args, **kwargs)
+
+    monkeypatch.setattr(maxes.Axes, "text", _spy_text)
+
+    wn = np.linspace(650, 4000, 50)
+    ints = np.ones(50) * 0.5
+    peak = Peak(
+        position=1500.0,
+        intensity=0.5,
+        manual_placement=True,
+        label_offset_x=12.0,
+        label_offset_y=-0.2,
+    )
+
+    SpectrumRenderer().render_to_bytes(wn, ints, [peak], y_view_range=(0.0, 1.0))
+
+    assert captured_positions
+    x_pos, y_pos, label = captured_positions[0]
+    assert label == "1500"
+    assert x_pos == pytest.approx(1512.0)
+    assert y_pos == pytest.approx(0.3)
+
+
+def test_spectrum_renderer_can_render_diagnostic_regions() -> None:
+    """Renderer should still produce a valid PNG when diagnostic regions are included."""
+    from types import SimpleNamespace
+
+    from reporting.spectrum_renderer import SpectrumRenderer
+
+    wn = np.linspace(650, 4000, 50)
+    ints = np.ones(50) * 0.5
+    region = SimpleNamespace(
+        range_min=1000.0,
+        range_max=1200.0,
+        color="#2980B9",
+        is_missing_required=False,
+        is_confirmed=True,
+    )
+
+    result = SpectrumRenderer().render_to_bytes(wn, ints, [], diagnostic_regions=(region,))
+
+    assert result[:4] == b"\x89PNG"
+    assert len(result) > 1000
+
+
 def test_pdf_with_project_smiles_calls_structure_section(tmp_path, monkeypatch) -> None:
     """PDF with project.smiles='CCO' should call _append_metadata_and_structure_section."""
     from reporting.pdf_generator import PDFGenerator, ReportOptions
