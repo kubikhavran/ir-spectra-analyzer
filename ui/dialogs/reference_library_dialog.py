@@ -5,7 +5,7 @@ from __future__ import annotations
 from datetime import datetime, timedelta
 from pathlib import Path
 
-from PySide6.QtCore import QDate, Qt, Signal
+from PySide6.QtCore import QDate, QMetaObject, Qt, QThread, Signal
 from PySide6.QtGui import QDragEnterEvent, QDropEvent, QKeyEvent
 from PySide6.QtWidgets import (
     QCheckBox,
@@ -22,8 +22,6 @@ from PySide6.QtWidgets import (
     QMessageBox,
     QPushButton,
     QSplitter,
-    QTableWidget,
-    QTableWidgetItem,
     QVBoxLayout,
     QWidget,
 )
@@ -33,17 +31,17 @@ from app.reference_library_service import ReferenceLibraryService, ReferenceSear
 from core.spectrum import Spectrum
 from matching.quality import match_quality_label
 from storage.database import Database
-
-# Column indices for the library table. Keeping them as module-level constants
-# instead of magic numbers makes the editable-description wiring easier to
-# follow and protects against silent breakage if columns are reordered later.
-_COL_NAME = 0
-_COL_SIMILARITY = 1
-_COL_QUALITY = 2
-_COL_DESCRIPTION = 3
-_COL_SOURCE = 4
-_COL_Y_UNIT = 5
-_COL_CREATED_AT = 6
+from ui.models.reference_library_table_model import (
+    COL_CREATED_AT,
+    COL_DESCRIPTION,
+    COL_NAME,
+    COL_QUALITY,
+    COL_SIMILARITY,
+    COL_SOURCE,
+    COL_Y_UNIT,
+    ReferenceLibraryTableModel,
+    ReferenceLibraryTableView,
+)
 
 # Distinct colors for the multi-overlay preview (up to 5 simultaneous refs).
 _PREVIEW_COLORS: tuple[tuple[int, int, int], ...] = (
@@ -54,20 +52,6 @@ _PREVIEW_COLORS: tuple[tuple[int, int, int], ...] = (
     (210, 140, 30),
 )
 
-
-class _SimilarityTableWidgetItem(QTableWidgetItem):
-    """QTableWidgetItem variant that sorts by numeric similarity score."""
-
-    def __init__(self, text: str, score: float | None) -> None:
-        super().__init__(text)
-        self._score = score
-
-    def __lt__(self, other: object) -> bool:
-        if isinstance(other, _SimilarityTableWidgetItem):
-            left = -1.0 if self._score is None else self._score
-            right = -1.0 if other._score is None else other._score
-            return left < right
-        return super().__lt__(other)
 
 
 class ReferenceLibraryDialog(QDialog):
@@ -100,9 +84,8 @@ class ReferenceLibraryDialog(QDialog):
         self._current_spectrum_curve = None
         self._preview_placeholder = None
         self._preview_legend = None
-        # Guard against itemChanged() firing while the table is being
-        # populated programmatically.
-        self._suppress_item_changed = False
+        self._reference_task_thread: QThread | None = None
+        self._reference_task_kind: str | None = None
         self.setWindowTitle("Reference Library")
         self.setMinimumSize(960, 620)
         self.setAcceptDrops(True)
@@ -122,25 +105,28 @@ class ReferenceLibraryDialog(QDialog):
 
         left_layout.addWidget(self._build_filter_panel())
 
-        self._table = QTableWidget(0, 7)
-        self._table.setHorizontalHeaderLabels(
-            ["Name", "Similarity", "Quality", "Description", "Source", "Y Unit", "Created At"]
-        )
-        # Only the Description column is editable — all others are read-only
-        # even though the widget allows editing globally. Per-item editability
-        # is enforced in _populate_table via Qt.ItemFlag.ItemIsEditable.
+        self._table_model = ReferenceLibraryTableModel(self)
+        self._table_model.description_edited.connect(self._on_description_edited)
+
+        self._table = ReferenceLibraryTableView(self)
+        self._table.setModel(self._table_model)
         self._table.setEditTriggers(
-            QTableWidget.EditTrigger.DoubleClicked
-            | QTableWidget.EditTrigger.EditKeyPressed
-            | QTableWidget.EditTrigger.AnyKeyPressed
+            ReferenceLibraryTableView.EditTrigger.DoubleClicked
+            | ReferenceLibraryTableView.EditTrigger.EditKeyPressed
+            | ReferenceLibraryTableView.EditTrigger.AnyKeyPressed
         )
-        self._table.setSelectionBehavior(QTableWidget.SelectionBehavior.SelectRows)
-        self._table.setSelectionMode(QTableWidget.SelectionMode.ExtendedSelection)
+        self._table.setSelectionBehavior(ReferenceLibraryTableView.SelectionBehavior.SelectRows)
+        self._table.setSelectionMode(ReferenceLibraryTableView.SelectionMode.ExtendedSelection)
         self._table.setSortingEnabled(True)
         self._table.horizontalHeader().setStretchLastSection(True)
+        self._table.setColumnWidth(COL_NAME, 180)
+        self._table.setColumnWidth(COL_SIMILARITY, 90)
+        self._table.setColumnWidth(COL_QUALITY, 90)
+        self._table.setColumnWidth(COL_DESCRIPTION, 220)
+        self._table.setColumnWidth(COL_SOURCE, 260)
+        self._table.setColumnWidth(COL_Y_UNIT, 110)
+        self._table.setColumnWidth(COL_CREATED_AT, 150)
         self._table.itemSelectionChanged.connect(self._on_selection_changed)
-        self._table.itemChanged.connect(self._on_item_changed)
-
         left_layout.addWidget(self._table)
         splitter.addWidget(left_widget)
 
@@ -397,61 +383,19 @@ class ReferenceLibraryDialog(QDialog):
 
     def _populate_table(self, refs: list[dict]) -> None:
         """Fill the table widget from a (pre-filtered) list of reference dicts."""
-        sorted_refs = sorted(refs, key=self._sort_key_for_ref)
-        self._refs = sorted_refs
+        prepared_refs = []
+        for ref in refs:
+            prepared = dict(ref)
+            prepared["_similarity_score"] = self._similarity_by_ref_id.get(int(ref["id"]))
+            prepared_refs.append(prepared)
 
-        self._suppress_item_changed = True
-        try:
-            self._table.setSortingEnabled(False)
-            self._table.setRowCount(0)
-
-            read_only = Qt.ItemFlag.ItemIsSelectable | Qt.ItemFlag.ItemIsEnabled
-            editable = read_only | Qt.ItemFlag.ItemIsEditable
-
-            for ref in sorted_refs:
-                row = self._table.rowCount()
-                self._table.insertRow(row)
-
-                name_item = QTableWidgetItem(ref["name"])
-                name_item.setData(Qt.ItemDataRole.UserRole, ref["id"])
-                name_item.setFlags(read_only)
-                self._table.setItem(row, _COL_NAME, name_item)
-
-                sim_item = self._similarity_item_for_ref(ref)
-                sim_item.setFlags(read_only)
-                self._table.setItem(row, _COL_SIMILARITY, sim_item)
-
-                quality_item = QTableWidgetItem(self._quality_text_for_ref(ref))
-                quality_item.setFlags(read_only)
-                self._table.setItem(row, _COL_QUALITY, quality_item)
-
-                desc_item = QTableWidgetItem(ref.get("description", ""))
-                desc_item.setFlags(editable)
-                desc_item.setToolTip("Double-click to edit the description")
-                self._table.setItem(row, _COL_DESCRIPTION, desc_item)
-
-                source_item = QTableWidgetItem(ref.get("source", ""))
-                source_item.setFlags(read_only)
-                source_item.setToolTip(ref.get("source", ""))
-                self._table.setItem(row, _COL_SOURCE, source_item)
-
-                yunit_item = QTableWidgetItem(ref.get("y_unit", ""))
-                yunit_item.setFlags(read_only)
-                self._table.setItem(row, _COL_Y_UNIT, yunit_item)
-
-                created_item = QTableWidgetItem(ref.get("created_at", ""))
-                created_item.setFlags(read_only)
-                self._table.setItem(row, _COL_CREATED_AT, created_item)
-
-            self._table.setSortingEnabled(True)
-            if self._similarity_by_ref_id:
-                self._table.sortItems(_COL_SIMILARITY, Qt.SortOrder.DescendingOrder)
-            else:
-                self._table.sortItems(_COL_NAME, Qt.SortOrder.AscendingOrder)
-            self._table.resizeColumnsToContents()
-            self._table.clearSelection()
-        finally:
-            self._suppress_item_changed = False
+        self._refs = prepared_refs
+        self._table_model.set_rows(prepared_refs)
+        if self._similarity_by_ref_id:
+            self._table.sortByColumn(COL_SIMILARITY, Qt.SortOrder.DescendingOrder)
+        else:
+            self._table.sortByColumn(COL_NAME, Qt.SortOrder.AscendingOrder)
+        self._table.clearSelection()
 
         self._preview_label.setText("Select a row to preview")
         self._show_empty_preview_plot()
@@ -516,14 +460,13 @@ class ReferenceLibraryDialog(QDialog):
 
     def _selected_ref_ids(self) -> list[int]:
         """Return the DB ids of all selected rows, in selection order."""
+        selection_model = self._table.selectionModel()
+        if selection_model is None:
+            return []
         ids: list[int] = []
-        seen: set[int] = set()
-        for item in self._table.selectedItems():
-            if item.column() != _COL_NAME:
-                continue
-            ref_id = item.data(Qt.ItemDataRole.UserRole)
-            if isinstance(ref_id, int) and ref_id not in seen:
-                seen.add(ref_id)
+        for index in selection_model.selectedRows(COL_NAME):
+            ref_id = self._table_model.data(index, Qt.ItemDataRole.UserRole)
+            if isinstance(ref_id, int):
                 ids.append(ref_id)
         return ids
 
@@ -538,9 +481,11 @@ class ReferenceLibraryDialog(QDialog):
             return None
         # Prefer the focused row if it's part of the selection.
         row = self._table.currentRow()
-        item = self._table.item(row, _COL_NAME) if row >= 0 else None
-        if item is not None:
-            focused = item.data(Qt.ItemDataRole.UserRole)
+        if row >= 0:
+            focused = self._table_model.data(
+                self._table_model.index(row, COL_NAME),
+                Qt.ItemDataRole.UserRole,
+            )
             if isinstance(focused, int) and focused in ids:
                 return focused
         return ids[0]
@@ -567,10 +512,16 @@ class ReferenceLibraryDialog(QDialog):
             self._show_empty_preview_plot()
             return
 
-        self._show_reference_preview(refs)
+        preview_refs = self._load_reference_rows(refs)
+        if not preview_refs:
+            self._preview_label.setText("Preview unavailable for the selected row")
+            self._show_empty_preview_plot()
+            return
+
+        self._show_reference_preview(preview_refs)
         if len(refs) == 1:
             ref = refs[0]
-            n_points = len(ref.get("wavenumbers", []))
+            n_points = int(ref.get("n_points") or len(preview_refs[0].get("wavenumbers", [])))
             text = (
                 f"Name: {ref['name']}\n"
                 f"Similarity: {self._similarity_text_for_ref(ref)}\n"
@@ -594,20 +545,27 @@ class ReferenceLibraryDialog(QDialog):
         selection_count = len(selected_ids)
         has_single = selection_count == 1
         has_any = selection_count > 0
-        self._rename_btn.setEnabled(has_single)
-        self._delete_btn.setEnabled(has_any)
-        self._open_in_main_btn.setEnabled(has_single)
+        is_idle = self._reference_task_thread is None
+        self._rename_btn.setEnabled(has_single and is_idle)
+        self._delete_btn.setEnabled(has_any and is_idle)
+        self._open_in_main_btn.setEnabled(has_single and is_idle)
         self._find_similar_selected_btn.setEnabled(
-            has_single and self._project_library_folder is not None
+            has_single and self._project_library_folder is not None and is_idle
         )
-        self._clear_search_btn.setEnabled(bool(self._similarity_by_ref_id))
-        self._sync_project_library_btn.setEnabled(self._project_library_folder is not None)
+        self._clear_search_btn.setEnabled(bool(self._similarity_by_ref_id) and is_idle)
+        self._sync_project_library_btn.setEnabled(
+            self._project_library_folder is not None and is_idle
+        )
+        self._choose_library_folder_btn.setEnabled(is_idle)
+        self._import_file_btn.setEnabled(is_idle)
         self._find_similar_btn.setEnabled(
-            self._current_spectrum is not None and self._project_library_folder is not None
+            self._current_spectrum is not None and self._project_library_folder is not None and is_idle
         )
 
     def _on_choose_library_folder(self) -> None:
         """Let the user pick the active reference-library folder."""
+        if self._reference_task_thread is not None:
+            return
         start_dir = ""
         if self._project_library_folder is not None:
             start_dir = str(self._project_library_folder)
@@ -622,7 +580,6 @@ class ReferenceLibraryDialog(QDialog):
 
         try:
             folder = self._library_service.set_selected_library_folder(Path(chosen))
-            summary = self._library_service.import_project_library()
         except Exception as exc:  # noqa: BLE001
             QMessageBox.critical(
                 self,
@@ -634,10 +591,28 @@ class ReferenceLibraryDialog(QDialog):
         self._similarity_by_ref_id.clear()
         self._project_library_folder = folder
         self._load_data()
+        if self._can_run_reference_tasks_in_background():
+            self._start_project_library_sync()
+            return
+        try:
+            summary = self._library_service.import_project_library()
+        except Exception as exc:  # noqa: BLE001
+            QMessageBox.critical(
+                self,
+                "Reference Folder Error",
+                f"Failed to use the selected folder:\n{exc}",
+            )
+            return
+        self._load_data()
         self._library_label.setText(self._project_library_status_text(summary))
 
     def _on_sync_project_library(self) -> None:
         """Import missing spectra from the active reference-library folder."""
+        if self._reference_task_thread is not None:
+            return
+        if self._can_run_reference_tasks_in_background():
+            self._start_project_library_sync()
+            return
         try:
             summary = self._library_service.import_project_library()
         except Exception as exc:  # noqa: BLE001
@@ -752,7 +727,7 @@ class ReferenceLibraryDialog(QDialog):
         so typing is not intercepted.
         """
         focus_widget = self.focusWidget()
-        table_is_editing = self._table.state() == QTableWidget.State.EditingState
+        table_is_editing = self._table.state() == self._table.State.EditingState
 
         if isinstance(focus_widget, QLineEdit) or table_is_editing:
             super().keyPressEvent(event)
@@ -786,27 +761,19 @@ class ReferenceLibraryDialog(QDialog):
         if self._current_spectrum is None:
             self._search_label.setText(self._search_status_text())
             return
-
-        try:
-            outcome = self._library_service.search_spectrum(
+        if self._reference_task_thread is not None:
+            return
+        if self._can_run_reference_tasks_in_background():
+            self._start_similarity_search(
                 self._current_spectrum,
-                top_n=None,
                 auto_import_project_library=True,
-            )
-        except Exception as exc:  # noqa: BLE001
-            QMessageBox.critical(
-                self,
-                "Similarity Search Error",
-                f"Failed to search reference library:\n{exc}",
             )
             return
 
-        self._similarity_by_ref_id = {result.ref_id: result.score for result in outcome.results}
-        self._project_library_folder = (
-            outcome.library_folder or self._library_service.discover_project_library_folder()
+        self._execute_similarity_search(
+            self._current_spectrum,
+            auto_import_project_library=True,
         )
-        self._load_data()
-        self._apply_search_outcome_status(outcome)
 
     def _on_clear_similarity_search(self) -> None:
         """Return the library table to its default alphabetical view."""
@@ -846,23 +813,17 @@ class ReferenceLibraryDialog(QDialog):
         self._preview_label.setText("Select a row to preview")
         self._load_data()
 
-    def _on_item_changed(self, item: QTableWidgetItem) -> None:
+    def _on_description_edited(
+        self,
+        ref_id: int,
+        new_description: str,
+        old_description: str,
+    ) -> None:
         """Persist inline description edits back to the database."""
-        if self._suppress_item_changed:
-            return
-        if item.column() != _COL_DESCRIPTION:
-            return
-        row = item.row()
-        name_item = self._table.item(row, _COL_NAME)
-        if name_item is None:
-            return
-        ref_id = name_item.data(Qt.ItemDataRole.UserRole)
-        if not isinstance(ref_id, int):
-            return
-        new_description = item.text()
         try:
             self._db.update_reference_description(ref_id, new_description)
         except Exception as exc:  # noqa: BLE001
+            self._table_model.update_description(ref_id, old_description)
             QMessageBox.critical(
                 self,
                 "Update Error",
@@ -902,31 +863,34 @@ class ReferenceLibraryDialog(QDialog):
         """Rank the library using the selected reference as the query spectrum."""
         if self._project_library_folder is None:
             return
+        if self._reference_task_thread is not None:
+            return
         ref = self._selected_ref()
         if ref is None:
             return
-        try:
-            query = Spectrum(
-                wavenumbers=ref["wavenumbers"],
-                intensities=ref["intensities"],
-                y_unit=ref.get("y_unit", "Absorbance"),
-            )
-            outcome = self._library_service.search_spectrum(
-                query,
-                top_n=None,
-                auto_import_project_library=False,
-            )
-        except Exception as exc:  # noqa: BLE001
-            QMessageBox.critical(
+        loaded_ref = self._load_reference_row(ref)
+        if loaded_ref is None:
+            QMessageBox.warning(
                 self,
-                "Similarity Search Error",
-                f"Failed to search reference library:\n{exc}",
+                "Reference Unavailable",
+                "The selected reference spectrum could not be loaded for similarity search.",
             )
             return
-
-        self._similarity_by_ref_id = {result.ref_id: result.score for result in outcome.results}
-        self._load_data()
-        self._apply_search_outcome_status(outcome)
+        query = Spectrum(
+            wavenumbers=loaded_ref["wavenumbers"],
+            intensities=loaded_ref["intensities"],
+            y_unit=loaded_ref.get("y_unit", "Absorbance"),
+        )
+        if self._can_run_reference_tasks_in_background():
+            self._start_similarity_search(
+                query,
+                auto_import_project_library=False,
+            )
+            return
+        self._execute_similarity_search(
+            query,
+            auto_import_project_library=False,
+        )
 
     def _on_rename(self) -> None:
         """Prompt for a new name and rename the selected reference spectrum."""
@@ -1000,22 +964,6 @@ class ReferenceLibraryDialog(QDialog):
                 imported_summary=outcome.imported_summary,
             )
         )
-
-    def _sort_key_for_ref(self, ref: dict) -> tuple[float, str]:
-        """Sort by similarity search score when present, otherwise alphabetically."""
-        ref_id = int(ref["id"])
-        score = self._similarity_by_ref_id.get(ref_id)
-        if score is None:
-            return (1.0, str(ref["name"]).casefold())
-        return (-score, str(ref["name"]).casefold())
-
-    def _similarity_item_for_ref(self, ref: dict) -> QTableWidgetItem:
-        """Create the similarity column item for a reference row."""
-        score = self._similarity_by_ref_id.get(int(ref["id"]))
-        text = self._similarity_text_for_ref(ref)
-        item = _SimilarityTableWidgetItem(text, score)
-        item.setTextAlignment(Qt.AlignmentFlag.AlignRight | Qt.AlignmentFlag.AlignVCenter)
-        return item
 
     def _similarity_text_for_ref(self, ref: dict) -> str:
         """Return a display string for the current similarity score of a reference."""
@@ -1153,3 +1101,204 @@ class ReferenceLibraryDialog(QDialog):
             self._current_spectrum_curve.setVisible(False)
 
         self._preview_plot.autoRange()
+
+    def _can_run_reference_tasks_in_background(self) -> bool:
+        """Return True when the dialog can offload library work to a worker thread."""
+        return (
+            not self._db.is_in_memory
+            and hasattr(self._library_service, "project_root")
+            and hasattr(self._library_service, "selected_library_folder")
+        )
+
+    def _start_similarity_search(
+        self,
+        spectrum: Spectrum,
+        *,
+        auto_import_project_library: bool,
+    ) -> None:
+        """Run a similarity search in a worker thread for file-backed databases."""
+        from ui.workers.reference_library_worker import (  # noqa: PLC0415
+            ReferenceLibrarySearchWorker,
+        )
+
+        worker = ReferenceLibrarySearchWorker(
+            db_path=self._db.db_path,
+            project_root=self._library_service.project_root,
+            selected_library_folder=self._library_service.selected_library_folder(),
+            spectrum=spectrum,
+            top_n=None,
+            auto_import_project_library=auto_import_project_library,
+        )
+        thread = QThread(self)
+        worker.moveToThread(thread)
+        worker.completed.connect(self._on_similarity_search_completed)
+        worker.failed.connect(self._on_similarity_search_failed)
+        worker.finished.connect(thread.quit)
+        worker.finished.connect(worker.deleteLater)
+        thread.finished.connect(thread.deleteLater)
+        thread.finished.connect(self._on_reference_task_thread_finished)
+        thread.started.connect(
+            lambda: QMetaObject.invokeMethod(worker, "run", Qt.ConnectionType.QueuedConnection)
+        )
+        self._reference_task_thread = thread
+        self._reference_task_kind = "search"
+        self._set_reference_task_busy(True, "Similarity search: running…")
+        thread.start()
+
+    def _execute_similarity_search(
+        self,
+        spectrum: Spectrum,
+        *,
+        auto_import_project_library: bool,
+    ) -> None:
+        """Run a similarity search synchronously (used for tests/in-memory DB)."""
+        try:
+            outcome = self._library_service.search_spectrum(
+                spectrum,
+                top_n=None,
+                auto_import_project_library=auto_import_project_library,
+            )
+        except Exception as exc:  # noqa: BLE001
+            QMessageBox.critical(
+                self,
+                "Similarity Search Error",
+                f"Failed to search reference library:\n{exc}",
+            )
+            return
+        self._apply_similarity_search_outcome(outcome)
+
+    def _start_project_library_sync(self) -> None:
+        """Run the active-folder sync in a worker thread for file-backed databases."""
+        from ui.workers.reference_library_worker import (  # noqa: PLC0415
+            ReferenceLibrarySyncWorker,
+        )
+
+        worker = ReferenceLibrarySyncWorker(
+            db_path=self._db.db_path,
+            project_root=self._library_service.project_root,
+            selected_library_folder=self._library_service.selected_library_folder(),
+        )
+        thread = QThread(self)
+        worker.moveToThread(thread)
+        worker.completed.connect(self._on_project_library_sync_completed)
+        worker.failed.connect(self._on_project_library_sync_failed)
+        worker.finished.connect(thread.quit)
+        worker.finished.connect(worker.deleteLater)
+        thread.finished.connect(thread.deleteLater)
+        thread.finished.connect(self._on_reference_task_thread_finished)
+        thread.started.connect(
+            lambda: QMetaObject.invokeMethod(worker, "run", Qt.ConnectionType.QueuedConnection)
+        )
+        self._reference_task_thread = thread
+        self._reference_task_kind = "sync"
+        self._set_reference_task_busy(True, "Reference library folder: syncing…")
+        thread.start()
+
+    def _on_similarity_search_completed(self, outcome: ReferenceSearchOutcome) -> None:
+        """Apply a completed background similarity search to the table UI."""
+        self._library_service.clear_search_cache()
+        self._apply_similarity_search_outcome(outcome)
+
+    def _on_similarity_search_failed(self, message: str) -> None:
+        """Show a background similarity-search failure."""
+        self._search_label.setText(self._search_status_text())
+        QMessageBox.critical(
+            self,
+            "Similarity Search Error",
+            f"Failed to search reference library:\n{message}",
+        )
+
+    def _apply_similarity_search_outcome(self, outcome: ReferenceSearchOutcome) -> None:
+        """Update ranking columns and labels from a completed similarity search."""
+        self._similarity_by_ref_id = {result.ref_id: result.score for result in outcome.results}
+        self._project_library_folder = (
+            outcome.library_folder or self._library_service.discover_project_library_folder()
+        )
+        self._load_data()
+        self._apply_search_outcome_status(outcome)
+
+    def _on_project_library_sync_completed(self, summary: BatchImportSummary | None) -> None:
+        """Refresh the dialog after a background folder sync completes."""
+        self._library_service.clear_search_cache()
+        self._project_library_folder = self._library_service.discover_project_library_folder()
+        if summary is None:
+            self._library_label.setText(self._project_library_status_text())
+            self._load_data()
+            return
+        self._load_data()
+        self._library_label.setText(self._project_library_status_text(summary))
+
+    def _on_project_library_sync_failed(self, message: str) -> None:
+        """Show a background sync failure."""
+        self._library_label.setText(self._project_library_status_text())
+        QMessageBox.critical(
+            self,
+            "Reference Folder Sync Error",
+            f"Failed to sync reference folder:\n{message}",
+        )
+
+    def _on_reference_task_thread_finished(self) -> None:
+        """Reset dialog busy state after a background reference task completes."""
+        self._reference_task_thread = None
+        self._reference_task_kind = None
+        self._set_reference_task_busy(False)
+        self._update_button_state()
+
+    def _set_reference_task_busy(self, busy: bool, status_text: str | None = None) -> None:
+        """Enable or disable task-triggering controls while a worker is active."""
+        self._update_button_state()
+        if busy and status_text:
+            if self._reference_task_kind == "sync":
+                self._library_label.setText(status_text)
+            else:
+                self._search_label.setText(status_text)
+
+    def _load_reference_rows(self, refs: list[dict]) -> list[dict]:
+        """Return the selected references with spectral arrays loaded on demand."""
+        loaded: list[dict] = []
+        for ref in refs:
+            hydrated = self._load_reference_row(ref)
+            if hydrated is not None:
+                loaded.append(hydrated)
+        return loaded
+
+    def _load_reference_row(self, ref: dict) -> dict | None:
+        """Hydrate one metadata row with stored spectral arrays when needed."""
+        if "wavenumbers" in ref and "intensities" in ref:
+            return ref
+
+        ref_id = ref.get("id")
+        if not isinstance(ref_id, int):
+            return None
+
+        hydrated: dict | None = None
+        get_reference_spectrum = getattr(self._library_service, "get_reference_spectrum", None)
+        if callable(get_reference_spectrum):
+            hydrated = get_reference_spectrum(ref_id)
+        if hydrated is None:
+            hydrated = self._db.get_reference_spectrum_by_id(ref_id)
+        if hydrated is None:
+            return None
+
+        merged = dict(ref)
+        merged.update(
+            {
+                "wavenumbers": hydrated["wavenumbers"],
+                "intensities": hydrated["intensities"],
+                "y_unit": hydrated.get("y_unit", ref.get("y_unit", "")),
+                "n_points": hydrated.get("n_points", ref.get("n_points", 0)),
+            }
+        )
+        self._replace_cached_reference_row(merged)
+        return merged
+
+    def _replace_cached_reference_row(self, merged: dict) -> None:
+        """Update the in-memory row caches with a hydrated reference dict."""
+        ref_id = merged.get("id")
+        if not isinstance(ref_id, int):
+            return
+        for collection in (self._refs_all, self._refs):
+            for index, existing in enumerate(collection):
+                if existing.get("id") == ref_id:
+                    collection[index] = merged
+                    break

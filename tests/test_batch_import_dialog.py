@@ -20,12 +20,22 @@ from core.peak import Peak  # noqa: E402
 from core.spectrum import SpectralUnit, Spectrum  # noqa: E402
 from storage.database import Database  # noqa: E402
 from ui.dialogs.batch_import_dialog import BatchImportDialog  # noqa: E402
+from ui.workers.reference_import_worker import ReferenceBatchImportWorker  # noqa: E402
 
 
 @pytest.fixture
 def db():
     """Provide an in-memory Database instance."""
     database = Database(":memory:")
+    database.initialize()
+    yield database
+    database.close()
+
+
+@pytest.fixture
+def file_db(tmp_path):
+    """Provide a file-backed Database instance for background-worker tests."""
+    database = Database(tmp_path / "batch-import.db")
     database.initialize()
     yield database
     database.close()
@@ -232,3 +242,44 @@ def test_batch_import_dialog_passes_detect_peaks_option(qtbot, db, monkeypatch, 
     assert captured["folder"] == tmp_path
     assert captured["skip_duplicates_by_filename"] is True
     assert captured["detect_peaks"] is True
+
+
+def test_reference_batch_import_worker_imports_real_fixture_folder(file_db):
+    """The batch-import worker should populate a file-backed DB from real SPA fixtures."""
+    folder = Path(__file__).resolve().parent / "fixtures" / "reference library_1"
+    worker = ReferenceBatchImportWorker(
+        db_path=file_db.db_path,
+        folder=folder,
+        skip_duplicates_by_filename=True,
+        detect_peaks=False,
+    )
+
+    completed = []
+    failures = []
+    worker.completed.connect(completed.append)
+    worker.failed.connect(failures.append)
+
+    worker.run()
+
+    assert failures == []
+    assert len(completed) == 1
+    assert completed[0].imported == len(list(folder.glob("*.SPA")))
+    assert len(file_db.get_reference_spectra()) == completed[0].imported
+
+
+def test_batch_import_dialog_runs_background_import_for_file_db(qtbot, file_db):
+    """File-backed DB mode should import on a worker thread and update the dialog when done."""
+    folder = Path(__file__).resolve().parent / "fixtures" / "reference library_1"
+    dlg = BatchImportDialog(file_db)
+    qtbot.addWidget(dlg)
+
+    dlg._set_folder(folder)
+    dlg._on_import()
+
+    expected_rows = len(list(folder.glob("*.SPA")))
+    qtbot.waitUntil(lambda: dlg._results_table.rowCount() == expected_rows, timeout=10000)
+    if dlg._import_thread is not None:
+        qtbot.waitUntil(lambda: not dlg._import_thread.isRunning(), timeout=10000)
+
+    assert dlg._results_table.rowCount() == expected_rows
+    assert "Imported:" in dlg._summary_label.text()

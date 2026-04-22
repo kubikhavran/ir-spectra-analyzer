@@ -18,7 +18,10 @@ from app.reference_import import (  # noqa: E402
     BatchImportStatus,
     BatchImportSummary,
 )
-from app.reference_library_service import ReferenceSearchOutcome  # noqa: E402
+from app.reference_library_service import (  # noqa: E402
+    ReferenceLibraryService,
+    ReferenceSearchOutcome,
+)
 from core.spectrum import Spectrum  # noqa: E402
 from matching.search_engine import MatchResult  # noqa: E402
 from storage.database import Database  # noqa: E402
@@ -152,6 +155,32 @@ def test_preview_text_updates_on_row_selection(qtbot, db):
     assert np.allclose(np.asarray(x_data), wn)
     assert np.allclose(np.asarray(y_data), inten)
     assert not dlg._preview_placeholder.isVisible()
+
+
+def test_dialog_lazy_loads_preview_arrays_from_service(qtbot, db, tmp_path):
+    """Preview should still render when the dialog is fed metadata-only library rows."""
+    wn, inten = _make_arrays()
+    folder = tmp_path / "reference-library"
+    folder.mkdir()
+    db.add_reference_spectrum(
+        name="Lazy Ref",
+        wavenumbers=wn,
+        intensities=inten,
+        description="Lazy description",
+        source=str(folder / "lazy.spa"),
+        y_unit="Absorbance",
+    )
+
+    service = ReferenceLibraryService(db)
+    service.set_selected_library_folder(folder)
+    dlg = ReferenceLibraryDialog(db, library_service=service)
+    qtbot.addWidget(dlg)
+
+    dlg._table.selectRow(0)
+    qtbot.waitUntil(lambda: "Lazy Ref" in dlg._preview_label.text())
+
+    assert "Points: 100" in dlg._preview_label.text()
+    assert len(dlg._preview_curves) == 1
 
 
 def test_rename_updates_database_and_table(qtbot, db, monkeypatch):

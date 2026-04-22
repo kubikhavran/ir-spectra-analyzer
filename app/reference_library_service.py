@@ -5,11 +5,18 @@ from __future__ import annotations
 from dataclasses import dataclass
 from pathlib import Path
 
-from app.reference_import import BatchImportSummary, ReferenceImportService
+from app.reference_import import (
+    BatchImportResult,
+    BatchImportStatus,
+    BatchImportSummary,
+    ReferenceImportService,
+)
 from core.spectrum import Spectrum
+from matching.feature_store import MATCH_FEATURE_VERSION, compute_search_vector
 from matching.search_engine import MatchResult, SearchEngine
 from storage.database import Database
 from storage.settings import Settings
+from utils.file_utils import normalize_source_path
 
 
 @dataclass(frozen=True)
@@ -45,6 +52,7 @@ class ReferenceLibraryService:
         self._project_root = project_root or Path(__file__).resolve().parents[1]
         self._import_service = import_service or ReferenceImportService(db)
         self._search_engine = SearchEngine()
+        self._reference_spectrum_cache: dict[int, dict] = {}
         self._selected_library_folder = self._load_selected_library_folder()
 
     def discover_project_library_folder(self) -> Path | None:
@@ -61,11 +69,17 @@ class ReferenceLibraryService:
         """Return the configured active reference-library folder, if any."""
         return self.discover_project_library_folder()
 
+    @property
+    def project_root(self) -> Path:
+        """Return the service project root used for default library discovery."""
+        return self._project_root
+
     def set_selected_library_folder(self, folder: Path | None) -> Path | None:
         """Persist and activate the reference-library folder chosen by the user."""
         if folder is None:
             self._selected_library_folder = None
             self._persist_selected_library_folder(None)
+            self.clear_search_cache()
             return None
 
         resolved = folder.expanduser().resolve()
@@ -76,6 +90,7 @@ class ReferenceLibraryService:
 
         self._selected_library_folder = resolved
         self._persist_selected_library_folder(resolved)
+        self.clear_search_cache()
         return resolved
 
     def ensure_project_library_imported(self) -> BatchImportSummary | None:
@@ -86,11 +101,40 @@ class ReferenceLibraryService:
 
         library_files = self._import_service.scan_folder(folder)
         existing_sources = self._existing_reference_sources()
-        _missing_files = [
-            path
-            for path in library_files
-            if self._normalize_source_path(path) not in existing_sources
-        ]
+        up_to_date_results: list[BatchImportResult] = []
+        needs_sync = False
+        for path in library_files:
+            normalized = normalize_source_path(path)
+            existing = existing_sources.get(normalized)
+            if existing is None:
+                needs_sync = True
+                break
+
+            stat = path.stat()
+            stored_mtime_ns = int(existing.get("source_mtime_ns") or 0)
+            stored_size = int(existing.get("source_size") or 0)
+            if (
+                stored_mtime_ns != 0
+                and stored_size != 0
+                and (
+                    stored_mtime_ns != stat.st_mtime_ns
+                    or stored_size != stat.st_size
+                )
+            ):
+                needs_sync = True
+                break
+
+            up_to_date_results.append(
+                BatchImportResult(
+                    path=path,
+                    status=BatchImportStatus.SKIPPED,
+                    reference_name=path.stem,
+                    reason="source path already imported",
+                )
+            )
+
+        if not needs_sync:
+            return BatchImportSummary(folder=folder, results=tuple(up_to_date_results))
         return self.import_project_library()
 
     def import_project_library(self) -> BatchImportSummary | None:
@@ -99,12 +143,14 @@ class ReferenceLibraryService:
         if folder is None:
             return None
 
-        return self._import_service.batch_import_folder(
+        summary = self._import_service.batch_import_folder(
             folder,
             skip_duplicates_by_filename=True,
             detect_peaks=False,
             prefer_filename=True,
         )
+        self.clear_search_cache()
+        return summary
 
     def search_spectrum(
         self,
@@ -129,7 +175,13 @@ class ReferenceLibraryService:
                 library_folder=library_folder,
             )
 
-        self._search_engine.load_references(list(references))
+        source_prefix = normalize_source_path(library_folder) if library_folder is not None else None
+        self._refresh_missing_features(source_prefix=source_prefix)
+        search_rows = self._db.get_reference_search_rows(
+            source_prefix=source_prefix,
+            feature_version=MATCH_FEATURE_VERSION,
+        )
+        self._search_engine.load_references(search_rows)
         results = tuple(
             self._search_engine.search(
                 spectrum.wavenumbers,
@@ -148,6 +200,7 @@ class ReferenceLibraryService:
     def clear_search_cache(self) -> None:
         """Clear cached preprocessed reference vectors."""
         self._search_engine.clear_cache()
+        self._reference_spectrum_cache.clear()
 
     def get_library_references(self) -> list[dict]:
         """Return reference spectra belonging to the active reference-library folder."""
@@ -155,36 +208,50 @@ class ReferenceLibraryService:
         if folder is None:
             return []
 
-        folder_prefix = self._normalize_source_path(folder)
-        folder_prefix_with_sep = folder_prefix.rstrip("/\\") + "/"
-        references: list[dict] = []
-        for ref in self._db.get_reference_spectra():
-            source = str(ref.get("source", "")).strip()
-            if not source:
-                continue
-            normalized_source = self._normalize_source_path(Path(source))
-            if normalized_source == folder_prefix or normalized_source.startswith(
-                folder_prefix_with_sep
-            ):
-                references.append(ref)
-        return references
+        return self._db.get_reference_metadata(source_prefix=normalize_source_path(folder))
 
-    def _existing_reference_sources(self) -> set[str]:
+    def get_reference_spectrum(self, ref_id: int) -> dict | None:
+        """Return one fully decoded reference spectrum, cached for overlays/previews."""
+        cached = self._reference_spectrum_cache.get(int(ref_id))
+        if cached is not None:
+            return dict(cached)
+
+        ref = self._db.get_reference_spectrum_by_id(int(ref_id))
+        if ref is None:
+            return None
+        self._reference_spectrum_cache[int(ref_id)] = dict(ref)
+        return ref
+
+    def _existing_reference_sources(self) -> dict[str, dict]:
         """Return normalized source paths already present in the reference DB."""
-        sources: set[str] = set()
-        for ref in self._db.get_reference_spectra():
-            source = str(ref.get("source", "")).strip()
+        sources: dict[str, dict] = {}
+        for ref in self._db.get_reference_identity_rows():
+            source = str(ref.get("source_norm", "")).strip()
             if source:
-                sources.add(self._normalize_source_path(Path(source)))
+                sources[source] = dict(ref)
         return sources
 
-    @staticmethod
-    def _normalize_source_path(path: Path) -> str:
-        """Normalize paths for duplicate comparison across repeated syncs."""
-        try:
-            return str(path.expanduser().resolve(strict=False)).replace("\\", "/").casefold()
-        except OSError:
-            return str(path).replace("\\", "/").casefold()
+    def _refresh_missing_features(self, *, source_prefix: str | None) -> None:
+        """Backfill persistent search vectors for library rows missing the current feature version."""
+        missing = self._db.get_references_missing_features(
+            source_prefix=source_prefix,
+            feature_version=MATCH_FEATURE_VERSION,
+        )
+        if not missing:
+            return
+
+        for ref in missing:
+            self._db.upsert_reference_feature(
+                int(ref["id"]),
+                feature_version=MATCH_FEATURE_VERSION,
+                feature_vector=compute_search_vector(
+                    ref["wavenumbers"],
+                    ref["intensities"],
+                    y_unit=ref.get("y_unit"),
+                ),
+                commit=False,
+            )
+        self._db.commit()
 
     def _load_selected_library_folder(self) -> Path | None:
         """Load the persisted active library folder from settings, if available."""

@@ -16,7 +16,7 @@ from __future__ import annotations
 
 from datetime import datetime
 
-from PySide6.QtCore import Qt
+from PySide6.QtCore import QMetaObject, Qt, QThread
 from PySide6.QtGui import QKeySequence, QShortcut, QUndoStack
 from PySide6.QtWidgets import (
     QDialog,
@@ -60,6 +60,7 @@ class MainWindow(QMainWindow):
         self._recent_menu: QMenu | None = None
         self._undo_stack = QUndoStack(self)
         self._last_search_refs: list = []  # cached from last _on_match_spectrum call
+        self._reference_search_thread: QThread | None = None
         self._vibration_presets_cache: list = []
         self._molecule_widget: MoleculeWidget
         self._report_preset_manager = ReportPresetManager(settings)
@@ -949,40 +950,102 @@ class MainWindow(QMainWindow):
             self.statusBar().showMessage("No spectrum loaded")
             return
 
-        try:
-            spectrum = self._project.corrected_spectrum or self._project.spectrum
-            outcome = self._reference_library_service.search_spectrum(spectrum, top_n=10)
-            if not outcome.references:
-                if outcome.library_folder is None:
-                    self.statusBar().showMessage(
-                        "Choose a reference library folder first in Database -> Reference Library."
-                    )
-                else:
-                    self.statusBar().showMessage(
-                        "No reference spectra available. Sync or import the selected library first."
-                    )
-                return
+        if self._reference_search_thread is not None:
+            self.statusBar().showMessage("Reference search is already running")
+            return
 
-            self._last_search_refs = list(outcome.references)
-            self._match_results_panel.set_results(list(outcome.results))
-            if outcome.imported_summary is not None and outcome.imported_summary.imported > 0:
+        spectrum = self._project.corrected_spectrum or self._project.spectrum
+        if self._db.is_in_memory:
+            self._execute_match_spectrum_search(spectrum)
+            return
+
+        from ui.workers.reference_library_worker import (  # noqa: PLC0415
+            ReferenceLibrarySearchWorker,
+        )
+
+        worker = ReferenceLibrarySearchWorker(
+            db_path=self._db.db_path,
+            project_root=self._reference_library_service.project_root,
+            selected_library_folder=self._reference_library_service.selected_library_folder(),
+            spectrum=spectrum,
+            top_n=10,
+            auto_import_project_library=True,
+        )
+        thread = QThread(self)
+        worker.moveToThread(thread)
+        worker.completed.connect(self._on_match_spectrum_completed)
+        worker.failed.connect(self._on_match_spectrum_failed)
+        worker.finished.connect(thread.quit)
+        worker.finished.connect(worker.deleteLater)
+        thread.finished.connect(thread.deleteLater)
+        thread.finished.connect(self._on_reference_search_thread_finished)
+        thread.started.connect(
+            lambda: QMetaObject.invokeMethod(worker, "run", Qt.ConnectionType.QueuedConnection)
+        )
+        self._reference_search_thread = thread
+        self._set_match_search_busy(True)
+        thread.start()
+
+    def _execute_match_spectrum_search(self, spectrum) -> None:
+        """Run spectral matching synchronously (used for tests/in-memory DB)."""
+        try:
+            outcome = self._reference_library_service.search_spectrum(spectrum, top_n=10)
+        except Exception as e:  # noqa: BLE001
+            QMessageBox.critical(self, "Match Error", f"Matching failed:\n{e}")
+            return
+        self._apply_match_spectrum_outcome(outcome)
+
+    def _on_match_spectrum_completed(self, outcome) -> None:
+        """Apply background search results once the worker finishes."""
+        self._apply_match_spectrum_outcome(outcome)
+
+    def _on_match_spectrum_failed(self, message: str) -> None:
+        """Show a background search failure to the user."""
+        self.statusBar().showMessage("Matching failed")
+        QMessageBox.critical(self, "Match Error", f"Matching failed:\n{message}")
+
+    def _on_reference_search_thread_finished(self) -> None:
+        """Reset UI state after a background reference search completes."""
+        self._reference_search_thread = None
+        self._set_match_search_busy(False)
+
+    def _apply_match_spectrum_outcome(self, outcome) -> None:
+        """Update the match-results UI from a completed search outcome."""
+        if not outcome.references:
+            if outcome.library_folder is None:
                 self.statusBar().showMessage(
-                    "Imported "
-                    f"{outcome.imported_summary.imported} bundled references and matched "
-                    f"against {outcome.reference_count} spectra"
+                    "Choose a reference library folder first in Database -> Reference Library."
                 )
             else:
                 self.statusBar().showMessage(
-                    f"Matched against {outcome.reference_count} references"
+                    "No reference spectra available. Sync or import the selected library first."
                 )
-        except Exception as e:  # noqa: BLE001
-            QMessageBox.critical(self, "Match Error", f"Matching failed:\n{e}")
+            self._match_results_panel.set_results([])
+            return
+
+        self._last_search_refs = list(outcome.references)
+        self._match_results_panel.set_results(list(outcome.results))
+        if outcome.imported_summary is not None and outcome.imported_summary.imported > 0:
+            self.statusBar().showMessage(
+                "Imported "
+                f"{outcome.imported_summary.imported} bundled references and matched "
+                f"against {outcome.reference_count} spectra"
+            )
+        else:
+            self.statusBar().showMessage(f"Matched against {outcome.reference_count} references")
+
+    def _set_match_search_busy(self, busy: bool) -> None:
+        """Toggle the match action while a background reference search is running."""
+        if self._toolbar._match_action is not None:
+            self._toolbar._match_action.setEnabled(not busy)
+        if busy:
+            self.statusBar().showMessage("Matching spectrum against reference library…")
 
     def _on_match_candidate_selected(self, result) -> None:
         """Show the selected reference spectrum as overlay."""
         from core.spectrum import Spectrum  # noqa: PLC0415
 
-        ref = next((r for r in self._last_search_refs if r["id"] == result.ref_id), None)
+        ref = self._reference_library_service.get_reference_spectrum(int(result.ref_id))
         if ref is None:
             return
         overlay = Spectrum(

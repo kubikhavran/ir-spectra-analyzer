@@ -10,7 +10,9 @@ import pytest
 
 from app.reference_library_service import ReferenceLibraryService
 from core.spectrum import SpectralUnit
+from matching.feature_store import MATCH_FEATURE_VERSION
 from storage.database import Database
+from utils.file_utils import normalize_source_path
 
 
 @pytest.fixture
@@ -155,3 +157,70 @@ def test_selected_library_folder_filters_references_and_persists_setting(db, tmp
     assert selected == folder_a.resolve()
     assert settings.values["reference_library_folder"] == str(folder_a.resolve())
     assert [ref["name"] for ref in service.get_library_references()] == ["A-1"]
+
+
+def test_get_library_references_returns_metadata_only_but_hydrates_by_id(db, tmp_path):
+    folder = tmp_path / "library"
+    folder.mkdir()
+
+    wn = np.linspace(400.0, 4000.0, 48)
+    ints = np.cos(wn / 350.0)
+    ref_id = db.add_reference_spectrum(
+        "Hydrate Me",
+        wn,
+        ints,
+        source=str(folder / "hydrate.spa"),
+        y_unit=SpectralUnit.ABSORBANCE.value,
+    )
+
+    service = ReferenceLibraryService(db)
+    service.set_selected_library_folder(folder)
+
+    refs = service.get_library_references()
+    assert [ref["name"] for ref in refs] == ["Hydrate Me"]
+    assert refs[0]["n_points"] == len(wn)
+    assert "wavenumbers" not in refs[0]
+    assert "intensities" not in refs[0]
+
+    hydrated = service.get_reference_spectrum(ref_id)
+    assert hydrated is not None
+    assert np.allclose(hydrated["wavenumbers"], wn)
+    assert np.allclose(hydrated["intensities"], ints)
+
+
+def test_search_spectrum_backfills_missing_feature_rows(db, tmp_path):
+    folder = tmp_path / "library"
+    folder.mkdir()
+
+    wn = np.linspace(400.0, 4000.0, 400)
+    ints = np.exp(-0.5 * ((wn - 1710.0) / 24.0) ** 2)
+    db.add_reference_spectrum(
+        "Ketone Ref",
+        wn,
+        ints,
+        source=str(folder / "ketone.spa"),
+        y_unit=SpectralUnit.ABSORBANCE.value,
+    )
+
+    service = ReferenceLibraryService(db)
+    service.set_selected_library_folder(folder)
+
+    assert db.get_reference_search_rows(
+        source_prefix=normalize_source_path(folder),
+        feature_version=MATCH_FEATURE_VERSION,
+    ) == []
+
+    from core.spectrum import Spectrum
+
+    outcome = service.search_spectrum(
+        Spectrum(wavenumbers=wn, intensities=ints, y_unit=SpectralUnit.ABSORBANCE),
+        top_n=1,
+        auto_import_project_library=False,
+    )
+
+    assert outcome.results
+    assert outcome.results[0].name == "Ketone Ref"
+    assert db.get_reference_search_rows(
+        source_prefix=normalize_source_path(folder),
+        feature_version=MATCH_FEATURE_VERSION,
+    )

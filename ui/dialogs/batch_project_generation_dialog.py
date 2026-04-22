@@ -4,6 +4,7 @@ from __future__ import annotations
 
 from pathlib import Path
 
+from PySide6.QtCore import QMetaObject, Qt, QThread
 from PySide6.QtWidgets import (
     QCheckBox,
     QComboBox,
@@ -29,6 +30,7 @@ class BatchProjectGenerationDialog(QDialog):
     def __init__(self, generator: BatchProjectGenerator | None = None, parent=None) -> None:
         super().__init__(parent)
         self._generator = generator or BatchProjectGenerator()
+        self._generate_thread: QThread | None = None
         self.setWindowTitle("Batch Generate Projects")
         self.setMinimumSize(860, 560)
         self._setup_ui()
@@ -41,22 +43,22 @@ class BatchProjectGenerationDialog(QDialog):
         self._input_folder_edit = QLineEdit()
         self._input_folder_edit.setReadOnly(True)
         self._input_folder_edit.setPlaceholderText("Choose a folder containing .spa files")
-        browse_input_button = QPushButton("Browse Input...")
-        browse_input_button.clicked.connect(self._on_browse_input)
+        self._browse_input_button = QPushButton("Browse Input...")
+        self._browse_input_button.clicked.connect(self._on_browse_input)
         input_layout.addWidget(QLabel("Input:"))
         input_layout.addWidget(self._input_folder_edit)
-        input_layout.addWidget(browse_input_button)
+        input_layout.addWidget(self._browse_input_button)
         root_layout.addLayout(input_layout)
 
         output_layout = QHBoxLayout()
         self._output_folder_edit = QLineEdit()
         self._output_folder_edit.setReadOnly(True)
         self._output_folder_edit.setPlaceholderText("Choose a folder for generated projects")
-        browse_output_button = QPushButton("Browse Output...")
-        browse_output_button.clicked.connect(self._on_browse_output)
+        self._browse_output_button = QPushButton("Browse Output...")
+        self._browse_output_button.clicked.connect(self._on_browse_output)
         output_layout.addWidget(QLabel("Output:"))
         output_layout.addWidget(self._output_folder_edit)
-        output_layout.addWidget(browse_output_button)
+        output_layout.addWidget(self._browse_output_button)
         root_layout.addLayout(output_layout)
 
         self._detect_peaks_checkbox = QCheckBox("Auto-detect peaks")
@@ -170,12 +172,26 @@ class BatchProjectGenerationDialog(QDialog):
             self._summary_label.setText("No output folder selected.")
             return
 
+        if self._generate_thread is not None:
+            return
+
+        detect_peaks = self._detect_peaks_checkbox.isChecked()
+        overwrite_mode = str(self._overwrite_mode_combo.currentData())
+        if isinstance(self._generator, BatchProjectGenerator):
+            self._start_background_generation(
+                input_text,
+                output_text,
+                detect_peaks=detect_peaks,
+                overwrite_mode=overwrite_mode,
+            )
+            return
+
         try:
             summary = self._generator.generate_folder(
                 input_text,
                 output_text,
-                detect_peaks=self._detect_peaks_checkbox.isChecked(),
-                overwrite_mode=str(self._overwrite_mode_combo.currentData()),
+                detect_peaks=detect_peaks,
+                overwrite_mode=overwrite_mode,
             )
         except (FileNotFoundError, NotADirectoryError) as exc:
             self._summary_label.setText(str(exc))
@@ -183,6 +199,68 @@ class BatchProjectGenerationDialog(QDialog):
             return
 
         self._populate_results(summary)
+
+    def _start_background_generation(
+        self,
+        input_folder: str,
+        output_folder: str,
+        *,
+        detect_peaks: bool,
+        overwrite_mode: str,
+    ) -> None:
+        """Run batch project generation in a worker thread for the default generator path."""
+        from ui.workers.batch_project_generation_worker import (  # noqa: PLC0415
+            BatchProjectGenerationWorker,
+        )
+
+        worker = BatchProjectGenerationWorker(
+            input_folder=input_folder,
+            output_folder=output_folder,
+            detect_peaks=detect_peaks,
+            overwrite_mode=overwrite_mode,
+        )
+        thread = QThread(self)
+        worker.moveToThread(thread)
+        worker.completed.connect(self._on_background_generation_completed)
+        worker.failed.connect(self._on_background_generation_failed)
+        worker.finished.connect(thread.quit)
+        worker.finished.connect(self._on_generate_worker_finished)
+        worker.finished.connect(worker.deleteLater)
+        thread.finished.connect(thread.deleteLater)
+        thread.started.connect(
+            lambda: QMetaObject.invokeMethod(worker, "run", Qt.ConnectionType.QueuedConnection)
+        )
+        self._generate_thread = thread
+        self._set_generate_busy(True)
+        thread.start()
+
+    def _on_background_generation_completed(self, summary: BatchProjectSummary) -> None:
+        """Apply background generation results to the dialog."""
+        self._populate_results(summary)
+
+    def _on_background_generation_failed(self, message: str) -> None:
+        """Show a batch project-generation failure."""
+        self._summary_label.setText(message)
+        self._results_table.setRowCount(0)
+
+    def _on_generate_worker_finished(self) -> None:
+        """Reset UI state after the worker finishes."""
+        self._generate_thread = None
+        self._set_generate_busy(False)
+
+    def _set_generate_busy(self, busy: bool) -> None:
+        """Enable or disable interactive controls while generation is running."""
+        self._browse_input_button.setEnabled(not busy)
+        self._browse_output_button.setEnabled(not busy)
+        self._detect_peaks_checkbox.setEnabled(not busy)
+        self._overwrite_mode_combo.setEnabled(not busy)
+        self._generate_button.setEnabled(
+            not busy
+            and bool(self._input_folder_edit.text().strip())
+            and bool(self._output_folder_edit.text().strip())
+        )
+        if busy:
+            self._summary_label.setText("Generating project files…")
 
     def _populate_results(self, summary: BatchProjectSummary) -> None:
         """Render batch project-generation results into the table and summary label."""

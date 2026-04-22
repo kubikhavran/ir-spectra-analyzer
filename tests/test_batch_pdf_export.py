@@ -19,6 +19,7 @@ from core.peak import Peak  # noqa: E402
 from core.spectrum import SpectralUnit, Spectrum  # noqa: E402
 from reporting.pdf_generator import ReportOptions  # noqa: E402
 from ui.dialogs.batch_pdf_export_dialog import BatchPDFExportDialog  # noqa: E402
+from ui.workers.batch_pdf_export_worker import BatchPDFExportWorker  # noqa: E402
 
 
 def _make_spectrum(path: Path, title: str | None = None) -> Spectrum:
@@ -340,3 +341,105 @@ def test_batch_pdf_export_dialog_passes_detect_peaks_option(qtbot, tmp_path):
         ),
         "rename",
     )
+
+
+def test_batch_pdf_export_worker_emits_summary(monkeypatch, tmp_path):
+    """Worker should emit the completed summary from the batch exporter."""
+    summary = BatchPDFSummary(
+        input_folder=tmp_path / "input",
+        output_folder=tmp_path / "output",
+        results=(),
+    )
+    captured = {}
+
+    def _fake_export_folder(
+        self,
+        input_folder,
+        output_folder,
+        *,
+        detect_peaks,
+        report_options,
+        overwrite_mode,
+    ):
+        captured["args"] = (
+            input_folder,
+            output_folder,
+            detect_peaks,
+            report_options,
+            overwrite_mode,
+        )
+        return summary
+
+    monkeypatch.setattr(BatchPDFExporter, "export_folder", _fake_export_folder)
+    options = ReportOptions(include_structures=True, include_peak_table=False, include_metadata=True)
+    worker = BatchPDFExportWorker(
+        input_folder=tmp_path / "input",
+        output_folder=tmp_path / "output",
+        detect_peaks=True,
+        report_options=options,
+        overwrite_mode="rename",
+    )
+
+    completed = []
+    failures = []
+    worker.completed.connect(completed.append)
+    worker.failed.connect(failures.append)
+
+    worker.run()
+
+    assert failures == []
+    assert completed == [summary]
+    assert captured["args"] == (
+        tmp_path / "input",
+        tmp_path / "output",
+        True,
+        options,
+        "rename",
+    )
+
+
+def test_batch_pdf_export_dialog_runs_background_export_for_default_exporter(
+    qtbot,
+    monkeypatch,
+    tmp_path,
+):
+    """Default exporter path should run on a worker thread and update the dialog on completion."""
+    summary = BatchPDFSummary(
+        input_folder=tmp_path / "input",
+        output_folder=tmp_path / "output",
+        results=(
+            BatchPDFResult(
+                path=tmp_path / "input" / "sample.spa",
+                status=BatchPDFStatus.EXPORTED,
+                output_path=tmp_path / "output" / "sample.pdf",
+            ),
+        ),
+    )
+
+    def _fake_export_folder(
+        self,
+        input_folder,
+        output_folder,
+        *,
+        detect_peaks,
+        report_options,
+        overwrite_mode,
+    ):
+        return summary
+
+    monkeypatch.setattr(BatchPDFExporter, "export_folder", _fake_export_folder)
+
+    dlg = BatchPDFExportDialog()
+    qtbot.addWidget(dlg)
+    dlg._input_folder_edit.setText(str(tmp_path / "input"))
+    dlg._output_folder_edit.setText(str(tmp_path / "output"))
+    dlg._update_export_button_state()
+
+    dlg._on_export()
+
+    qtbot.waitUntil(lambda: dlg._results_table.rowCount() == 1, timeout=10000)
+    if dlg._export_thread is not None:
+        qtbot.waitUntil(lambda: not dlg._export_thread.isRunning(), timeout=10000)
+
+    assert dlg._results_table.item(0, 0).text() == "sample.spa"
+    assert "Exported: 1 | Skipped: 0 | Failed: 0" in dlg._summary_label.text()

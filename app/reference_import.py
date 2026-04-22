@@ -8,7 +8,9 @@ from pathlib import Path
 
 from core.peak import Peak
 from core.spectrum import Spectrum
+from matching.feature_store import MATCH_FEATURE_VERSION, compute_search_vector
 from storage.database import Database
+from utils.file_utils import normalize_source_path
 
 
 class BatchImportStatus(StrEnum):
@@ -92,6 +94,7 @@ class ReferenceImportService:
         name: str | None = None,
         detect_peaks: bool = False,
         prefer_filename: bool = False,
+        commit: bool = True,
     ) -> ImportedReference:
         """Import a single spectral file into the reference library."""
         spectrum = self._read_spectrum(path)
@@ -102,6 +105,7 @@ class ReferenceImportService:
         )
         detected_peaks = detect_peaks_for_spectrum(spectrum) if detect_peaks else ()
         description = spectrum.comments.strip()
+        stat = path.stat()
         ref_id = self._db.add_reference_spectrum(
             name=reference_name,
             wavenumbers=spectrum.wavenumbers,
@@ -109,7 +113,22 @@ class ReferenceImportService:
             description=description,
             source=str(path),
             y_unit=spectrum.y_unit.value,
+            source_mtime_ns=stat.st_mtime_ns,
+            source_size=stat.st_size,
+            commit=False,
         )
+        self._db.upsert_reference_feature(
+            ref_id,
+            feature_version=MATCH_FEATURE_VERSION,
+            feature_vector=compute_search_vector(
+                spectrum.wavenumbers,
+                spectrum.intensities,
+                y_unit=spectrum.y_unit,
+            ),
+            commit=False,
+        )
+        if commit:
+            self._db.commit()
         return ImportedReference(
             ref_id=ref_id,
             name=reference_name,
@@ -128,27 +147,39 @@ class ReferenceImportService:
         """Import all `.spa` files from a folder and return a structured summary."""
         files = self.scan_folder(folder)
         existing_names: set[str] = set()
-        existing_sources: set[str] = set()
+        existing_sources: dict[str, dict] = {}
 
         if skip_duplicates_by_filename:
             existing_names, existing_sources = self._existing_reference_keys()
 
         results: list[BatchImportResult] = []
+        wrote_changes = False
         for path in files:
             normalized_name = path.stem.casefold()
-            normalized_source = self._normalize_source_path(path)
+            normalized_source = normalize_source_path(path)
+            stat = path.stat()
+            existing_source_row = existing_sources.get(normalized_source)
 
             if skip_duplicates_by_filename:
-                if normalized_source in existing_sources:
-                    results.append(
-                        BatchImportResult(
-                            path=path,
-                            status=BatchImportStatus.SKIPPED,
-                            reference_name=path.stem,
-                            reason="source path already imported",
+                if existing_source_row is not None:
+                    stored_mtime_ns = int(existing_source_row.get("source_mtime_ns") or 0)
+                    stored_size = int(existing_source_row.get("source_size") or 0)
+                    if (
+                        (stored_mtime_ns == 0 and stored_size == 0)
+                        or (
+                            stored_mtime_ns == stat.st_mtime_ns
+                            and stored_size == stat.st_size
                         )
-                    )
-                    continue
+                    ):
+                        results.append(
+                            BatchImportResult(
+                                path=path,
+                                status=BatchImportStatus.SKIPPED,
+                                reference_name=path.stem,
+                                reason="source path already imported",
+                            )
+                        )
+                        continue
                 if normalized_name in existing_names:
                     results.append(
                         BatchImportResult(
@@ -161,11 +192,20 @@ class ReferenceImportService:
                     continue
 
             try:
-                imported = self.import_reference_file(
-                    path,
-                    detect_peaks=detect_peaks,
-                    prefer_filename=prefer_filename,
-                )
+                if existing_source_row is not None:
+                    imported = self._update_reference_file(
+                        int(existing_source_row["id"]),
+                        path,
+                        detect_peaks=detect_peaks,
+                        prefer_filename=prefer_filename,
+                    )
+                else:
+                    imported = self.import_reference_file(
+                        path,
+                        detect_peaks=detect_peaks,
+                        prefer_filename=prefer_filename,
+                        commit=False,
+                    )
             except Exception as exc:  # noqa: BLE001
                 results.append(
                     BatchImportResult(
@@ -177,6 +217,7 @@ class ReferenceImportService:
                 )
                 continue
 
+            wrote_changes = True
             results.append(
                 BatchImportResult(
                     path=path,
@@ -188,12 +229,31 @@ class ReferenceImportService:
             )
             existing_names.add(normalized_name)
             existing_names.add(imported.name.casefold())
-            existing_sources.add(normalized_source)
+            existing_sources[normalized_source] = {
+                "id": imported.ref_id,
+                "source_mtime_ns": stat.st_mtime_ns,
+                "source_size": stat.st_size,
+            }
+
+        if wrote_changes:
+            self._db.commit()
 
         return BatchImportSummary(folder=folder, results=tuple(results))
 
     def _read_spectrum(self, path: Path) -> Spectrum:
-        """Read a spectrum using the application's registered file-import pipeline."""
+        """Read a spectrum using the fast library-import path.
+
+        For reference-library indexing, prefer the lightweight binary parser and
+        only fall back to the general format-registry path when necessary.
+        """
+        if path.suffix.lower() == ".spa":
+            try:
+                from file_io.spa_binary import SPABinaryReader  # noqa: PLC0415
+
+                return SPABinaryReader().read(path)
+            except Exception:  # noqa: BLE001
+                pass
+
         from file_io.format_registry import FormatRegistry  # noqa: PLC0415
 
         return FormatRegistry().read(path)
@@ -215,26 +275,64 @@ class ReferenceImportService:
             return title
         return path.stem
 
-    def _existing_reference_keys(self) -> tuple[set[str], set[str]]:
+    def _existing_reference_keys(self) -> tuple[set[str], dict[str, dict]]:
         """Return normalized existing reference names and source paths for duplicate checks."""
         names: set[str] = set()
-        sources: set[str] = set()
-        for ref in self._db.get_reference_spectra():
+        sources: dict[str, dict] = {}
+        for ref in self._db.get_reference_identity_rows():
             name = str(ref.get("name", "")).strip()
             if name:
                 names.add(name.casefold())
-            source = str(ref.get("source", "")).strip()
-            if source:
-                sources.add(self._normalize_source_path(Path(source)))
+            source_norm = str(ref.get("source_norm", "")).strip()
+            if source_norm:
+                sources[source_norm] = dict(ref)
         return names, sources
 
-    @staticmethod
-    def _normalize_source_path(path: Path) -> str:
-        """Normalize paths for duplicate comparison across repeated imports."""
-        try:
-            return str(path.expanduser().resolve(strict=False)).casefold()
-        except OSError:
-            return str(path).casefold()
+    def _update_reference_file(
+        self,
+        ref_id: int,
+        path: Path,
+        *,
+        detect_peaks: bool,
+        prefer_filename: bool,
+    ) -> ImportedReference:
+        """Refresh an existing reference row from a changed source file."""
+        spectrum = self._read_spectrum(path)
+        reference_name = self._default_reference_name(
+            path,
+            spectrum,
+            prefer_filename=prefer_filename,
+        )
+        detected_peaks = detect_peaks_for_spectrum(spectrum) if detect_peaks else ()
+        stat = path.stat()
+        self._db.update_reference_spectrum(
+            ref_id,
+            name=reference_name,
+            wavenumbers=spectrum.wavenumbers,
+            intensities=spectrum.intensities,
+            description=spectrum.comments.strip(),
+            source=str(path),
+            y_unit=spectrum.y_unit.value,
+            source_mtime_ns=stat.st_mtime_ns,
+            source_size=stat.st_size,
+            commit=False,
+        )
+        self._db.upsert_reference_feature(
+            ref_id,
+            feature_version=MATCH_FEATURE_VERSION,
+            feature_vector=compute_search_vector(
+                spectrum.wavenumbers,
+                spectrum.intensities,
+                y_unit=spectrum.y_unit,
+            ),
+            commit=False,
+        )
+        return ImportedReference(
+            ref_id=ref_id,
+            name=reference_name,
+            path=path,
+            detected_peaks=detected_peaks,
+        )
 
     @staticmethod
     def _format_error(exc: Exception) -> str:

@@ -31,3 +31,16 @@ def ensure_extension(path: Path, extension: str) -> Path:
     if path.suffix.lower() != extension.lower():
         return path.with_suffix(extension)
     return path
+
+
+def normalize_source_path(path: Path | str) -> str:
+    """Return a stable, case-insensitive normalized file path string.
+
+    Used for reference-library duplicate detection and folder-scoped queries.
+    """
+    path_obj = Path(path).expanduser()
+    try:
+        normalized = path_obj.resolve(strict=False)
+    except OSError:
+        normalized = path_obj
+    return str(normalized).replace("\\", "/").casefold()

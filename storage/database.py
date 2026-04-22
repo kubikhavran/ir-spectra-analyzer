@@ -22,6 +22,7 @@ from pathlib import Path
 import numpy as np
 
 from app.config import DB_PATH
+from utils.file_utils import normalize_source_path
 
 
 class Database:
@@ -42,6 +43,21 @@ class Database:
         self._conn.row_factory = sqlite3.Row
         self._apply_schema()
         self._seed_vibration_presets()
+
+    def commit(self) -> None:
+        """Commit the current transaction."""
+        assert self._conn is not None
+        self._conn.commit()
+
+    @property
+    def db_path(self) -> str | Path:
+        """Return the configured SQLite database path."""
+        return self._db_path
+
+    @property
+    def is_in_memory(self) -> bool:
+        """Return True when the database uses SQLite's in-memory mode."""
+        return str(self._db_path) == ":memory:"
 
     def _apply_schema(self) -> None:
         """Create all tables if they do not exist."""
@@ -90,17 +106,32 @@ class Database:
             CREATE INDEX IF NOT EXISTS idx_peaks_position ON peaks(position);
 
             CREATE TABLE IF NOT EXISTS reference_spectra (
-                id          INTEGER PRIMARY KEY AUTOINCREMENT,
-                name        TEXT    NOT NULL,
-                description TEXT    NOT NULL DEFAULT '',
-                source      TEXT    NOT NULL DEFAULT '',
-                wavenumbers BLOB    NOT NULL,
-                intensities BLOB    NOT NULL,
-                y_unit      TEXT    NOT NULL DEFAULT 'Absorbance',
-                created_at  TEXT    NOT NULL DEFAULT (datetime('now'))
+                id             INTEGER PRIMARY KEY AUTOINCREMENT,
+                name           TEXT    NOT NULL,
+                description    TEXT    NOT NULL DEFAULT '',
+                source         TEXT    NOT NULL DEFAULT '',
+                source_norm    TEXT    NOT NULL DEFAULT '',
+                source_mtime_ns INTEGER NOT NULL DEFAULT 0,
+                source_size    INTEGER NOT NULL DEFAULT 0,
+                n_points       INTEGER NOT NULL DEFAULT 0,
+                wavenumbers    BLOB    NOT NULL,
+                intensities    BLOB    NOT NULL,
+                y_unit         TEXT    NOT NULL DEFAULT 'Absorbance',
+                created_at     TEXT    NOT NULL DEFAULT (datetime('now'))
             );
 
             CREATE INDEX IF NOT EXISTS idx_reference_spectra_name ON reference_spectra(name);
+
+            CREATE TABLE IF NOT EXISTS reference_features (
+                reference_id     INTEGER NOT NULL,
+                feature_version  INTEGER NOT NULL,
+                feature_vector   BLOB    NOT NULL,
+                created_at       TEXT    NOT NULL DEFAULT (datetime('now')),
+                PRIMARY KEY (reference_id, feature_version)
+            );
+
+            CREATE INDEX IF NOT EXISTS idx_reference_features_version
+                ON reference_features(feature_version);
         """)
         self._conn.commit()
 
@@ -113,6 +144,40 @@ class Database:
             self._conn.commit()
         except sqlite3.OperationalError:
             pass  # column already exists
+
+        for column_sql in (
+            "ALTER TABLE reference_spectra ADD COLUMN source_norm TEXT NOT NULL DEFAULT ''",
+            "ALTER TABLE reference_spectra ADD COLUMN source_mtime_ns INTEGER NOT NULL DEFAULT 0",
+            "ALTER TABLE reference_spectra ADD COLUMN source_size INTEGER NOT NULL DEFAULT 0",
+            "ALTER TABLE reference_spectra ADD COLUMN n_points INTEGER NOT NULL DEFAULT 0",
+        ):
+            try:
+                cursor.execute(column_sql)
+                self._conn.commit()
+            except sqlite3.OperationalError:
+                pass
+
+        cursor.execute(
+            """
+            UPDATE reference_spectra
+            SET source_norm = lower(replace(source, '\\', '/'))
+            WHERE source_norm = '' AND source != ''
+            """
+        )
+        cursor.execute(
+            """
+            UPDATE reference_spectra
+            SET n_points = length(wavenumbers) / 8
+            WHERE n_points = 0
+            """
+        )
+        cursor.execute(
+            """
+            CREATE INDEX IF NOT EXISTS idx_reference_spectra_source_norm
+                ON reference_spectra(source_norm)
+            """
+        )
+        self._conn.commit()
 
     def _seed_vibration_presets(self) -> None:
         """Insert the builtin IR vibration preset library.
@@ -363,25 +428,76 @@ class Database:
         description: str = "",
         source: str = "",
         y_unit: str = "Absorbance",
+        *,
+        source_mtime_ns: int = 0,
+        source_size: int = 0,
+        commit: bool = True,
     ) -> int:
         """Insert a reference spectrum. Returns new row id."""
         assert self._conn is not None
+        normalized_source = normalize_source_path(source) if source else ""
         cursor = self._conn.cursor()
         cursor.execute(
             """INSERT INTO reference_spectra
-               (name, description, source, wavenumbers, intensities, y_unit)
-               VALUES (?, ?, ?, ?, ?, ?)""",
+               (name, description, source, source_norm, source_mtime_ns, source_size,
+                n_points, wavenumbers, intensities, y_unit)
+               VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)""",
             (
                 name,
                 description,
                 source,
+                normalized_source,
+                int(source_mtime_ns),
+                int(source_size),
+                int(len(wavenumbers)),
                 wavenumbers.astype(np.float64).tobytes(),
                 intensities.astype(np.float64).tobytes(),
                 y_unit,
             ),
         )
-        self._conn.commit()
+        if commit:
+            self._conn.commit()
         return cursor.lastrowid
+
+    def update_reference_spectrum(
+        self,
+        ref_id: int,
+        *,
+        name: str,
+        wavenumbers: np.ndarray,
+        intensities: np.ndarray,
+        description: str = "",
+        source: str = "",
+        y_unit: str = "Absorbance",
+        source_mtime_ns: int = 0,
+        source_size: int = 0,
+        commit: bool = True,
+    ) -> None:
+        """Replace a stored reference spectrum in-place."""
+        assert self._conn is not None
+        normalized_source = normalize_source_path(source) if source else ""
+        self._conn.execute(
+            """UPDATE reference_spectra
+               SET name = ?, description = ?, source = ?, source_norm = ?,
+                   source_mtime_ns = ?, source_size = ?, n_points = ?,
+                   wavenumbers = ?, intensities = ?, y_unit = ?
+               WHERE id = ?""",
+            (
+                name,
+                description,
+                source,
+                normalized_source,
+                int(source_mtime_ns),
+                int(source_size),
+                int(len(wavenumbers)),
+                wavenumbers.astype(np.float64).tobytes(),
+                intensities.astype(np.float64).tobytes(),
+                y_unit,
+                ref_id,
+            ),
+        )
+        if commit:
+            self._conn.commit()
 
     def get_reference_spectra(self) -> list[dict]:
         """Return all reference spectra as list of dicts (wavenumbers/intensities as ndarray)."""
@@ -395,9 +511,138 @@ class Database:
             result.append(d)
         return result
 
+    def get_reference_metadata(self, *, source_prefix: str | None = None) -> list[dict]:
+        """Return lightweight reference rows without loading spectral BLOB arrays."""
+        assert self._conn is not None
+        sql = """
+            SELECT id, name, description, source, source_norm, source_mtime_ns, source_size,
+                   n_points, y_unit, created_at
+            FROM reference_spectra
+        """
+        params: tuple[object, ...] = ()
+        where_sql, params = self._reference_source_prefix_clause(source_prefix)
+        if where_sql:
+            sql += f" WHERE {where_sql}"
+        sql += " ORDER BY name"
+        rows = self._conn.execute(sql, params).fetchall()
+        return [dict(row) for row in rows]
+
+    def get_reference_identity_rows(self) -> list[dict]:
+        """Return the metadata needed for duplicate detection and sync decisions."""
+        assert self._conn is not None
+        rows = self._conn.execute(
+            """
+            SELECT id, name, source, source_norm, source_mtime_ns, source_size
+            FROM reference_spectra
+            ORDER BY name
+            """
+        ).fetchall()
+        return [dict(row) for row in rows]
+
+    def get_reference_spectrum_by_id(self, ref_id: int) -> dict | None:
+        """Return one reference spectrum with decoded arrays, or None if missing."""
+        assert self._conn is not None
+        row = self._conn.execute(
+            "SELECT * FROM reference_spectra WHERE id = ?",
+            (ref_id,),
+        ).fetchone()
+        if row is None:
+            return None
+        result = dict(row)
+        result["wavenumbers"] = np.frombuffer(result["wavenumbers"], dtype=np.float64).copy()
+        result["intensities"] = np.frombuffer(result["intensities"], dtype=np.float64).copy()
+        return result
+
+    def get_reference_search_rows(
+        self,
+        *,
+        source_prefix: str | None = None,
+        feature_version: int,
+    ) -> list[dict]:
+        """Return metadata + stored feature vectors for similarity search."""
+        assert self._conn is not None
+        sql = """
+            SELECT rs.id, rs.name, rs.description, rs.source, rs.y_unit, rs.n_points,
+                   rf.feature_vector
+            FROM reference_spectra rs
+            JOIN reference_features rf
+              ON rf.reference_id = rs.id
+             AND rf.feature_version = ?
+        """
+        params_list: list[object] = [int(feature_version)]
+        where_sql, where_params = self._reference_source_prefix_clause(source_prefix, alias="rs")
+        if where_sql:
+            sql += f" WHERE {where_sql}"
+            params_list.extend(where_params)
+        sql += " ORDER BY rs.name"
+        rows = self._conn.execute(sql, tuple(params_list)).fetchall()
+        result = []
+        for row in rows:
+            item = dict(row)
+            item["feature_vector"] = np.frombuffer(item["feature_vector"], dtype=np.float32).copy()
+            result.append(item)
+        return result
+
+    def get_references_missing_features(
+        self,
+        *,
+        source_prefix: str | None = None,
+        feature_version: int,
+    ) -> list[dict]:
+        """Return stored spectra that do not yet have a cached search feature."""
+        assert self._conn is not None
+        sql = """
+            SELECT rs.*
+            FROM reference_spectra rs
+            LEFT JOIN reference_features rf
+              ON rf.reference_id = rs.id
+             AND rf.feature_version = ?
+            WHERE rf.reference_id IS NULL
+        """
+        params_list: list[object] = [int(feature_version)]
+        where_sql, where_params = self._reference_source_prefix_clause(source_prefix, alias="rs")
+        if where_sql:
+            sql += f" AND {where_sql}"
+            params_list.extend(where_params)
+        sql += " ORDER BY rs.name"
+        rows = self._conn.execute(sql, tuple(params_list)).fetchall()
+        result = []
+        for row in rows:
+            item = dict(row)
+            item["wavenumbers"] = np.frombuffer(item["wavenumbers"], dtype=np.float64).copy()
+            item["intensities"] = np.frombuffer(item["intensities"], dtype=np.float64).copy()
+            result.append(item)
+        return result
+
+    def upsert_reference_feature(
+        self,
+        ref_id: int,
+        *,
+        feature_version: int,
+        feature_vector: np.ndarray,
+        commit: bool = True,
+    ) -> None:
+        """Insert or replace a cached search feature vector for a reference."""
+        assert self._conn is not None
+        self._conn.execute(
+            """
+            INSERT OR REPLACE INTO reference_features
+            (reference_id, feature_version, feature_vector, created_at)
+            VALUES (?, ?, ?, datetime('now'))
+            """,
+            (
+                int(ref_id),
+                int(feature_version),
+                np.asarray(feature_vector, dtype=np.float32).tobytes(),
+            ),
+        )
+        if commit:
+            self._conn.commit()
+
     def delete_reference_spectrum(self, ref_id: int) -> None:
         """Delete a reference spectrum by id."""
         assert self._conn is not None
+        self._conn.execute("DELETE FROM reference_features WHERE reference_id = ?", (ref_id,))
         self._conn.execute("DELETE FROM reference_spectra WHERE id = ?", (ref_id,))
         self._conn.commit()
 
@@ -418,6 +663,22 @@ class Database:
             (description, ref_id),
         )
         self._conn.commit()
+
+    @staticmethod
+    def _reference_source_prefix_clause(
+        source_prefix: str | None,
+        *,
+        alias: str = "",
+    ) -> tuple[str, tuple[object, ...]]:
+        """Return SQL + parameters for a folder-scoped `source_norm` filter."""
+        if not source_prefix:
+            return "", ()
+        column = f"{alias}.source_norm" if alias else "source_norm"
+        prefix = source_prefix.rstrip("/\\")
+        return (
+            f"({column} = ? OR {column} LIKE ?)",
+            (prefix, f"{prefix}/%"),
+        )
 
     def close(self) -> None:
         """Close the database connection."""

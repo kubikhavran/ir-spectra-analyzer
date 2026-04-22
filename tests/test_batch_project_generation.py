@@ -19,6 +19,7 @@ from core.peak import Peak  # noqa: E402
 from core.spectrum import SpectralUnit, Spectrum  # noqa: E402
 from storage.project_serializer import ProjectSerializer  # noqa: E402
 from ui.dialogs.batch_project_generation_dialog import BatchProjectGenerationDialog  # noqa: E402
+from ui.workers.batch_project_generation_worker import BatchProjectGenerationWorker  # noqa: E402
 
 
 def _make_spectrum(path: Path, title: str | None = None) -> Spectrum:
@@ -289,3 +290,101 @@ def test_batch_project_generation_dialog_passes_detect_peaks_option(qtbot, tmp_p
         True,
         "overwrite",
     )
+
+
+def test_batch_project_generation_worker_emits_summary(monkeypatch, tmp_path):
+    """Worker should emit the completed summary from the batch generator."""
+    summary = BatchProjectSummary(
+        input_folder=tmp_path / "input",
+        output_folder=tmp_path / "output",
+        results=(),
+    )
+    captured = {}
+
+    def _fake_generate_folder(
+        self,
+        input_folder,
+        output_folder,
+        *,
+        detect_peaks,
+        overwrite_mode,
+    ):
+        captured["args"] = (
+            input_folder,
+            output_folder,
+            detect_peaks,
+            overwrite_mode,
+        )
+        return summary
+
+    monkeypatch.setattr(BatchProjectGenerator, "generate_folder", _fake_generate_folder)
+    worker = BatchProjectGenerationWorker(
+        input_folder=tmp_path / "input",
+        output_folder=tmp_path / "output",
+        detect_peaks=True,
+        overwrite_mode="rename",
+    )
+
+    completed = []
+    failures = []
+    worker.completed.connect(completed.append)
+    worker.failed.connect(failures.append)
+
+    worker.run()
+
+    assert failures == []
+    assert completed == [summary]
+    assert captured["args"] == (
+        tmp_path / "input",
+        tmp_path / "output",
+        True,
+        "rename",
+    )
+
+
+def test_batch_project_generation_dialog_runs_background_generation_for_default_generator(
+    qtbot,
+    monkeypatch,
+    tmp_path,
+):
+    """Default generator path should run on a worker thread and update the dialog."""
+    summary = BatchProjectSummary(
+        input_folder=tmp_path / "input",
+        output_folder=tmp_path / "output",
+        results=(
+            BatchProjectResult(
+                path=tmp_path / "input" / "sample.spa",
+                status=BatchProjectStatus.GENERATED,
+                output_path=tmp_path / "output" / "sample.irproj",
+                peak_count=2,
+            ),
+        ),
+    )
+
+    def _fake_generate_folder(
+        self,
+        input_folder,
+        output_folder,
+        *,
+        detect_peaks,
+        overwrite_mode,
+    ):
+        return summary
+
+    monkeypatch.setattr(BatchProjectGenerator, "generate_folder", _fake_generate_folder)
+
+    dlg = BatchProjectGenerationDialog()
+    qtbot.addWidget(dlg)
+    dlg._input_folder_edit.setText(str(tmp_path / "input"))
+    dlg._output_folder_edit.setText(str(tmp_path / "output"))
+    dlg._update_generate_button_state()
+
+    dlg._on_generate()
+
+    qtbot.waitUntil(lambda: dlg._results_table.rowCount() == 1, timeout=10000)
+    if dlg._generate_thread is not None:
+        qtbot.waitUntil(lambda: not dlg._generate_thread.isRunning(), timeout=10000)
+
+    assert dlg._results_table.item(0, 0).text() == "sample.spa"
+    assert dlg._results_table.item(0, 2).text() == "2"
+    assert "Generated: 1 | Skipped: 0 | Failed: 0" in dlg._summary_label.text()

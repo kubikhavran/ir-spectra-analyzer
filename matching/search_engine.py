@@ -6,8 +6,8 @@ from dataclasses import dataclass
 
 import numpy as np
 
+from matching.feature_store import SEARCH_GRID, compute_search_vector
 from matching.preprocessing import prepare_for_matching
-from matching.similarity import STANDARD_GRID, cosine_similarity
 
 
 @dataclass
@@ -36,10 +36,11 @@ class SearchEngine:
         results = engine.search(query_wavenumbers, query_intensities, top_n=10)
     """
 
-    def __init__(self, grid: np.ndarray = STANDARD_GRID) -> None:
+    def __init__(self, grid: np.ndarray = SEARCH_GRID) -> None:
         self._grid = grid
         self._references: list[dict] = []
         self._ref_vectors: list[np.ndarray] = []
+        self._ref_matrix: np.ndarray | None = None
         self._vector_cache: dict[tuple[int, str], np.ndarray] = {}
 
     def load_references(self, references: list[dict]) -> None:
@@ -53,15 +54,28 @@ class SearchEngine:
         self._references = references
         self._ref_vectors = []
         for ref in references:
-            cache_key = self._cache_key_for_ref(ref)
-            if cache_key not in self._vector_cache:
-                self._vector_cache[cache_key] = prepare_for_matching(
-                    ref["wavenumbers"],
-                    ref["intensities"],
-                    self._grid,
-                    y_unit=ref.get("y_unit"),
-                )
-            self._ref_vectors.append(self._vector_cache[cache_key])
+            feature_vector = ref.get("feature_vector")
+            if isinstance(feature_vector, np.ndarray):
+                vector = np.asarray(feature_vector, dtype=np.float32)
+            else:
+                cache_key = self._cache_key_for_ref(ref)
+                if cache_key not in self._vector_cache:
+                    self._vector_cache[cache_key] = np.asarray(
+                        prepare_for_matching(
+                            ref["wavenumbers"],
+                            ref["intensities"],
+                            self._grid,
+                            y_unit=ref.get("y_unit"),
+                        ),
+                        dtype=np.float32,
+                    )
+                vector = self._vector_cache[cache_key]
+            self._ref_vectors.append(vector)
+
+        if self._ref_vectors:
+            self._ref_matrix = np.vstack(self._ref_vectors).astype(np.float32, copy=False)
+        else:
+            self._ref_matrix = None
 
     def search(
         self,
@@ -83,29 +97,41 @@ class SearchEngine:
         if not self._references:
             return []
 
-        query_vec = prepare_for_matching(
-            query_wavenumbers,
-            query_intensities,
-            self._grid,
-            y_unit=query_y_unit,
+        query_vec = (
+            compute_search_vector(
+                query_wavenumbers,
+                query_intensities,
+                y_unit=query_y_unit,
+            )
+            if np.array_equal(self._grid, SEARCH_GRID)
+            else np.asarray(
+                prepare_for_matching(
+                    query_wavenumbers,
+                    query_intensities,
+                    self._grid,
+                    y_unit=query_y_unit,
+                ),
+                dtype=np.float32,
+            )
         )
 
-        scored: list[MatchResult] = []
-        for ref, ref_vec in zip(self._references, self._ref_vectors, strict=True):
-            score = cosine_similarity(query_vec, ref_vec)
-            scored.append(
-                MatchResult(
-                    ref_id=ref["id"],
-                    name=ref["name"],
-                    score=score,
-                    description=ref.get("description", ""),
-                )
-            )
+        scores = self._compute_scores(query_vec)
+        if top_n is None or top_n >= len(scores):
+            order = np.argsort(scores)[::-1]
+        else:
+            keep = max(int(top_n), 1)
+            candidate_idx = np.argpartition(scores, -keep)[-keep:]
+            order = candidate_idx[np.argsort(scores[candidate_idx])[::-1]]
 
-        scored.sort(key=lambda r: r.score, reverse=True)
-        if top_n is None:
-            return scored
-        return scored[:top_n]
+        return [
+            MatchResult(
+                ref_id=self._references[idx]["id"],
+                name=self._references[idx]["name"],
+                score=float(scores[idx]),
+                description=self._references[idx].get("description", ""),
+            )
+            for idx in order
+        ]
 
     @property
     def n_references(self) -> int:
@@ -115,6 +141,28 @@ class SearchEngine:
     def clear_cache(self) -> None:
         """Drop cached preprocessed reference vectors."""
         self._vector_cache.clear()
+        self._ref_matrix = None
+
+    def _compute_scores(self, query_vec: np.ndarray) -> np.ndarray:
+        """Return cosine scores against the loaded reference matrix."""
+        if self._ref_matrix is not None:
+            return np.clip(self._ref_matrix @ query_vec.astype(np.float32, copy=False), 0.0, 1.0)
+
+        scored = [
+            float(
+                np.clip(
+                    np.dot(query_vec, ref_vec)
+                    / max(
+                        float(np.linalg.norm(query_vec)) * float(np.linalg.norm(ref_vec)),
+                        1e-12,
+                    ),
+                    0.0,
+                    1.0,
+                )
+            )
+            for ref_vec in self._ref_vectors
+        ]
+        return np.asarray(scored, dtype=np.float32)
 
     @staticmethod
     def _cache_key_for_ref(ref: dict) -> tuple[int, str]:

@@ -4,6 +4,7 @@ from __future__ import annotations
 
 from pathlib import Path
 
+from PySide6.QtCore import QMetaObject, Qt, QThread
 from PySide6.QtWidgets import (
     QCheckBox,
     QDialog,
@@ -27,7 +28,9 @@ class BatchImportDialog(QDialog):
 
     def __init__(self, db: Database, parent=None) -> None:
         super().__init__(parent)
+        self._db = db
         self._service = ReferenceImportService(db)
+        self._import_thread: QThread | None = None
         self.setWindowTitle("Batch Import References")
         self.setMinimumSize(760, 520)
         self._setup_ui()
@@ -40,11 +43,11 @@ class BatchImportDialog(QDialog):
         self._folder_edit = QLineEdit()
         self._folder_edit.setReadOnly(True)
         self._folder_edit.setPlaceholderText("Choose a folder containing .spa files")
-        browse_button = QPushButton("Browse...")
-        browse_button.clicked.connect(self._on_browse)
+        self._browse_button = QPushButton("Browse...")
+        self._browse_button.clicked.connect(self._on_browse)
         folder_layout.addWidget(QLabel("Folder:"))
         folder_layout.addWidget(self._folder_edit)
-        folder_layout.addWidget(browse_button)
+        folder_layout.addWidget(self._browse_button)
         root_layout.addLayout(folder_layout)
 
         self._skip_duplicates_checkbox = QCheckBox("Skip duplicates by filename")
@@ -120,11 +123,25 @@ class BatchImportDialog(QDialog):
             self._summary_label.setText("No folder selected.")
             return
 
+        if self._import_thread is not None:
+            return
+
+        folder = Path(folder_text)
+        skip_duplicates = self._skip_duplicates_checkbox.isChecked()
+        detect_peaks = self._detect_peaks_checkbox.isChecked()
+        if not self._db.is_in_memory:
+            self._start_background_import(
+                folder,
+                skip_duplicates_by_filename=skip_duplicates,
+                detect_peaks=detect_peaks,
+            )
+            return
+
         try:
             summary = self._service.batch_import_folder(
-                Path(folder_text),
-                skip_duplicates_by_filename=self._skip_duplicates_checkbox.isChecked(),
-                detect_peaks=self._detect_peaks_checkbox.isChecked(),
+                folder,
+                skip_duplicates_by_filename=skip_duplicates,
+                detect_peaks=detect_peaks,
             )
         except (FileNotFoundError, NotADirectoryError) as exc:
             self._summary_label.setText(str(exc))
@@ -132,6 +149,60 @@ class BatchImportDialog(QDialog):
             return
 
         self._populate_results(summary)
+
+    def _start_background_import(
+        self,
+        folder: Path,
+        *,
+        skip_duplicates_by_filename: bool,
+        detect_peaks: bool,
+    ) -> None:
+        """Run batch import in a background thread for file-backed databases."""
+        from ui.workers.reference_import_worker import ReferenceBatchImportWorker  # noqa: PLC0415
+
+        worker = ReferenceBatchImportWorker(
+            db_path=self._db.db_path,
+            folder=folder,
+            skip_duplicates_by_filename=skip_duplicates_by_filename,
+            detect_peaks=detect_peaks,
+        )
+        thread = QThread(self)
+        worker.moveToThread(thread)
+        worker.completed.connect(self._on_background_import_completed)
+        worker.failed.connect(self._on_background_import_failed)
+        worker.finished.connect(thread.quit)
+        worker.finished.connect(self._on_import_worker_finished)
+        worker.finished.connect(worker.deleteLater)
+        thread.finished.connect(thread.deleteLater)
+        thread.started.connect(
+            lambda: QMetaObject.invokeMethod(worker, "run", Qt.ConnectionType.QueuedConnection)
+        )
+        self._import_thread = thread
+        self._set_import_busy(True)
+        thread.start()
+
+    def _on_background_import_completed(self, summary: BatchImportSummary) -> None:
+        """Apply a completed background import to the dialog."""
+        self._populate_results(summary)
+
+    def _on_background_import_failed(self, message: str) -> None:
+        """Show a batch-import failure."""
+        self._summary_label.setText(message)
+        self._results_table.setRowCount(0)
+
+    def _on_import_worker_finished(self) -> None:
+        """Reset busy state as soon as the worker finishes its batch import."""
+        self._import_thread = None
+        self._set_import_busy(False)
+
+    def _set_import_busy(self, busy: bool) -> None:
+        """Enable or disable interactive controls during batch import."""
+        self._browse_button.setEnabled(not busy)
+        self._import_button.setEnabled(not busy and bool(self._folder_edit.text().strip()))
+        self._skip_duplicates_checkbox.setEnabled(not busy)
+        self._detect_peaks_checkbox.setEnabled(not busy)
+        if busy:
+            self._summary_label.setText("Importing reference spectra…")
 
     def _populate_results(self, summary: BatchImportSummary) -> None:
         """Render batch results into the table and summary label."""

@@ -66,6 +66,46 @@ def test_empty_reference_spectra(tmp_path):
     db.close()
 
 
+def test_reference_metadata_and_feature_rows_roundtrip_without_full_blob_load(tmp_path):
+    from matching.feature_store import MATCH_FEATURE_VERSION
+
+    db = _make_db(tmp_path)
+    wn = np.linspace(400.0, 4000.0, 64)
+    ints = np.sin(wn / 500.0)
+    ref_id = db.add_reference_spectrum(
+        "Metadata Only",
+        wn,
+        ints,
+        source=str(tmp_path / "library" / "sample.spa"),
+        y_unit="Absorbance",
+    )
+
+    metadata_rows = db.get_reference_metadata()
+    assert metadata_rows[0]["id"] == ref_id
+    assert metadata_rows[0]["n_points"] == len(wn)
+    assert "wavenumbers" not in metadata_rows[0]
+    assert "intensities" not in metadata_rows[0]
+
+    feature_vector = np.linspace(0.0, 1.0, 12, dtype=np.float32)
+    db.upsert_reference_feature(
+        ref_id,
+        feature_version=MATCH_FEATURE_VERSION,
+        feature_vector=feature_vector,
+    )
+
+    search_rows = db.get_reference_search_rows(feature_version=MATCH_FEATURE_VERSION)
+    assert len(search_rows) == 1
+    assert search_rows[0]["id"] == ref_id
+    assert search_rows[0]["feature_vector"].dtype == np.float32
+    assert np.allclose(search_rows[0]["feature_vector"], feature_vector)
+
+    hydrated = db.get_reference_spectrum_by_id(ref_id)
+    assert hydrated is not None
+    assert np.allclose(hydrated["wavenumbers"], wn)
+    assert np.allclose(hydrated["intensities"], ints)
+    db.close()
+
+
 # ---------------------------------------------------------------------------
 # Similarity functions
 # ---------------------------------------------------------------------------

@@ -4,6 +4,7 @@ from __future__ import annotations
 
 from pathlib import Path
 
+from PySide6.QtCore import QMetaObject, Qt, QThread
 from PySide6.QtWidgets import (
     QComboBox,
     QDialog,
@@ -38,6 +39,7 @@ class BatchProjectPDFExportDialog(QDialog):
         super().__init__(parent)
         self._exporter = exporter or BatchProjectPDFExporter()
         self._preset_manager = preset_manager
+        self._export_thread: QThread | None = None
         self.setWindowTitle("Batch Export Project PDFs")
         self.setMinimumSize(860, 560)
         self._setup_ui()
@@ -50,22 +52,22 @@ class BatchProjectPDFExportDialog(QDialog):
         self._input_folder_edit = QLineEdit()
         self._input_folder_edit.setReadOnly(True)
         self._input_folder_edit.setPlaceholderText("Choose a folder containing .irproj files")
-        browse_input_button = QPushButton("Browse Input...")
-        browse_input_button.clicked.connect(self._on_browse_input)
+        self._browse_input_button = QPushButton("Browse Input...")
+        self._browse_input_button.clicked.connect(self._on_browse_input)
         input_layout.addWidget(QLabel("Input:"))
         input_layout.addWidget(self._input_folder_edit)
-        input_layout.addWidget(browse_input_button)
+        input_layout.addWidget(self._browse_input_button)
         root_layout.addLayout(input_layout)
 
         output_layout = QHBoxLayout()
         self._output_folder_edit = QLineEdit()
         self._output_folder_edit.setReadOnly(True)
         self._output_folder_edit.setPlaceholderText("Choose a folder for exported PDFs")
-        browse_output_button = QPushButton("Browse Output...")
-        browse_output_button.clicked.connect(self._on_browse_output)
+        self._browse_output_button = QPushButton("Browse Output...")
+        self._browse_output_button.clicked.connect(self._on_browse_output)
         output_layout.addWidget(QLabel("Output:"))
         output_layout.addWidget(self._output_folder_edit)
-        output_layout.addWidget(browse_output_button)
+        output_layout.addWidget(self._browse_output_button)
         root_layout.addLayout(output_layout)
 
         overwrite_layout = QHBoxLayout()
@@ -179,12 +181,26 @@ class BatchProjectPDFExportDialog(QDialog):
             self._summary_label.setText("No output folder selected.")
             return
 
+        if self._export_thread is not None:
+            return
+
+        report_options = self._current_report_options()
+        overwrite_mode = str(self._overwrite_mode_combo.currentData())
+        if isinstance(self._exporter, BatchProjectPDFExporter):
+            self._start_background_export(
+                input_text,
+                output_text,
+                report_options=report_options,
+                overwrite_mode=overwrite_mode,
+            )
+            return
+
         try:
             summary = self._exporter.export_folder(
                 input_text,
                 output_text,
-                report_options=self._current_report_options(),
-                overwrite_mode=str(self._overwrite_mode_combo.currentData()),
+                report_options=report_options,
+                overwrite_mode=overwrite_mode,
             )
         except (FileNotFoundError, NotADirectoryError) as exc:
             self._summary_label.setText(str(exc))
@@ -193,6 +209,69 @@ class BatchProjectPDFExportDialog(QDialog):
 
         self._report_options_widget.remember_current_preset()
         self._populate_results(summary)
+
+    def _start_background_export(
+        self,
+        input_folder: str,
+        output_folder: str,
+        *,
+        report_options: ReportOptions,
+        overwrite_mode: str,
+    ) -> None:
+        """Run batch project-PDF export in a worker thread for the default exporter path."""
+        from ui.workers.batch_project_pdf_export_worker import (  # noqa: PLC0415
+            BatchProjectPDFExportWorker,
+        )
+
+        worker = BatchProjectPDFExportWorker(
+            input_folder=input_folder,
+            output_folder=output_folder,
+            report_options=report_options,
+            overwrite_mode=overwrite_mode,
+        )
+        thread = QThread(self)
+        worker.moveToThread(thread)
+        worker.completed.connect(self._on_background_export_completed)
+        worker.failed.connect(self._on_background_export_failed)
+        worker.finished.connect(thread.quit)
+        worker.finished.connect(self._on_export_worker_finished)
+        worker.finished.connect(worker.deleteLater)
+        thread.finished.connect(thread.deleteLater)
+        thread.started.connect(
+            lambda: QMetaObject.invokeMethod(worker, "run", Qt.ConnectionType.QueuedConnection)
+        )
+        self._export_thread = thread
+        self._set_export_busy(True)
+        thread.start()
+
+    def _on_background_export_completed(self, summary: BatchProjectPDFSummary) -> None:
+        """Apply background export results to the dialog."""
+        self._report_options_widget.remember_current_preset()
+        self._populate_results(summary)
+
+    def _on_background_export_failed(self, message: str) -> None:
+        """Show a batch project-PDF export failure."""
+        self._summary_label.setText(message)
+        self._results_table.setRowCount(0)
+
+    def _on_export_worker_finished(self) -> None:
+        """Reset UI state after the worker finishes."""
+        self._export_thread = None
+        self._set_export_busy(False)
+
+    def _set_export_busy(self, busy: bool) -> None:
+        """Enable or disable interactive controls while export is running."""
+        self._browse_input_button.setEnabled(not busy)
+        self._browse_output_button.setEnabled(not busy)
+        self._overwrite_mode_combo.setEnabled(not busy)
+        self._report_options_widget.setEnabled(not busy)
+        self._export_button.setEnabled(
+            not busy
+            and bool(self._input_folder_edit.text().strip())
+            and bool(self._output_folder_edit.text().strip())
+        )
+        if busy:
+            self._summary_label.setText("Exporting project PDFs…")
 
     def _current_report_options(self) -> ReportOptions:
         """Return the report content options selected in the dialog."""
