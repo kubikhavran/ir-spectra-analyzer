@@ -10,7 +10,7 @@ import pytest
 
 from app.reference_library_service import ReferenceLibraryService
 from core.spectrum import SpectralUnit
-from matching.feature_store import MATCH_FEATURE_VERSION
+from matching.feature_store import MATCH_FEATURE_VERSION, compute_search_vector
 from storage.database import Database
 from utils.file_utils import normalize_source_path
 
@@ -186,6 +186,78 @@ def test_get_library_references_returns_metadata_only_but_hydrates_by_id(db, tmp
     assert hydrated is not None
     assert np.allclose(hydrated["wavenumbers"], wn)
     assert np.allclose(hydrated["intensities"], ints)
+
+
+def test_selected_library_folder_includes_web_references(db, tmp_path):
+    folder = tmp_path / "library"
+    folder.mkdir()
+
+    wn = np.linspace(400.0, 4000.0, 48)
+    ints = np.cos(wn / 350.0)
+    db.add_reference_spectrum(
+        "Local Ref",
+        wn,
+        ints,
+        source=str(folder / "local.spa"),
+        y_unit=SpectralUnit.ABSORBANCE.value,
+    )
+    db.add_reference_spectrum(
+        "Web Ref",
+        wn,
+        ints,
+        source="https://webbook.nist.gov/cgi/cbook.cgi?ID=C102716&Index=0&Type=IR-SPEC",
+        source_provider="nist_webbook",
+        external_id="C102716",
+        sample_state="LIQUID (NEAT)",
+        sampling_procedure="TRANSMISSION",
+        y_unit=SpectralUnit.ABSORBANCE.value,
+    )
+
+    service = ReferenceLibraryService(db)
+    service.set_selected_library_folder(folder)
+
+    refs = service.get_library_references()
+
+    assert [ref["name"] for ref in refs] == ["Local Ref", "Web Ref"]
+    assert refs[1]["source_provider"] == "nist_webbook"
+    assert refs[1]["sampling_procedure"] == "TRANSMISSION"
+
+
+def test_search_spectrum_uses_web_references_without_selected_folder(db):
+    wn = np.linspace(400.0, 4000.0, 400)
+    ints = np.exp(-0.5 * ((wn - 1710.0) / 24.0) ** 2)
+    ref_id = db.add_reference_spectrum(
+        "Web Ketone",
+        wn,
+        ints,
+        source="https://webbook.nist.gov/cgi/cbook.cgi?ID=C102716&Index=0&Type=IR-SPEC",
+        source_provider="nist_webbook",
+        external_id="C102716",
+        sample_state="LIQUID (NEAT)",
+        sampling_procedure="TRANSMISSION",
+        y_unit=SpectralUnit.ABSORBANCE.value,
+    )
+    db.upsert_reference_feature(
+        ref_id,
+        feature_version=MATCH_FEATURE_VERSION,
+        feature_vector=compute_search_vector(
+            wn,
+            ints,
+            y_unit=SpectralUnit.ABSORBANCE,
+        ),
+    )
+
+    from core.spectrum import Spectrum
+
+    outcome = ReferenceLibraryService(db).search_spectrum(
+        Spectrum(wavenumbers=wn, intensities=ints, y_unit=SpectralUnit.ABSORBANCE),
+        top_n=1,
+        auto_import_project_library=False,
+    )
+
+    assert outcome.reference_count == 1
+    assert outcome.results
+    assert outcome.results[0].name == "Web Ketone"
 
 
 def test_search_spectrum_backfills_missing_feature_rows(db, tmp_path):

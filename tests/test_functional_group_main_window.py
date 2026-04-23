@@ -240,3 +240,4 @@ def test_assigning_suggestion_preserves_selected_functional_group(qtbot, monkeyp
 
     assert peak.vibration_labels == ["ν(C=C) Ar conj. ~1580"]
     assert window._functional_group_panel.current_result().group_id == "phenol"
+    assert window._functional_group_panel._group_list.currentRow() == 1

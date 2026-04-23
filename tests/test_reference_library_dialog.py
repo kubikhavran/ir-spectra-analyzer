@@ -146,6 +146,9 @@ def test_preview_text_updates_on_row_selection(qtbot, db):
     assert "Name: Preview Ref" in preview
     assert "Quality: —" in preview
     assert "Description: Preview description" in preview
+    assert "Provider: local" in preview
+    assert "State: —" in preview
+    assert "Sampling: —" in preview
     assert f"Source: {folder / 'preview.spa'}" in preview
     assert "Y Unit: Transmittance" in preview
     assert f"Points: {len(wn)}" in preview
@@ -247,6 +250,27 @@ def test_project_library_button_disabled_when_no_bundled_folder(qtbot, db):
     assert not dlg._sync_project_library_btn.isEnabled()
     assert dlg._library_label.text() == "Reference library folder: not selected"
     assert not dlg._find_similar_btn.isEnabled()
+
+
+def test_dialog_lists_web_reference_without_selected_folder(qtbot, db):
+    """Imported web references should still be visible even without an active local folder."""
+    wn, inten = _make_arrays()
+    db.add_reference_spectrum(
+        name="Web Ref",
+        wavenumbers=wn,
+        intensities=inten,
+        source="https://webbook.nist.gov/cgi/cbook.cgi?ID=C102716&Index=0&Type=IR-SPEC",
+        source_provider="nist_webbook",
+        sample_state="LIQUID (NEAT)",
+        sampling_procedure="TRANSMISSION",
+        y_unit="Absorbance",
+    )
+
+    dlg = ReferenceLibraryDialog(db)
+    qtbot.addWidget(dlg)
+
+    assert dlg._table.rowCount() == 1
+    assert "Showing imported references from all sources" in dlg._library_label.text()
 
 
 def test_similarity_search_button_disabled_without_current_spectrum(qtbot, db):

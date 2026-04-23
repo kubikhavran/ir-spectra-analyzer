@@ -83,6 +83,18 @@ class MatchResultsPanel(QWidget):
         del blocker
         self.candidate_selected.emit(results[0])
 
+    def select_result_by_ref_id(self, ref_id: int) -> bool:
+        """Select one result by database ID and emit it for overlay refresh."""
+        for row, result in enumerate(self._results):
+            if int(result.ref_id) != int(ref_id):
+                continue
+            if self._list.currentRow() == row:
+                self.candidate_selected.emit(result)
+            else:
+                self._list.setCurrentRow(row)
+            return True
+        return False
+
     def _on_row_changed(self, row: int) -> None:
         if 0 <= row < len(self._results):
             self.candidate_selected.emit(self._results[row])

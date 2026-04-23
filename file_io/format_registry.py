@@ -9,6 +9,7 @@ Zodpovědnost:
 
 Aktuálně podporované formáty:
 - .spa (Thermo Fisher OMNIC)
+- .jdx / .dx (JCAMP-DX IR)
 
 Plánované (v0.2+):
 - .spc (Galactic SPC)
@@ -41,9 +42,12 @@ class FormatRegistry:
 
     def _register_defaults(self) -> None:
         """Register built-in format readers."""
+        from file_io.jcamp_reader import JCAMPReader  # noqa: PLC0415
         from file_io.spa_reader import SPAReader  # noqa: PLC0415
 
         self.register(".spa", SPAReader())
+        self.register(".jdx", JCAMPReader())
+        self.register(".dx", JCAMPReader())
 
     def register(self, extension: str, reader: SpectralReader) -> None:
         """Register a reader for a file extension.

@@ -12,7 +12,7 @@ from __future__ import annotations
 from pathlib import Path
 
 APP_NAME = "IR Spectra Analyzer"
-APP_VERSION = "0.6.2"
+APP_VERSION = "0.7.0"
 ORG_NAME = "IRSpectra"
 
 # Data directories

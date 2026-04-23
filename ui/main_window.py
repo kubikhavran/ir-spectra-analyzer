@@ -29,8 +29,10 @@ from PySide6.QtWidgets import (
 )
 
 from app.report_presets import ReportPresetManager
+from processing.consensus_analysis import build_consensus_analysis
 from storage.database import Database
 from storage.settings import Settings
+from ui.consensus_panel import ConsensusPanel
 from ui.functional_group_panel import FunctionalGroupPanel
 from ui.metadata_panel import MetadataPanel
 from ui.molecule_widget import MoleculeWidget
@@ -62,6 +64,8 @@ class MainWindow(QMainWindow):
         self._recent_menu: QMenu | None = None
         self._undo_stack = QUndoStack(self)
         self._last_search_refs: list = []  # cached from last _on_match_spectrum call
+        self._current_match_results: list = []
+        self._current_functional_group_results: list = []
         self._reference_search_thread: QThread | None = None
         self._vibration_presets_cache: list = []
         self._molecule_widget: MoleculeWidget
@@ -216,6 +220,16 @@ class MainWindow(QMainWindow):
         )
         self.tabifyDockWidget(self._dock_metadata, self._dock_functional_groups)
 
+        # Right dock: Consensus interpretation
+        self._consensus_panel = ConsensusPanel(self)
+        self._dock_consensus = QDockWidget("Consensus", self)
+        self._dock_consensus.setAllowedAreas(Qt.DockWidgetArea.AllDockWidgetAreas)
+        self._dock_consensus.setFeatures(dock_features)
+        self._dock_consensus.setWidget(self._consensus_panel)
+        self._dock_consensus.setMinimumWidth(320)
+        self.addDockWidget(Qt.DockWidgetArea.RightDockWidgetArea, self._dock_consensus)
+        self.tabifyDockWidget(self._dock_metadata, self._dock_consensus)
+
         # Right dock: Molecule Structure
         self._molecule_widget = MoleculeWidget(self)
         self._dock_structure = QDockWidget("Structure", self)
@@ -233,6 +247,7 @@ class MainWindow(QMainWindow):
             self._dock_metadata,
             self._dock_match,
             self._dock_functional_groups,
+            self._dock_consensus,
             self._dock_structure,
         ):
             self._view_menu.addAction(dock.toggleViewAction())
@@ -279,6 +294,7 @@ class MainWindow(QMainWindow):
         if self._project is None or self._project.spectrum is None:
             return
         preferred_peak = self._peak_table.selected_peak()
+        preferred_group_id = self._current_functional_group_id()
         spectrum = (
             self._project.corrected_spectrum
             if self._project.corrected_spectrum is not None
@@ -286,7 +302,7 @@ class MainWindow(QMainWindow):
         )
         self._spectrum_widget.set_spectrum(spectrum)
         self._refresh_peak_views(preferred_peak)
-        self._refresh_functional_group_analysis()
+        self._refresh_functional_group_analysis(preferred_group_id=preferred_group_id)
 
     def _connect_signals(self) -> None:
         """Wire up inter-component signals."""
@@ -311,6 +327,8 @@ class MainWindow(QMainWindow):
         self._functional_group_panel.suggestion_selected.connect(
             self._on_functional_group_suggestion_selected
         )
+        self._consensus_panel.hypothesis_selected.connect(self._on_consensus_hypothesis_selected)
+        self._consensus_panel.match_requested.connect(self._on_consensus_match_requested)
         self._molecule_widget.smiles_changed.connect(self._on_structure_edited)
         self._molecule_widget.mol_block_changed.connect(self._on_mol_block_changed)
 
@@ -375,6 +393,7 @@ class MainWindow(QMainWindow):
             self._add_to_recent(recent_path)
 
         self._spectrum_widget.set_overlay_spectra([])
+        self._clear_match_results()
         display_spectrum = project.corrected_spectrum or project.spectrum
         if display_spectrum is not None:
             self._spectrum_widget.set_spectrum(display_spectrum)
@@ -1030,11 +1049,13 @@ class MainWindow(QMainWindow):
                 self.statusBar().showMessage(
                     "No reference spectra available. Sync or import the selected library first."
                 )
-            self._match_results_panel.set_results([])
+            self._clear_match_results()
             return
 
         self._last_search_refs = list(outcome.references)
+        self._current_match_results = list(outcome.results)
         self._match_results_panel.set_results(list(outcome.results))
+        self._refresh_consensus_analysis()
         if outcome.imported_summary is not None and outcome.imported_summary.imported > 0:
             self.statusBar().showMessage(
                 "Imported "
@@ -1093,17 +1114,45 @@ class MainWindow(QMainWindow):
 
         from core.commands import AssignPresetCommand  # noqa: PLC0415
 
+        preferred_group_id = self._current_functional_group_id()
         self._undo_stack.push(AssignPresetCommand(peak, preset))
         self._refresh_peak_views(peak)
+        self._restore_functional_group_selection(preferred_group_id)
         self.statusBar().showMessage(
             f'Assigned suggested vibration "{preset.name}" to {peak.position:.1f} cm\u207b\u00b9'
         )
 
-    def _refresh_functional_group_analysis(self) -> None:
+    def _on_consensus_hypothesis_selected(self, group_id: str) -> None:
+        """Navigate from the consensus panel into the functional-group panel."""
+        self._functional_group_panel.select_group_by_id(group_id)
+
+    def _on_consensus_match_requested(self, ref_id: int) -> None:
+        """Navigate from the consensus panel into the match-results panel."""
+        self._match_results_panel.select_result_by_ref_id(ref_id)
+
+    def _clear_match_results(self) -> None:
+        """Drop cached matching state for the current project."""
+        self._last_search_refs = []
+        self._current_match_results = []
+        self._match_results_panel.set_results([])
+        self._refresh_consensus_analysis()
+
+    def _refresh_consensus_analysis(self) -> None:
+        """Rebuild the read-only interpretation summary from current cached results."""
+        analysis = build_consensus_analysis(
+            self._project,
+            self._current_functional_group_results,
+            self._current_match_results,
+        )
+        self._consensus_panel.set_analysis(analysis)
+
+    def _refresh_functional_group_analysis(self, *, preferred_group_id: str | None = None) -> None:
         """Recompute functional-group scores from the current project spectrum."""
         if self._project is None or self._project.spectrum is None:
+            self._current_functional_group_results = []
             self._functional_group_panel.clear()
             self._spectrum_widget.set_diagnostic_regions([])
+            self._refresh_consensus_analysis()
             return
 
         from processing.functional_group_scoring import score_functional_groups  # noqa: PLC0415
@@ -1112,8 +1161,23 @@ class MainWindow(QMainWindow):
             self._project.spectrum,
             self._project.corrected_spectrum,
         )
+        self._current_functional_group_results = list(analysis.results)
         self._functional_group_panel.set_results(list(analysis.results))
+        self._restore_functional_group_selection(preferred_group_id)
         self._set_functional_group_active_peak(self._peak_table.selected_peak())
+        self._refresh_consensus_analysis()
+
+    def _current_functional_group_id(self) -> str | None:
+        """Return the currently selected functional-group ID, if any."""
+        result = self._functional_group_panel.current_result()
+        if result is None:
+            return None
+        return str(result.group_id)
+
+    def _restore_functional_group_selection(self, group_id: str | None) -> None:
+        """Re-select one functional-group row after a refresh when possible."""
+        if group_id:
+            self._functional_group_panel.select_group_by_id(group_id)
 
     def _find_best_preset_for_band(self, band, wavenumber: float):
         candidate_names = set(band.suggested_preset_names)
@@ -1165,6 +1229,7 @@ class MainWindow(QMainWindow):
         else:
             self._vibration_panel.clear_peak_context()
         self._set_functional_group_active_peak(active_peak)
+        self._refresh_consensus_analysis()
 
     def _refresh_functional_group_assignment_preview(self) -> None:
         result = self._functional_group_panel.current_result()

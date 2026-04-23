@@ -39,7 +39,6 @@ class ReferenceLibraryService:
 
     _DEFAULT_LIBRARY_CANDIDATES = (Path("reference library_1"),)
     _RERANK_CANDIDATE_COUNT = 25
-
     def __init__(
         self,
         db: Database,
@@ -177,9 +176,14 @@ class ReferenceLibraryService:
             )
 
         source_prefix = normalize_source_path(library_folder) if library_folder is not None else None
-        self._refresh_missing_features(source_prefix=source_prefix)
+        include_web_refs = library_folder is not None
+        self._refresh_missing_features(
+            source_prefix=source_prefix,
+            include_web_refs=include_web_refs,
+        )
         search_rows = self._db.get_reference_search_rows(
             source_prefix=source_prefix,
+            include_web_refs=include_web_refs,
             feature_version=MATCH_FEATURE_VERSION,
         )
         self._search_engine.load_references(search_rows)
@@ -209,9 +213,12 @@ class ReferenceLibraryService:
         """Return reference spectra belonging to the active reference-library folder."""
         folder = self.discover_project_library_folder()
         if folder is None:
-            return []
+            return self._db.get_reference_metadata()
 
-        return self._db.get_reference_metadata(source_prefix=normalize_source_path(folder))
+        return self._db.get_reference_metadata(
+            source_prefix=normalize_source_path(folder),
+            include_web_refs=True,
+        )
 
     def get_reference_spectrum(self, ref_id: int) -> dict | None:
         """Return one fully decoded reference spectrum, cached for overlays/previews."""
@@ -234,10 +241,16 @@ class ReferenceLibraryService:
                 sources[source] = dict(ref)
         return sources
 
-    def _refresh_missing_features(self, *, source_prefix: str | None) -> None:
+    def _refresh_missing_features(
+        self,
+        *,
+        source_prefix: str | None,
+        include_web_refs: bool,
+    ) -> None:
         """Backfill persistent search vectors for library rows missing the current feature version."""
         missing = self._db.get_references_missing_features(
             source_prefix=source_prefix,
+            include_web_refs=include_web_refs,
             feature_version=MATCH_FEATURE_VERSION,
         )
         if not missing:

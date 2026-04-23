@@ -5,9 +5,9 @@ analytical chemistry labs that work with Thermo Fisher **OMNIC `.spa`** files an
 to replace paper-based IR interpretation with a fast, reproducible digital workflow.
 
 Open a spectrum, pick peaks (manually or automatically), assign vibration bands from
-a curated preset library, match against a local reference-spectra database, sketch
-the candidate molecule, and export a publication-quality PDF report — all in one
-native app.
+a curated preset library, rank functional groups, review a combined consensus
+interpretation, match against local and imported web references, sketch the candidate
+molecule, and export a publication-quality PDF report — all in one native app.
 
 ---
 
@@ -43,9 +43,15 @@ native app.
 ### Peak picking & interpretation
 - **Automatic peak detection** (SciPy `find_peaks` with tunable prominence / width).
 - **Manual click-to-add** and drag-to-reposition of individual peaks.
-- **Vibration preset library** — 12 default IR bands (C=O, O–H, C–H, N–H, aromatic, …)
-  with wavenumber ranges. Double-click a peak to assign, or filter-highlight peaks
-  that fall inside a preset's range.
+- **Curated vibration preset library** with sourced diagnostic bands and direct
+  peak-to-vibration assignment. Double-click a peak to assign, or filter-highlight
+  peaks that fall inside a preset's range.
+- **Functional-group scoring** — ranked diagnostic groups and structural motifs
+  (carbonyls, amides, alcohols, aromatics, alkene subtypes, alkyl-chain motifs, …)
+  with confidence, explainability, highlighted regions, and click-to-assign suggestions.
+- **Consensus interpretation panel** — combines library matches, functional groups,
+  and assigned peaks into one read-only summary: strongest evidence, conflicts, and
+  next checks.
 - **Full undo/redo** via `QUndoStack` — peak add/delete/assign, baseline correction,
   and molecule edits all participate. `Ctrl+Z` / `Ctrl+Y`.
 
@@ -60,13 +66,17 @@ native app.
 ### Reference library & similarity search
 - **Local SQLite-backed library** of reference spectra. Import any `.spa` file in
   one click, or drop a whole folder onto the library dialog (recurses subfolders).
-- **Cosine-similarity search** on a fixed 400–4000 cm⁻¹ / 1 cm⁻¹ grid with
-  auto-interpolation. Results ranked, color-coded by score%, shown in a dedicated
+- **Faster similarity search** with persistent cached features, background sync/search,
+  and a fine rerank stage for tighter top-hit ordering.
+- **Cosine-similarity search** on a fixed comparison grid with fine rerank of the
+  shortlist. Results are ranked, color-coded by score%, and shown in a dedicated
   panel with overlay preview of the top candidates.
 - **Library curator UI** — multi-select, bulk delete, inline description editing,
   drag-and-drop import, keyboard shortcuts (`Delete` / `F2` / `Enter`), footer stats
   (count, date range, unit mix), and "Open in main window" to pull any reference
   back as the working spectrum.
+- **Web reference import** — import single-molecule IR references from **NIST WebBook**
+  directly into the library, including state / sampling metadata.
 - **Find similar to selected** — use any library entry itself as the query.
 
 ### Reporting & export
@@ -207,13 +217,15 @@ pytest -q                           # runs the full test suite (offscreen Qt)
    `Ctrl+Z` if the result is wrong.
 5. **(Optional) Sketch the molecule** — open the structure panel, use the embedded
    JSME editor, or paste a SMILES.
-6. **Match against the library** — `Match Spectrum` on the toolbar (requires a
-   reference-library folder to be selected in the library dialog). Top hits are
+6. **Review Functional Groups / Consensus** — inspect ranked groups, highlighted
+   diagnostic regions, assign suggested vibrations, and use the consensus panel to
+   compare chemistry evidence with library matches.
+7. **Match against the library** — `Match Spectrum` on the toolbar. Top hits are
    shown with score% and can be overlaid on the current spectrum for visual
-   comparison.
-7. **Export** — `File → Export PDF Report` (with molecule + peaks + metadata),
+   comparison. Imported NIST references participate in the same search workflow.
+8. **Export** — `File → Export PDF Report` (with molecule + peaks + metadata),
    or `File → Export Data` for `.xlsx` / `.csv`.
-8. **Save the project** — `File → Save Project` writes a `.irproj` JSON you can
+9. **Save the project** — `File → Save Project` writes a `.irproj` JSON you can
    re-open later with the exact same peaks, assignments, and baseline state.
 
 ---
@@ -224,14 +236,24 @@ The library lives in a local SQLite database (`~/.ir-spectra-analyzer/library.db
 on Linux/macOS, `%APPDATA%\ir-spectra-analyzer\` on Windows) and a user-chosen
 folder of `.spa` files on disk.
 
-**Open the library:** toolbar → **Reference Library** (or via the match dialog).
+**Open the library:** `Database → Reference Library...`
 
 **Import spectra** — three ways:
 
 - **Drag & drop** one or more `.spa` files (or a whole folder) onto the dialog.
 - **Import File** button for a file-picker.
+- **Import Web Reference** for a one-shot NIST WebBook URL.
 - **Choose / Sync Folder** to designate the active library folder; the app
   auto-imports any new `.spa` files found there.
+
+**Web references**
+
+- Imported NIST references are stored in the same SQLite library as local references.
+- They show provider metadata such as `State`, `Sampling`, `Path length`, and `Resolution`.
+- They can be used in `Match Spectrum` and `Find similar to selected` like any other
+  library entry.
+- They do **not** have a local `.spa` source file, so `Open in main window` is only
+  available for local references.
 
 **Curate** — multi-select rows with Shift/Ctrl+click, then:
 
@@ -290,6 +312,7 @@ Human-readable, diff-friendly, safe to commit to your own lab-notebook repo.
 | Format | Read | Write | Notes |
 |--------|:----:|:-----:|-------|
 | OMNIC `.spa` | ✅ | — | Dual-mode parser: OMNIC 16-byte directory + type-27 metadata, plus a compact synthetic mode for tests |
+| JCAMP-DX `.jdx` / `.dx` | ✅ | — | Practical IR reader for NIST WebBook and compatible JCAMP exports |
 | `.irproj` | ✅ | ✅ | Native project format (JSON) |
 | `.xlsx` | — | ✅ | Peaks + spectrum, multi-sheet |
 | `.csv` | — | ✅ | Peaks or spectrum (separate files) |
@@ -302,17 +325,17 @@ Human-readable, diff-friendly, safe to commit to your own lab-notebook repo.
 ```
 ir-spectra-analyzer/
 ├── main.py                 # Entry point
-├── app/                    # Application lifecycle, config, library service
+├── app/                    # Application lifecycle, config, library + web import services
 ├── core/                   # Domain models — Spectrum, Peak, Project, commands (undo)
-├── file_io/                # Format registry, SPA binary parser, export writers
-├── processing/             # Pure-function signal processing (peaks, baseline, smoothing)
+├── file_io/                # Format registry, SPA / JCAMP readers, export writers
+├── processing/             # Pure-function signal processing + consensus analysis
 ├── matching/               # Reference DB, similarity search, quality scoring
 ├── chemistry/              # RDKit adapters, JSME structure model
 ├── reporting/              # PDF report builder + Matplotlib spectrum renderer
 ├── ui/                     # PySide6 GUI (MainWindow, panels, dialogs, widgets)
 ├── storage/                # SQLite + JSON settings persistence
 ├── utils/                  # Shared helpers
-├── tests/                  # pytest + pytest-qt test suite (333 tests)
+├── tests/                  # pytest + pytest-qt test suite (444 tests)
 ├── assets/                 # App icon (multi-res .ico + master .png)
 ├── packaging/              # PyInstaller spec + Inno Setup installer script
 ├── scripts/                # Dev utilities (icon generator, …)
@@ -337,7 +360,7 @@ See `IR_Spectral_Software_Architecture.md` for the full design rationale.
 ## Development
 
 ```bash
-# Run the full test suite (333 tests, runs headless)
+# Run the full test suite (444 tests, runs headless)
 pytest -q
 
 # Run just the UI-dialog tests
@@ -378,11 +401,11 @@ runs on `windows-latest` to produce an installer and attach it to the
 matching GitHub Release:
 
 ```bash
-git tag v0.6.2
-git push origin v0.6.2
+git tag v0.7.0
+git push origin v0.7.0
 ```
 
-A few minutes later `IR-Spectra-Analyzer-Setup-0.6.2.exe` appears on the
+A few minutes later `IR-Spectra-Analyzer-Setup-0.7.0.exe` appears on the
 [Releases page](https://github.com/kubikhavran/ir-spectra-analyzer/releases).
 
 To build locally on a **macOS** machine:
@@ -400,9 +423,9 @@ pyinstaller packaging/ir-spectra-analyzer-mac.spec --clean --noconfirm
 
 # 4. Wrap in a DMG
 dmgbuild -s packaging/dmg_settings.py \
-  -D version=0.6.2 -D arch=arm64 \
+  -D version=0.7.0 -D arch=arm64 \
   "IR Spectra Analyzer" \
-  "dist/IR-Spectra-Analyzer-0.6.2-arm64.dmg"
+  "dist/IR-Spectra-Analyzer-0.7.0-arm64.dmg"
 ```
 
 To build locally on a **Windows** machine:

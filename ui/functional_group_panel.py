@@ -153,6 +153,21 @@ class FunctionalGroupPanel(QWidget):
             return self._results[row]
         return None
 
+    def select_group_by_id(self, group_id: str) -> bool:
+        """Select one functional-group row by group ID."""
+        for row, result in enumerate(self._results):
+            if result.group_id != group_id:
+                continue
+            if self._group_list.currentRow() == row:
+                self.group_selected.emit(result)
+                self._rebuild_group_info(result)
+                self._rebuild_peak_info(result)
+                self._rebuild_detail_list(result)
+            else:
+                self._group_list.setCurrentRow(row)
+            return True
+        return False
+
     def _on_group_row_changed(self, row: int) -> None:
         if 0 <= row < len(self._results):
             result = self._results[row]

@@ -28,6 +28,7 @@ from PySide6.QtWidgets import (
 
 from app.reference_import import BatchImportSummary, ReferenceImportService
 from app.reference_library_service import ReferenceLibraryService, ReferenceSearchOutcome
+from app.web_reference_import import WebReferenceImportService
 from core.spectrum import Spectrum
 from matching.quality import match_quality_label
 from storage.database import Database
@@ -68,12 +69,14 @@ class ReferenceLibraryDialog(QDialog):
         parent=None,
         library_service: ReferenceLibraryService | None = None,
         import_service: ReferenceImportService | None = None,
+        web_import_service: WebReferenceImportService | None = None,
         current_spectrum: Spectrum | None = None,
     ) -> None:
         super().__init__(parent)
         self._db = db
         self._library_service = library_service or ReferenceLibraryService(db)
         self._import_service = import_service or ReferenceImportService(db)
+        self._web_import_service = web_import_service or WebReferenceImportService(db)
         self._current_spectrum = current_spectrum
         self._project_library_folder = self._library_service.discover_project_library_folder()
         self._refs: list[dict] = []  # currently displayed (after filters)
@@ -188,6 +191,9 @@ class ReferenceLibraryDialog(QDialog):
         self._import_file_btn = QPushButton("Import File...")
         self._import_file_btn.clicked.connect(self._on_import_files)
 
+        self._import_web_btn = QPushButton("Import Web Reference...")
+        self._import_web_btn.clicked.connect(self._on_import_web_reference)
+
         self._rename_btn = QPushButton("Rename")
         self._rename_btn.setToolTip("Rename the selected reference (F2)")
         self._rename_btn.setEnabled(False)
@@ -201,6 +207,7 @@ class ReferenceLibraryDialog(QDialog):
         row1.addWidget(self._choose_library_folder_btn)
         row1.addWidget(self._sync_project_library_btn)
         row1.addWidget(self._import_file_btn)
+        row1.addWidget(self._import_web_btn)
         row1.addWidget(self._rename_btn)
         row1.addWidget(self._delete_btn)
         row1.addStretch()
@@ -211,7 +218,8 @@ class ReferenceLibraryDialog(QDialog):
         self._find_similar_btn = QPushButton("Find Similar to Current")
         self._find_similar_btn.setToolTip("Rank the library by similarity to the active spectrum")
         self._find_similar_btn.setEnabled(
-            self._current_spectrum is not None and self._project_library_folder is not None
+            self._current_spectrum is not None
+            and (self._project_library_folder is not None or bool(self._refs_all))
         )
         self._find_similar_btn.clicked.connect(self._on_find_similar)
 
@@ -503,11 +511,21 @@ class ReferenceLibraryDialog(QDialog):
         if len(refs) == 1:
             ref = refs[0]
             n_points = int(ref.get("n_points") or len(preview_refs[0].get("wavenumbers", [])))
+            provider = str(ref.get("source_provider", "") or "local")
+            state = str(ref.get("sample_state", "") or "—")
+            sampling = str(ref.get("sampling_procedure", "") or "—")
+            path_length = str(ref.get("path_length", "") or "—")
+            resolution = str(ref.get("resolution", "") or "—")
             text = (
                 f"Name: {ref['name']}\n"
                 f"Similarity: {self._similarity_text_for_ref(ref)}\n"
                 f"Quality: {self._quality_text_for_ref(ref)}\n"
                 f"Description: {ref.get('description', '')}\n"
+                f"Provider: {provider}\n"
+                f"State: {state}\n"
+                f"Sampling: {sampling}\n"
+                f"Path length: {path_length}\n"
+                f"Resolution: {resolution}\n"
                 f"Source: {ref.get('source', '')}\n"
                 f"Y Unit: {ref.get('y_unit', '')}\n"
                 f"Created: {ref.get('created_at', '')}\n"
@@ -531,7 +549,7 @@ class ReferenceLibraryDialog(QDialog):
         self._delete_btn.setEnabled(has_any and is_idle)
         self._open_in_main_btn.setEnabled(has_single and is_idle)
         self._find_similar_selected_btn.setEnabled(
-            has_single and self._project_library_folder is not None and is_idle
+            has_single and (self._project_library_folder is not None or bool(self._refs_all)) and is_idle
         )
         self._clear_search_btn.setEnabled(bool(self._similarity_by_ref_id) and is_idle)
         self._sync_project_library_btn.setEnabled(
@@ -539,8 +557,11 @@ class ReferenceLibraryDialog(QDialog):
         )
         self._choose_library_folder_btn.setEnabled(is_idle)
         self._import_file_btn.setEnabled(is_idle)
+        self._import_web_btn.setEnabled(is_idle)
         self._find_similar_btn.setEnabled(
-            self._current_spectrum is not None and self._project_library_folder is not None and is_idle
+            self._current_spectrum is not None
+            and (self._project_library_folder is not None or bool(self._refs_all))
+            and is_idle
         )
 
     def _on_choose_library_folder(self) -> None:
@@ -623,6 +644,22 @@ class ReferenceLibraryDialog(QDialog):
         if not paths:
             return
         self._import_paths([Path(p) for p in paths])
+
+    def _on_import_web_reference(self) -> None:
+        """Open the web-reference import dialog for one-shot NIST imports."""
+        if self._reference_task_thread is not None:
+            return
+        from ui.dialogs.web_reference_import_dialog import WebReferenceImportDialog  # noqa: PLC0415
+
+        dlg = WebReferenceImportDialog(self._web_import_service, parent=self)
+        dlg.reference_imported.connect(self._on_web_reference_imported)
+        dlg.exec()
+
+    def _on_web_reference_imported(self, ref_id: int) -> None:
+        """Refresh the library and focus the newly imported web reference."""
+        self._similarity_by_ref_id.clear()
+        self._load_data()
+        self._select_reference_row(ref_id)
 
     def _import_paths(self, paths: list[Path]) -> None:
         """Import a list of `.spa` paths (used by both the file dialog and drag-drop)."""
@@ -736,10 +773,10 @@ class ReferenceLibraryDialog(QDialog):
 
     def _on_find_similar(self) -> None:
         """Rank the reference library by similarity to the current spectrum."""
-        if self._project_library_folder is None:
+        if self._current_spectrum is None:
             self._search_label.setText(self._search_status_text())
             return
-        if self._current_spectrum is None:
+        if not self._refs_all and self._project_library_folder is None:
             self._search_label.setText(self._search_status_text())
             return
         if self._reference_task_thread is not None:
@@ -827,6 +864,16 @@ class ReferenceLibraryDialog(QDialog):
         ref = self._selected_ref()
         if ref is None:
             return
+        if str(ref.get("source_provider", "") or "local") != "local":
+            QMessageBox.information(
+                self,
+                "Web Reference",
+                (
+                    "This reference was imported from the web and does not have a local "
+                    ".SPA source file to open."
+                ),
+            )
+            return
         source = str(ref.get("source", "") or "")
         if not source or not Path(source).exists():
             QMessageBox.warning(
@@ -842,8 +889,6 @@ class ReferenceLibraryDialog(QDialog):
 
     def _on_find_similar_to_selected(self) -> None:
         """Rank the library using the selected reference as the query spectrum."""
-        if self._project_library_folder is None:
-            return
         if self._reference_task_thread is not None:
             return
         ref = self._selected_ref()
@@ -891,6 +936,19 @@ class ReferenceLibraryDialog(QDialog):
         self._db.rename_reference_spectrum(ref["id"], new_name.strip())
         self._load_data()
 
+    def _select_reference_row(self, ref_id: int) -> None:
+        """Select and focus one row by database id after a table refresh."""
+        table_model = self._table.model()
+        if table_model is None:
+            return
+        for row in range(self._table.rowCount()):
+            index = table_model.index(row, COL_NAME)
+            if table_model.data(index, Qt.ItemDataRole.UserRole) != ref_id:
+                continue
+            self._table.selectRow(row)
+            self._table.setCurrentIndex(index)
+            break
+
     def _project_library_status_text(
         self,
         summary: BatchImportSummary | None = None,
@@ -898,6 +956,11 @@ class ReferenceLibraryDialog(QDialog):
         """Return status text for the active reference-library folder."""
         folder = self._project_library_folder
         if folder is None:
+            if self._refs_all:
+                return (
+                    "Reference library folder: not selected\n"
+                    "Showing imported references from all sources"
+                )
             return "Reference library folder: not selected"
 
         text = f"Reference library folder: {self._display_path(folder)}"
@@ -924,7 +987,13 @@ class ReferenceLibraryDialog(QDialog):
     ) -> str:
         """Return status text for the similarity-search workflow."""
         if self._project_library_folder is None:
-            return "Similarity search: choose a reference folder first"
+            if self._refs_all:
+                if self._current_spectrum is None:
+                    return "Similarity search: load a spectrum to rank the library"
+                if match_count is None:
+                    return "Similarity search: not run yet"
+            else:
+                return "Similarity search: choose a reference folder first"
         if self._current_spectrum is None:
             return "Similarity search: load a spectrum to rank the library"
         if match_count is None:

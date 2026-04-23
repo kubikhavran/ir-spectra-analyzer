@@ -111,6 +111,14 @@ class Database:
                 description    TEXT    NOT NULL DEFAULT '',
                 source         TEXT    NOT NULL DEFAULT '',
                 source_norm    TEXT    NOT NULL DEFAULT '',
+                source_provider TEXT   NOT NULL DEFAULT 'local',
+                external_id    TEXT    NOT NULL DEFAULT '',
+                sample_state   TEXT    NOT NULL DEFAULT '',
+                sampling_procedure TEXT NOT NULL DEFAULT '',
+                path_length    TEXT    NOT NULL DEFAULT '',
+                resolution     TEXT    NOT NULL DEFAULT '',
+                origin         TEXT    NOT NULL DEFAULT '',
+                owner          TEXT    NOT NULL DEFAULT '',
                 source_mtime_ns INTEGER NOT NULL DEFAULT 0,
                 source_size    INTEGER NOT NULL DEFAULT 0,
                 n_points       INTEGER NOT NULL DEFAULT 0,
@@ -147,6 +155,17 @@ class Database:
 
         for column_sql in (
             "ALTER TABLE reference_spectra ADD COLUMN source_norm TEXT NOT NULL DEFAULT ''",
+            "ALTER TABLE reference_spectra ADD COLUMN source_provider TEXT NOT NULL DEFAULT 'local'",
+            "ALTER TABLE reference_spectra ADD COLUMN external_id TEXT NOT NULL DEFAULT ''",
+            "ALTER TABLE reference_spectra ADD COLUMN sample_state TEXT NOT NULL DEFAULT ''",
+            (
+                "ALTER TABLE reference_spectra ADD COLUMN "
+                "sampling_procedure TEXT NOT NULL DEFAULT ''"
+            ),
+            "ALTER TABLE reference_spectra ADD COLUMN path_length TEXT NOT NULL DEFAULT ''",
+            "ALTER TABLE reference_spectra ADD COLUMN resolution TEXT NOT NULL DEFAULT ''",
+            "ALTER TABLE reference_spectra ADD COLUMN origin TEXT NOT NULL DEFAULT ''",
+            "ALTER TABLE reference_spectra ADD COLUMN owner TEXT NOT NULL DEFAULT ''",
             "ALTER TABLE reference_spectra ADD COLUMN source_mtime_ns INTEGER NOT NULL DEFAULT 0",
             "ALTER TABLE reference_spectra ADD COLUMN source_size INTEGER NOT NULL DEFAULT 0",
             "ALTER TABLE reference_spectra ADD COLUMN n_points INTEGER NOT NULL DEFAULT 0",
@@ -162,6 +181,13 @@ class Database:
             UPDATE reference_spectra
             SET source_norm = lower(replace(source, '\\', '/'))
             WHERE source_norm = '' AND source != ''
+            """
+        )
+        cursor.execute(
+            """
+            UPDATE reference_spectra
+            SET source_provider = 'local'
+            WHERE source_provider = ''
             """
         )
         cursor.execute(
@@ -429,6 +455,14 @@ class Database:
         source: str = "",
         y_unit: str = "Absorbance",
         *,
+        source_provider: str = "local",
+        external_id: str = "",
+        sample_state: str = "",
+        sampling_procedure: str = "",
+        path_length: str = "",
+        resolution: str = "",
+        origin: str = "",
+        owner: str = "",
         source_mtime_ns: int = 0,
         source_size: int = 0,
         commit: bool = True,
@@ -439,14 +473,23 @@ class Database:
         cursor = self._conn.cursor()
         cursor.execute(
             """INSERT INTO reference_spectra
-               (name, description, source, source_norm, source_mtime_ns, source_size,
-                n_points, wavenumbers, intensities, y_unit)
-               VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)""",
+               (name, description, source, source_norm, source_provider, external_id,
+                sample_state, sampling_procedure, path_length, resolution, origin, owner,
+                source_mtime_ns, source_size, n_points, wavenumbers, intensities, y_unit)
+               VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)""",
             (
                 name,
                 description,
                 source,
                 normalized_source,
+                source_provider,
+                external_id,
+                sample_state,
+                sampling_procedure,
+                path_length,
+                resolution,
+                origin,
+                owner,
                 int(source_mtime_ns),
                 int(source_size),
                 int(len(wavenumbers)),
@@ -471,6 +514,14 @@ class Database:
         y_unit: str = "Absorbance",
         source_mtime_ns: int = 0,
         source_size: int = 0,
+        source_provider: str = "local",
+        external_id: str = "",
+        sample_state: str = "",
+        sampling_procedure: str = "",
+        path_length: str = "",
+        resolution: str = "",
+        origin: str = "",
+        owner: str = "",
         commit: bool = True,
     ) -> None:
         """Replace a stored reference spectrum in-place."""
@@ -479,14 +530,24 @@ class Database:
         self._conn.execute(
             """UPDATE reference_spectra
                SET name = ?, description = ?, source = ?, source_norm = ?,
-                   source_mtime_ns = ?, source_size = ?, n_points = ?,
-                   wavenumbers = ?, intensities = ?, y_unit = ?
+                   source_provider = ?, external_id = ?, sample_state = ?,
+                   sampling_procedure = ?, path_length = ?, resolution = ?,
+                   origin = ?, owner = ?, source_mtime_ns = ?, source_size = ?,
+                   n_points = ?, wavenumbers = ?, intensities = ?, y_unit = ?
                WHERE id = ?""",
             (
                 name,
                 description,
                 source,
                 normalized_source,
+                source_provider,
+                external_id,
+                sample_state,
+                sampling_procedure,
+                path_length,
+                resolution,
+                origin,
+                owner,
                 int(source_mtime_ns),
                 int(source_size),
                 int(len(wavenumbers)),
@@ -511,16 +572,25 @@ class Database:
             result.append(d)
         return result
 
-    def get_reference_metadata(self, *, source_prefix: str | None = None) -> list[dict]:
+    def get_reference_metadata(
+        self,
+        *,
+        source_prefix: str | None = None,
+        include_web_refs: bool = False,
+    ) -> list[dict]:
         """Return lightweight reference rows without loading spectral BLOB arrays."""
         assert self._conn is not None
         sql = """
-            SELECT id, name, description, source, source_norm, source_mtime_ns, source_size,
-                   n_points, y_unit, created_at
+            SELECT id, name, description, source, source_norm, source_provider, external_id,
+                   sample_state, sampling_procedure, path_length, resolution, origin, owner,
+                   source_mtime_ns, source_size, n_points, y_unit, created_at
             FROM reference_spectra
         """
         params: tuple[object, ...] = ()
-        where_sql, params = self._reference_source_prefix_clause(source_prefix)
+        where_sql, params = self._reference_source_prefix_clause(
+            source_prefix,
+            include_web_refs=include_web_refs,
+        )
         if where_sql:
             sql += f" WHERE {where_sql}"
         sql += " ORDER BY name"
@@ -532,7 +602,8 @@ class Database:
         assert self._conn is not None
         rows = self._conn.execute(
             """
-            SELECT id, name, source, source_norm, source_mtime_ns, source_size
+            SELECT id, name, source, source_norm, source_provider, external_id,
+                   source_mtime_ns, source_size
             FROM reference_spectra
             ORDER BY name
             """
@@ -557,20 +628,27 @@ class Database:
         self,
         *,
         source_prefix: str | None = None,
+        include_web_refs: bool = False,
         feature_version: int,
     ) -> list[dict]:
         """Return metadata + stored feature vectors for similarity search."""
         assert self._conn is not None
         sql = """
-            SELECT rs.id, rs.name, rs.description, rs.source, rs.y_unit, rs.n_points,
-                   rf.feature_vector
+            SELECT rs.id, rs.name, rs.description, rs.source, rs.source_provider,
+                   rs.external_id, rs.sample_state, rs.sampling_procedure,
+                   rs.path_length, rs.resolution, rs.origin, rs.owner,
+                   rs.y_unit, rs.n_points, rf.feature_vector
             FROM reference_spectra rs
             JOIN reference_features rf
               ON rf.reference_id = rs.id
              AND rf.feature_version = ?
         """
         params_list: list[object] = [int(feature_version)]
-        where_sql, where_params = self._reference_source_prefix_clause(source_prefix, alias="rs")
+        where_sql, where_params = self._reference_source_prefix_clause(
+            source_prefix,
+            alias="rs",
+            include_web_refs=include_web_refs,
+        )
         if where_sql:
             sql += f" WHERE {where_sql}"
             params_list.extend(where_params)
@@ -587,6 +665,7 @@ class Database:
         self,
         *,
         source_prefix: str | None = None,
+        include_web_refs: bool = False,
         feature_version: int,
     ) -> list[dict]:
         """Return stored spectra that do not yet have a cached search feature."""
@@ -600,7 +679,11 @@ class Database:
             WHERE rf.reference_id IS NULL
         """
         params_list: list[object] = [int(feature_version)]
-        where_sql, where_params = self._reference_source_prefix_clause(source_prefix, alias="rs")
+        where_sql, where_params = self._reference_source_prefix_clause(
+            source_prefix,
+            alias="rs",
+            include_web_refs=include_web_refs,
+        )
         if where_sql:
             sql += f" AND {where_sql}"
             params_list.extend(where_params)
@@ -669,14 +752,23 @@ class Database:
         source_prefix: str | None,
         *,
         alias: str = "",
+        include_web_refs: bool = False,
     ) -> tuple[str, tuple[object, ...]]:
         """Return SQL + parameters for a folder-scoped `source_norm` filter."""
         if not source_prefix:
             return "", ()
         column = f"{alias}.source_norm" if alias else "source_norm"
+        provider_column = f"{alias}.source_provider" if alias else "source_provider"
         prefix = source_prefix.rstrip("/\\")
+        local_scope_clause = f"({column} = ? OR {column} LIKE ?)"
+        if include_web_refs:
+            provider_expr = f"coalesce(nullif({provider_column}, ''), 'local')"
+            return (
+                f"({local_scope_clause} OR {provider_expr} != 'local')",
+                (prefix, f"{prefix}/%"),
+            )
         return (
-            f"({column} = ? OR {column} LIKE ?)",
+            local_scope_clause,
             (prefix, f"{prefix}/%"),
         )
 
