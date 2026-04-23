@@ -17,7 +17,7 @@
 ; automatically whenever a vX.Y.Z tag is pushed.
 
 #define MyAppName "IR Spectra Analyzer"
-#define MyAppVersion "0.6.1"
+#define MyAppVersion "0.6.2"
 #define MyAppPublisher "IRSpectra"
 #define MyAppURL "https://github.com/kubikhavran/ir-spectra-analyzer"
 #define MyAppExeName "IR Spectra Analyzer.exe"

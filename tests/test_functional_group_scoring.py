@@ -24,6 +24,40 @@ def _make_absorbance_spectrum(features: list[tuple[float, float, float]], title:
     return Spectrum(wavenumbers=wn, intensities=signal, title=title)
 
 
+def _make_group_signature_spectrum(group_id: str):
+    from core.spectrum import Spectrum
+    from storage.functional_group_repository import FunctionalGroupRepository
+
+    knowledge_base = FunctionalGroupRepository().load()
+    group = next(group for group in knowledge_base.groups if group.id == group_id)
+
+    wn = np.linspace(4000.0, 400.0, 3601)
+    signal = np.full_like(wn, 0.02)
+
+    for band in group.bands:
+        if band.role == "exclusion":
+            continue
+        center = (band.range_min + band.range_max) / 2.0
+        width = max(abs(band.range_max - band.range_min) / 5.0, 8.0)
+        if band.shape == "broad":
+            width = max(width, 90.0)
+        elif band.shape == "paired":
+            offset = max(abs(band.range_max - band.range_min) / 4.0, 12.0)
+            signal += _gaussian(wn, center - offset, width * 0.85, 0.26)
+            signal += _gaussian(wn, center + offset, width * 0.85, 0.24)
+            continue
+
+        height = {
+            "w": 0.08,
+            "m": 0.20,
+            "s": 0.30,
+            "vs": 0.40,
+        }.get(band.expected_intensity, 0.20)
+        signal += _gaussian(wn, center, width, height)
+
+    return Spectrum(wavenumbers=wn, intensities=signal, title=group_id)
+
+
 def test_functional_group_scoring_ranks_carboxylic_acid_first():
     from processing.functional_group_scoring import score_functional_groups
 
@@ -114,6 +148,24 @@ def test_functional_group_repository_contains_common_backbone_groups():
     assert "cis_disubstituted_alkene" in group_ids
     assert "trisubstituted_alkene" in group_ids
     assert "benzene" in group_ids
+
+
+@pytest.mark.parametrize(
+    "group_id",
+    [
+        "tert_butyl_group",
+        "terminal_alkene",
+        "meta_disubstituted_benzene",
+    ],
+)
+def test_functional_group_scoring_prefers_specific_group_for_own_signature(group_id):
+    from processing.functional_group_scoring import score_functional_groups
+
+    spectrum = _make_group_signature_spectrum(group_id)
+
+    analysis = score_functional_groups(spectrum)
+
+    assert analysis.results[0].group_id == group_id
 
 
 @pytest.mark.parametrize(

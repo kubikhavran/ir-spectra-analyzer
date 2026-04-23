@@ -1370,8 +1370,8 @@
         {
           "id": "aliphatic_tert_butyl_marker",
           "label": "tert-Butyl marker overlap",
-          "range_min": 925.0,
-          "range_max": 930.0,
+          "range_min": 920.0,
+          "range_max": 935.0,
           "expected_intensity": "m",
           "shape": "sharp",
           "role": "exclusion",
@@ -1562,8 +1562,8 @@
         {
           "id": "methyl_tert_butyl_marker",
           "label": "tert-Butyl marker overlap",
-          "range_min": 925.0,
-          "range_max": 930.0,
+          "range_min": 920.0,
+          "range_max": 935.0,
           "expected_intensity": "m",
           "shape": "sharp",
           "role": "exclusion",
@@ -1682,19 +1682,19 @@
       "id": "tert_butyl_group",
       "name": "tert-Butyl Group",
       "color": "#935116",
-      "summary": "tert-Butyl motif marked by the 925–930 cm⁻¹ tert-butyl band and methyl-rich support.",
+      "summary": "tert-Butyl motif marked by the 920–935 cm⁻¹ tert-butyl band and methyl-rich support.",
       "source_refs": ["sigma", "niu", "pavia"],
       "bands": [
         {
           "id": "tert_butyl_marker",
           "label": "tert-Butyl marker band",
-          "range_min": 925.0,
-          "range_max": 930.0,
+          "range_min": 920.0,
+          "range_max": 935.0,
           "expected_intensity": "m",
           "shape": "sharp",
           "role": "required",
-          "weight": 1.25,
-          "reliability": 1.08,
+          "weight": 1.35,
+          "reliability": 1.12,
           "channel": "sharp_corrected",
           "suggested_preset_names": [
             "–C(CH₃)₃ tert-butyl"
@@ -2097,17 +2097,32 @@
         },
         {
           "id": "alkene_terminal_oop_exclusion",
-          "label": "Terminal alkene vinyl oop pattern",
-          "range_min": 905.0,
+          "label": "Terminal alkene vinyl oop high marker",
+          "range_min": 980.0,
           "range_max": 995.0,
           "expected_intensity": "m",
-          "shape": "paired",
+          "shape": "sharp",
           "role": "exclusion",
-          "weight": 0.82,
-          "reliability": 0.95,
+          "weight": 0.84,
+          "reliability": 0.96,
           "channel": "sharp_corrected",
           "suggested_preset_names": [
-            "γ(CH) –CH=CH₂ vinyl",
+            "γ(CH) –CH=CH₂ vinyl"
+          ],
+          "source_refs": ["sigma", "nist_chart"]
+        },
+        {
+          "id": "alkene_terminal_oop_low_exclusion",
+          "label": "Terminal alkene vinyl oop low marker",
+          "range_min": 905.0,
+          "range_max": 915.0,
+          "expected_intensity": "m",
+          "shape": "sharp",
+          "role": "exclusion",
+          "weight": 0.84,
+          "reliability": 0.96,
+          "channel": "sharp_corrected",
+          "suggested_preset_names": [
             "γ(CH) R–CH=CH₂ terminal"
           ],
           "source_refs": ["sigma", "nist_chart"]
@@ -3192,6 +3207,22 @@
             "ν(C=C) Ar ~1490"
           ],
           "source_refs": ["sigma", "msu"]
+        },
+        {
+          "id": "trisub123_meta_high_exclusion",
+          "label": "Meta aromatic high oop exclusion",
+          "range_min": 860.0,
+          "range_max": 900.0,
+          "expected_intensity": "s",
+          "shape": "sharp",
+          "role": "exclusion",
+          "weight": 0.80,
+          "reliability": 0.90,
+          "channel": "sharp_corrected",
+          "suggested_preset_names": [
+            "γ(CH) Ar 1H isolated"
+          ],
+          "source_refs": ["sigma", "msu", "nist_chart"]
         }
       ],
       "coherence_rules": [
@@ -3607,8 +3638,8 @@
         {
           "id": "amine_salt_tert_butyl_exclusion",
           "label": "tert-Butyl marker exclusion",
-          "range_min": 925.0,
-          "range_max": 930.0,
+          "range_min": 920.0,
+          "range_max": 935.0,
           "expected_intensity": "m",
           "shape": "sharp",
           "role": "exclusion",
