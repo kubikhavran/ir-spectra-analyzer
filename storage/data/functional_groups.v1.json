@@ -4,6 +4,9 @@
     "sigma": "https://www.sigmaaldrich.com/KR/ko/technical-documents/technical-article/analytical-chemistry/photometry-and-reflectometry/ir-spectrum-table?report=reader",
     "ucla": "https://webspectra.chem.ucla.edu/irtable.html",
     "msu": "https://www2.chemistry.msu.edu/faculty/reusch/OrgTxtBook/Spectrpy/InfraRed/irspec1.htm",
+    "niu": "https://www.niu.edu/chembio/research/analytical-lab/ftir/ir-frequencies-table.shtml",
+    "chimactiv": "https://chimactiv.agroparistech.fr/en/bases/ir-raman/interpretation-spectre/4",
+    "pavia": "https://diverdi.colostate.edu/C372/experiments/vibrational%20spectra%20of%20halogenated%20methanes/references/IR-Tables-Pavia.pdf",
     "libretexts": "https://chem.libretexts.org/Bookshelves/Organic_Chemistry/Organic_Chemistry_%28Morsch_et_al.%29/12%3A_Structure_Determination_-_Mass_Spectrometry_and_Infrared_Spectroscopy/12.08%3A_Infrared_Spectra_of_Some_Common_Functional_Groups",
     "nist_chart": "https://nvlpubs.nist.gov/nistpubs/Legacy/TN/nbstechnicalnote1096.pdf",
     "socrates_biblio": "https://books.google.com/books/about/Infrared_and_Raman_Characteristic_Group.html?id=LDoAAjMnwEIC"
@@ -179,6 +182,214 @@
       ]
     },
     {
+      "id": "primary_amide",
+      "name": "Primary Amide",
+      "color": "#CD6155",
+      "summary": "Primary amide with NH₂ doublet, amide I, and amide II support.",
+      "source_refs": ["sigma", "msu", "ucla", "pavia", "nist_chart"],
+      "bands": [
+        {
+          "id": "primary_amide_co",
+          "label": "Primary amide I C=O stretch",
+          "range_min": 1630.0,
+          "range_max": 1690.0,
+          "expected_intensity": "s",
+          "shape": "sharp",
+          "role": "required",
+          "weight": 1.28,
+          "reliability": 1.08,
+          "channel": "sharp_corrected",
+          "suggested_preset_names": [
+            "ν(C=O) amide I –CO–NH₂ (1670–1690)",
+            "ν(C=O) amide I –CO–NH₂ (1650–1670)"
+          ],
+          "source_refs": ["sigma", "ucla", "nist_chart"]
+        },
+        {
+          "id": "primary_amide_nh2",
+          "label": "Primary amide NH₂ stretch pair",
+          "range_min": 3170.0,
+          "range_max": 3500.0,
+          "expected_intensity": "m",
+          "shape": "paired",
+          "role": "required",
+          "weight": 1.05,
+          "reliability": 1.02,
+          "channel": "broad_raw",
+          "suggested_preset_names": [
+            "νas(NH₂) –CO–NH₂",
+            "νs(NH₂) –CO–NH₂",
+            "νas(NH₂) –CONH₂",
+            "νs(NH₂) –CONH₂"
+          ],
+          "source_refs": ["sigma", "msu", "ucla", "nist_chart"]
+        },
+        {
+          "id": "primary_amide_ii",
+          "label": "Primary amide II NH₂ bend",
+          "range_min": 1600.0,
+          "range_max": 1650.0,
+          "expected_intensity": "m",
+          "shape": "sharp",
+          "role": "required",
+          "weight": 1.0,
+          "reliability": 1.0,
+          "channel": "sharp_corrected",
+          "suggested_preset_names": [
+            "δ(NH₂) amide II –CO–NH₂",
+            "δ(NH₂) –CO–NH₂"
+          ],
+          "source_refs": ["msu", "nist_chart"]
+        },
+        {
+          "id": "primary_amide_iii",
+          "label": "Primary amide III C-N stretch",
+          "range_min": 1400.0,
+          "range_max": 1420.0,
+          "expected_intensity": "w",
+          "shape": "sharp",
+          "role": "supporting",
+          "weight": 0.68,
+          "reliability": 0.9,
+          "channel": "sharp_corrected",
+          "suggested_preset_names": [
+            "ν(CN) amide III –CO–NH₂"
+          ],
+          "source_refs": ["sigma", "pavia", "nist_chart"]
+        },
+        {
+          "id": "primary_amide_wag",
+          "label": "Primary amide NH₂ wag",
+          "range_min": 600.0,
+          "range_max": 750.0,
+          "expected_intensity": "w",
+          "shape": "sharp",
+          "role": "supporting",
+          "weight": 0.55,
+          "reliability": 0.75,
+          "channel": "sharp_corrected",
+          "suggested_preset_names": [
+            "γ(NH₂) –CO–NH₂ amide"
+          ],
+          "source_refs": ["msu", "pavia"]
+        }
+      ],
+      "coherence_rules": [
+        {
+          "band_ids": ["primary_amide_co", "primary_amide_nh2"],
+          "bonus": 0.35,
+          "threshold": 0.45,
+          "label": "Primary amide C=O + NH₂ pair"
+        },
+        {
+          "band_ids": ["primary_amide_co", "primary_amide_nh2", "primary_amide_ii"],
+          "bonus": 0.55,
+          "threshold": 0.45,
+          "label": "Primary amide diagnostic triad"
+        },
+        {
+          "band_ids": ["primary_amide_co", "primary_amide_nh2", "primary_amide_ii", "primary_amide_iii"],
+          "bonus": 0.2,
+          "threshold": 0.4,
+          "label": "Primary amide full signature"
+        }
+      ]
+    },
+    {
+      "id": "secondary_amide",
+      "name": "Secondary Amide",
+      "color": "#C85A54",
+      "summary": "Secondary amide with one N-H stretch and amide III support.",
+      "source_refs": ["sigma", "msu", "ucla", "pavia", "nist_chart"],
+      "bands": [
+        {
+          "id": "secondary_amide_co",
+          "label": "Secondary amide I C=O stretch",
+          "range_min": 1630.0,
+          "range_max": 1685.0,
+          "expected_intensity": "s",
+          "shape": "sharp",
+          "role": "required",
+          "weight": 1.24,
+          "reliability": 1.05,
+          "channel": "sharp_corrected",
+          "suggested_preset_names": [
+            "ν(C=O) amide I –CO–NH₂ (1670–1690)",
+            "ν(C=O) amide I –CO–NH₂ (1650–1670)"
+          ],
+          "source_refs": ["sigma", "ucla", "nist_chart"]
+        },
+        {
+          "id": "secondary_amide_nh",
+          "label": "Secondary amide N-H stretch",
+          "range_min": 3170.0,
+          "range_max": 3350.0,
+          "expected_intensity": "m",
+          "shape": "broad",
+          "role": "required",
+          "weight": 1.0,
+          "reliability": 0.98,
+          "channel": "broad_raw",
+          "suggested_preset_names": [
+            "ν(NH) –NH–"
+          ],
+          "source_refs": ["sigma", "msu", "ucla", "nist_chart"]
+        },
+        {
+          "id": "secondary_amide_iii",
+          "label": "Secondary amide III C-N stretch",
+          "range_min": 1300.0,
+          "range_max": 1350.0,
+          "expected_intensity": "m",
+          "shape": "sharp",
+          "role": "required",
+          "weight": 1.0,
+          "reliability": 0.98,
+          "channel": "sharp_corrected",
+          "suggested_preset_names": [
+            "ν(CN) amide III –NH–CO–"
+          ],
+          "source_refs": ["sigma", "pavia", "nist_chart"]
+        },
+        {
+          "id": "secondary_amide_wag",
+          "label": "Secondary amide N-H wag",
+          "range_min": 700.0,
+          "range_max": 750.0,
+          "expected_intensity": "w",
+          "shape": "sharp",
+          "role": "supporting",
+          "weight": 0.58,
+          "reliability": 0.78,
+          "channel": "sharp_corrected",
+          "suggested_preset_names": [
+            "ω(NH) –NH–"
+          ],
+          "source_refs": ["msu", "pavia"]
+        }
+      ],
+      "coherence_rules": [
+        {
+          "band_ids": ["secondary_amide_co", "secondary_amide_nh"],
+          "bonus": 0.3,
+          "threshold": 0.45,
+          "label": "Secondary amide C=O + N-H coherence"
+        },
+        {
+          "band_ids": ["secondary_amide_co", "secondary_amide_nh", "secondary_amide_iii"],
+          "bonus": 0.45,
+          "threshold": 0.45,
+          "label": "Secondary amide diagnostic triad"
+        },
+        {
+          "band_ids": ["secondary_amide_nh", "secondary_amide_wag"],
+          "bonus": 0.18,
+          "threshold": 0.4,
+          "label": "Secondary amide N-H support"
+        }
+      ]
+    },
+    {
       "id": "ester",
       "name": "Ester",
       "color": "#AF601A",
@@ -347,6 +558,51 @@
             "ν(CO) R₂CH–OH sec."
           ],
           "source_refs": ["msu", "libretexts"]
+        },
+        {
+          "id": "alcohol_primary_specific",
+          "label": "Primary alcohol-specific C-O window",
+          "range_min": 1045.0,
+          "range_max": 1088.0,
+          "expected_intensity": "m",
+          "shape": "sharp",
+          "role": "exclusion",
+          "weight": 0.42,
+          "reliability": 0.82,
+          "channel": "sharp_corrected",
+          "suggested_preset_names": ["ν(CO) R–OH prim."],
+          "source_refs": ["sigma", "niu"]
+        },
+        {
+          "id": "alcohol_secondary_specific",
+          "label": "Secondary alcohol-specific C-O window",
+          "range_min": 1087.0,
+          "range_max": 1124.0,
+          "expected_intensity": "m",
+          "shape": "sharp",
+          "role": "exclusion",
+          "weight": 0.42,
+          "reliability": 0.82,
+          "channel": "sharp_corrected",
+          "suggested_preset_names": ["ν(CO) R₂CH–OH sec."],
+          "source_refs": ["sigma", "niu"]
+        },
+        {
+          "id": "alcohol_amine_bend_exclusion",
+          "label": "Amine N-H bend exclusion",
+          "range_min": 1580.0,
+          "range_max": 1650.0,
+          "expected_intensity": "m",
+          "shape": "sharp",
+          "role": "exclusion",
+          "weight": 0.82,
+          "reliability": 0.92,
+          "channel": "sharp_corrected",
+          "suggested_preset_names": [
+            "δ(NH₂) –NH₂",
+            "δ(NH) –NH–"
+          ],
+          "source_refs": ["sigma", "msu", "nist_chart"]
         }
       ],
       "coherence_rules": [
@@ -355,6 +611,256 @@
           "bonus": 0.25,
           "threshold": 0.4,
           "label": "Alcohol O-H + C-O coherence"
+        }
+      ]
+    },
+    {
+      "id": "primary_alcohol",
+      "name": "Primary Alcohol",
+      "color": "#2471A3",
+      "summary": "Broad O-H band with primary-alcohol C-O stretch near 1085–1050 cm⁻¹.",
+      "source_refs": ["sigma", "msu", "ucla", "niu"],
+      "bands": [
+        {
+          "id": "primary_alcohol_oh",
+          "label": "Primary alcohol O-H stretch",
+          "range_min": 3200.0,
+          "range_max": 3550.0,
+          "expected_intensity": "s",
+          "shape": "broad",
+          "role": "required",
+          "weight": 1.0,
+          "reliability": 0.88,
+          "channel": "broad_raw",
+          "suggested_preset_names": [
+            "ν(OH) –OH solid/liq.",
+            "ν(OH) –OH intramol. H-bond"
+          ],
+          "source_refs": ["sigma", "ucla", "niu"]
+        },
+        {
+          "id": "primary_alcohol_co",
+          "label": "Primary alcohol C-O stretch",
+          "range_min": 1045.0,
+          "range_max": 1088.0,
+          "expected_intensity": "s",
+          "shape": "sharp",
+          "role": "required",
+          "weight": 1.25,
+          "reliability": 1.05,
+          "channel": "sharp_corrected",
+          "suggested_preset_names": [
+            "ν(CO) R–OH prim."
+          ],
+          "source_refs": ["sigma"]
+        },
+        {
+          "id": "primary_alcohol_coh",
+          "label": "Alcohol C-O-H bend support",
+          "range_min": 1260.0,
+          "range_max": 1350.0,
+          "expected_intensity": "m",
+          "shape": "sharp",
+          "role": "supporting",
+          "weight": 0.0,
+          "reliability": 0.0,
+          "channel": "sharp_corrected",
+          "suggested_preset_names": [
+            "δ(COH) R–OH prim./sec."
+          ],
+          "source_refs": ["msu", "pavia"]
+        },
+        {
+          "id": "primary_alcohol_amine_bend_exclusion",
+          "label": "Primary amine NH₂ bend exclusion",
+          "range_min": 1580.0,
+          "range_max": 1650.0,
+          "expected_intensity": "m",
+          "shape": "sharp",
+          "role": "exclusion",
+          "weight": 0.82,
+          "reliability": 0.92,
+          "channel": "sharp_corrected",
+          "suggested_preset_names": [
+            "δ(NH₂) –NH₂"
+          ],
+          "source_refs": ["sigma", "msu", "nist_chart"]
+        }
+      ],
+      "coherence_rules": [
+        {
+          "band_ids": ["primary_alcohol_oh", "primary_alcohol_co"],
+          "bonus": 0.68,
+          "threshold": 0.4,
+          "label": "Primary alcohol O-H + C-O coherence"
+        }
+      ]
+    },
+    {
+      "id": "secondary_alcohol",
+      "name": "Secondary Alcohol",
+      "color": "#2E86C1",
+      "summary": "Broad O-H band with secondary-alcohol C-O stretch near 1124–1087 cm⁻¹.",
+      "source_refs": ["sigma", "msu", "ucla", "niu"],
+      "bands": [
+        {
+          "id": "secondary_alcohol_oh",
+          "label": "Secondary alcohol O-H stretch",
+          "range_min": 3200.0,
+          "range_max": 3550.0,
+          "expected_intensity": "s",
+          "shape": "broad",
+          "role": "required",
+          "weight": 1.0,
+          "reliability": 0.88,
+          "channel": "broad_raw",
+          "suggested_preset_names": [
+            "ν(OH) –OH solid/liq.",
+            "ν(OH) –OH intramol. H-bond"
+          ],
+          "source_refs": ["sigma", "ucla", "niu"]
+        },
+        {
+          "id": "secondary_alcohol_co",
+          "label": "Secondary alcohol C-O stretch",
+          "range_min": 1087.0,
+          "range_max": 1124.0,
+          "expected_intensity": "s",
+          "shape": "sharp",
+          "role": "required",
+          "weight": 1.25,
+          "reliability": 1.05,
+          "channel": "sharp_corrected",
+          "suggested_preset_names": [
+            "ν(CO) R₂CH–OH sec."
+          ],
+          "source_refs": ["sigma"]
+        },
+        {
+          "id": "secondary_alcohol_coh",
+          "label": "Alcohol C-O-H bend support",
+          "range_min": 1260.0,
+          "range_max": 1350.0,
+          "expected_intensity": "m",
+          "shape": "sharp",
+          "role": "supporting",
+          "weight": 0.0,
+          "reliability": 0.0,
+          "channel": "sharp_corrected",
+          "suggested_preset_names": [
+            "δ(COH) R–OH prim./sec."
+          ],
+          "source_refs": ["msu", "pavia"]
+        }
+      ],
+      "coherence_rules": [
+        {
+          "band_ids": ["secondary_alcohol_oh", "secondary_alcohol_co"],
+          "bonus": 0.62,
+          "threshold": 0.4,
+          "label": "Secondary alcohol O-H + C-O coherence"
+        }
+      ]
+    },
+    {
+      "id": "tertiary_alcohol",
+      "name": "Tertiary Alcohol",
+      "color": "#3498DB",
+      "summary": "Broad O-H with tertiary-alcohol C-O support at higher wavenumber.",
+      "source_refs": ["sigma", "msu", "niu", "pavia"],
+      "bands": [
+        {
+          "id": "tertiary_alcohol_oh",
+          "label": "Tertiary alcohol O-H stretch",
+          "range_min": 3200.0,
+          "range_max": 3550.0,
+          "expected_intensity": "s",
+          "shape": "broad",
+          "role": "required",
+          "weight": 1.0,
+          "reliability": 0.88,
+          "channel": "broad_raw",
+          "suggested_preset_names": [
+            "ν(OH) –OH solid/liq.",
+            "ν(OH) –OH intramol. H-bond"
+          ],
+          "source_refs": ["sigma", "msu", "niu"]
+        },
+        {
+          "id": "tertiary_alcohol_co",
+          "label": "Tertiary alcohol C-O stretch",
+          "range_min": 1124.0,
+          "range_max": 1205.0,
+          "expected_intensity": "s",
+          "shape": "sharp",
+          "role": "required",
+          "weight": 1.15,
+          "reliability": 0.92,
+          "channel": "sharp_corrected",
+          "suggested_preset_names": [],
+          "source_refs": ["sigma", "niu"]
+        },
+        {
+          "id": "tertiary_alcohol_coh",
+          "label": "Tertiary alcohol C-O-H bend",
+          "range_min": 1310.0,
+          "range_max": 1440.0,
+          "expected_intensity": "m",
+          "shape": "sharp",
+          "role": "supporting",
+          "weight": 0.82,
+          "reliability": 0.88,
+          "channel": "sharp_corrected",
+          "suggested_preset_names": [
+            "δ(COH) tert./Ar–OH"
+          ],
+          "source_refs": ["msu", "pavia"]
+        },
+        {
+          "id": "tertiary_alcohol_sulfonamide_high",
+          "label": "Sulfonamide-like high SO₂ marker",
+          "range_min": 1335.0,
+          "range_max": 1350.0,
+          "expected_intensity": "m",
+          "shape": "sharp",
+          "role": "exclusion",
+          "weight": 0.82,
+          "reliability": 0.95,
+          "channel": "sharp_corrected",
+          "suggested_preset_names": [
+            "νas(SO₂) sulfonamide"
+          ],
+          "source_refs": ["sigma", "pavia"]
+        },
+        {
+          "id": "tertiary_alcohol_sulfonamide_low",
+          "label": "Sulfonamide-like low SO₂ marker",
+          "range_min": 1155.0,
+          "range_max": 1170.0,
+          "expected_intensity": "m",
+          "shape": "sharp",
+          "role": "exclusion",
+          "weight": 0.82,
+          "reliability": 0.95,
+          "channel": "sharp_corrected",
+          "suggested_preset_names": [
+            "νs(SO₂) sulfonamide"
+          ],
+          "source_refs": ["sigma", "pavia"]
+        }
+      ],
+      "coherence_rules": [
+        {
+          "band_ids": ["tertiary_alcohol_oh", "tertiary_alcohol_co"],
+          "bonus": 0.6,
+          "threshold": 0.4,
+          "label": "Tertiary alcohol O-H + C-O coherence"
+        },
+        {
+          "band_ids": ["tertiary_alcohol_oh", "tertiary_alcohol_co", "tertiary_alcohol_coh"],
+          "bonus": 0.18,
+          "threshold": 0.4,
+          "label": "Tertiary alcohol full pattern"
         }
       ]
     },
@@ -519,6 +1025,39 @@
             "ν(CN) Ar₂NH/Ar–NH–R"
           ],
           "source_refs": ["sigma", "msu", "nist_chart"]
+        },
+        {
+          "id": "amine_primary_pair_exclusion",
+          "label": "Primary amine NH₂ pair marker",
+          "range_min": 3250.0,
+          "range_max": 3550.0,
+          "expected_intensity": "m",
+          "shape": "paired",
+          "role": "exclusion",
+          "weight": 0.28,
+          "reliability": 0.68,
+          "channel": "broad_raw",
+          "suggested_preset_names": [
+            "νas(NH₂) –NH₂",
+            "νs(NH₂) –NH₂"
+          ],
+          "source_refs": ["sigma", "msu", "ucla", "nist_chart"]
+        },
+        {
+          "id": "amine_secondary_cn_exclusion",
+          "label": "Secondary amine C-N marker",
+          "range_min": 1170.0,
+          "range_max": 1190.0,
+          "expected_intensity": "m",
+          "shape": "sharp",
+          "role": "exclusion",
+          "weight": 0.36,
+          "reliability": 0.68,
+          "channel": "sharp_corrected",
+          "suggested_preset_names": [
+            "ν(CN) R₂NH"
+          ],
+          "source_refs": ["sigma", "msu", "nist_chart"]
         }
       ],
       "coherence_rules": [
@@ -533,6 +1072,801 @@
           "bonus": 0.3,
           "threshold": 0.4,
           "label": "Amine triad bonus"
+        }
+      ]
+    },
+    {
+      "id": "primary_amine",
+      "name": "Primary Amine",
+      "color": "#CA6F1E",
+      "summary": "Primary amine with NH₂ stretch pair, NH₂ bend, and aliphatic C-N support.",
+      "source_refs": ["sigma", "msu", "ucla", "nist_chart"],
+      "bands": [
+        {
+          "id": "primary_amine_nh2",
+          "label": "Primary amine NH₂ stretch pair",
+          "range_min": 3250.0,
+          "range_max": 3550.0,
+          "expected_intensity": "m",
+          "shape": "paired",
+          "role": "required",
+          "weight": 1.08,
+          "reliability": 0.96,
+          "channel": "broad_raw",
+          "suggested_preset_names": [
+            "νas(NH₂) –NH₂",
+            "νs(NH₂) –NH₂"
+          ],
+          "source_refs": ["sigma", "msu", "ucla", "nist_chart"]
+        },
+        {
+          "id": "primary_amine_bend",
+          "label": "Primary amine NH₂ bend",
+          "range_min": 1580.0,
+          "range_max": 1650.0,
+          "expected_intensity": "m",
+          "shape": "sharp",
+          "role": "required",
+          "weight": 0.92,
+          "reliability": 0.88,
+          "channel": "sharp_corrected",
+          "suggested_preset_names": [
+            "δ(NH₂) –NH₂"
+          ],
+          "source_refs": ["sigma", "msu", "nist_chart"]
+        },
+        {
+          "id": "primary_amine_cn",
+          "label": "Primary amine C-N stretch",
+          "range_min": 1000.0,
+          "range_max": 1100.0,
+          "expected_intensity": "m",
+          "shape": "sharp",
+          "role": "supporting",
+          "weight": 0.78,
+          "reliability": 0.86,
+          "channel": "sharp_corrected",
+          "suggested_preset_names": [
+            "ν(CN) RNH₂"
+          ],
+          "source_refs": ["sigma", "msu", "nist_chart"]
+        },
+        {
+          "id": "primary_amine_wag",
+          "label": "Primary amine NH wag",
+          "range_min": 650.0,
+          "range_max": 900.0,
+          "expected_intensity": "w",
+          "shape": "sharp",
+          "role": "supporting",
+          "weight": 0.44,
+          "reliability": 0.58,
+          "channel": "sharp_corrected",
+          "suggested_preset_names": [
+            "γ(NH) –NH₂"
+          ],
+          "source_refs": ["msu", "nist_chart"]
+        },
+        {
+          "id": "primary_amine_carbonyl_exclusion",
+          "label": "Amide carbonyl exclusion",
+          "range_min": 1690.0,
+          "range_max": 1815.0,
+          "expected_intensity": "s",
+          "shape": "sharp",
+          "role": "exclusion",
+          "weight": 0.28,
+          "reliability": 0.50,
+          "channel": "sharp_corrected",
+          "source_refs": ["sigma", "ucla", "nist_chart"]
+        },
+        {
+          "id": "primary_amine_aromatic_exclusion",
+          "label": "Aromatic amine ring exclusion",
+          "range_min": 1490.0,
+          "range_max": 1625.0,
+          "expected_intensity": "m",
+          "shape": "paired",
+          "role": "exclusion",
+          "weight": 0.52,
+          "reliability": 0.62,
+          "channel": "sharp_corrected",
+          "source_refs": ["sigma", "msu"]
+        }
+      ],
+      "coherence_rules": [
+        {
+          "band_ids": ["primary_amine_nh2", "primary_amine_bend"],
+          "bonus": 0.40,
+          "threshold": 0.42,
+          "label": "Primary amine NH₂ coherence"
+        },
+        {
+          "band_ids": ["primary_amine_nh2", "primary_amine_bend", "primary_amine_cn"],
+          "bonus": 0.24,
+          "threshold": 0.4,
+          "label": "Primary amine aliphatic triad"
+        }
+      ]
+    },
+    {
+      "id": "secondary_amine",
+      "name": "Secondary Amine",
+      "color": "#B9770E",
+      "summary": "Secondary amine with single N-H stretch, N-H bend, and secondary-amine C-N support.",
+      "source_refs": ["sigma", "msu", "ucla", "nist_chart"],
+      "bands": [
+        {
+          "id": "secondary_amine_nh",
+          "label": "Secondary amine N-H stretch",
+          "range_min": 3300.0,
+          "range_max": 3500.0,
+          "expected_intensity": "m",
+          "shape": "sharp",
+          "role": "required",
+          "weight": 1.0,
+          "reliability": 0.92,
+          "channel": "broad_raw",
+          "suggested_preset_names": [
+            "ν(NH) –NH–"
+          ],
+          "source_refs": ["sigma", "msu", "ucla", "nist_chart"]
+        },
+        {
+          "id": "secondary_amine_bend",
+          "label": "Secondary amine N-H bend",
+          "range_min": 1490.0,
+          "range_max": 1580.0,
+          "expected_intensity": "m",
+          "shape": "sharp",
+          "role": "required",
+          "weight": 0.90,
+          "reliability": 0.88,
+          "channel": "sharp_corrected",
+          "suggested_preset_names": [
+            "δ(NH) –NH–"
+          ],
+          "source_refs": ["sigma", "msu", "nist_chart"]
+        },
+        {
+          "id": "secondary_amine_cn",
+          "label": "Secondary amine C-N stretch",
+          "range_min": 1170.0,
+          "range_max": 1190.0,
+          "expected_intensity": "m",
+          "shape": "sharp",
+          "role": "required",
+          "weight": 0.84,
+          "reliability": 0.88,
+          "channel": "sharp_corrected",
+          "suggested_preset_names": [
+            "ν(CN) R₂NH"
+          ],
+          "source_refs": ["sigma", "msu", "nist_chart"]
+        },
+        {
+          "id": "secondary_amine_wag",
+          "label": "Secondary amine N-H wag",
+          "range_min": 700.0,
+          "range_max": 750.0,
+          "expected_intensity": "w",
+          "shape": "sharp",
+          "role": "supporting",
+          "weight": 0.46,
+          "reliability": 0.62,
+          "channel": "sharp_corrected",
+          "suggested_preset_names": [
+            "ω(NH) –NH–"
+          ],
+          "source_refs": ["sigma", "msu", "nist_chart"]
+        },
+        {
+          "id": "secondary_amine_carbonyl_exclusion",
+          "label": "Amide carbonyl exclusion",
+          "range_min": 1690.0,
+          "range_max": 1815.0,
+          "expected_intensity": "s",
+          "shape": "sharp",
+          "role": "exclusion",
+          "weight": 0.28,
+          "reliability": 0.50,
+          "channel": "sharp_corrected",
+          "source_refs": ["sigma", "ucla", "nist_chart"]
+        },
+        {
+          "id": "secondary_amine_aromatic_exclusion",
+          "label": "Aromatic amine ring exclusion",
+          "range_min": 1490.0,
+          "range_max": 1625.0,
+          "expected_intensity": "m",
+          "shape": "paired",
+          "role": "exclusion",
+          "weight": 0.56,
+          "reliability": 0.66,
+          "channel": "sharp_corrected",
+          "source_refs": ["sigma", "msu"]
+        }
+      ],
+      "coherence_rules": [
+        {
+          "band_ids": ["secondary_amine_nh", "secondary_amine_bend"],
+          "bonus": 0.28,
+          "threshold": 0.4,
+          "label": "Secondary amine N-H coherence"
+        },
+        {
+          "band_ids": ["secondary_amine_nh", "secondary_amine_bend", "secondary_amine_cn"],
+          "bonus": 0.34,
+          "threshold": 0.4,
+          "label": "Secondary amine diagnostic triad"
+        },
+        {
+          "band_ids": ["secondary_amine_nh", "secondary_amine_wag"],
+          "bonus": 0.14,
+          "threshold": 0.38,
+          "label": "Secondary amine N-H wag support"
+        }
+      ]
+    },
+    {
+      "id": "aliphatic_hydrocarbon",
+      "name": "Aliphatic Hydrocarbon",
+      "color": "#7D6608",
+      "summary": "General sp³ C-H pattern supported by CH₂ and CH₃ deformations.",
+      "source_refs": ["sigma", "ucla", "niu", "chimactiv", "pavia"],
+      "bands": [
+        {
+          "id": "aliphatic_ch",
+          "label": "Aliphatic sp³ C-H stretches",
+          "range_min": 2840.0,
+          "range_max": 3000.0,
+          "expected_intensity": "m",
+          "shape": "paired",
+          "role": "required",
+          "weight": 0.72,
+          "reliability": 0.55,
+          "channel": "broad_raw",
+          "suggested_preset_names": [
+            "νas(CH₃) –CH₃",
+            "νas(CH₂) –CH₂–",
+            "νs(CH₃) –CH₃",
+            "νs(CH₂) –CH₂–"
+          ],
+          "source_refs": ["sigma", "ucla", "niu"]
+        },
+        {
+          "id": "aliphatic_ch2_bend",
+          "label": "Aliphatic CH₂ deformation",
+          "range_min": 1450.0,
+          "range_max": 1472.0,
+          "expected_intensity": "m",
+          "shape": "sharp",
+          "role": "supporting",
+          "weight": 0.58,
+          "reliability": 0.68,
+          "channel": "sharp_corrected",
+          "suggested_preset_names": [
+            "δ(CH₂) –CH₂–"
+          ],
+          "source_refs": ["sigma", "niu", "chimactiv", "pavia"]
+        },
+        {
+          "id": "aliphatic_ch3_bend",
+          "label": "Aliphatic CH₃ deformation",
+          "range_min": 1368.0,
+          "range_max": 1382.0,
+          "expected_intensity": "m",
+          "shape": "sharp",
+          "role": "supporting",
+          "weight": 0.52,
+          "reliability": 0.68,
+          "channel": "sharp_corrected",
+          "suggested_preset_names": [
+            "δd(CH₃) –CH₃",
+            "δs(CH₃) (CH₃)₂CH isopropyl"
+          ],
+          "source_refs": ["niu", "chimactiv", "pavia"]
+        },
+        {
+          "id": "aliphatic_tert_butyl_marker",
+          "label": "tert-Butyl marker overlap",
+          "range_min": 925.0,
+          "range_max": 930.0,
+          "expected_intensity": "m",
+          "shape": "sharp",
+          "role": "exclusion",
+          "weight": 0.9,
+          "reliability": 1.0,
+          "channel": "sharp_corrected",
+          "suggested_preset_names": [
+            "–C(CH₃)₃ tert-butyl"
+          ],
+          "source_refs": ["pavia"]
+        }
+      ],
+      "coherence_rules": [
+        {
+          "band_ids": ["aliphatic_ch", "aliphatic_ch2_bend"],
+          "bonus": 0.18,
+          "threshold": 0.35,
+          "label": "Aliphatic C-H + CH₂ coherence"
+        },
+        {
+          "band_ids": ["aliphatic_ch", "aliphatic_ch2_bend", "aliphatic_ch3_bend"],
+          "bonus": 0.12,
+          "threshold": 0.35,
+          "label": "Aliphatic backbone pattern"
+        }
+      ]
+    },
+    {
+      "id": "methylene_rich_alkyl",
+      "name": "Methylene-rich Alkyl",
+      "color": "#9C640C",
+      "summary": "CH₂-dominant alkyl pattern with strong paired methylene stretches.",
+      "source_refs": ["chimactiv", "sigma", "pavia"],
+      "bands": [
+        {
+          "id": "methylene_asym",
+          "label": "CH₂ asymmetric stretch",
+          "range_min": 2918.0,
+          "range_max": 2936.0,
+          "expected_intensity": "s",
+          "shape": "sharp",
+          "role": "required",
+          "weight": 0.95,
+          "reliability": 0.82,
+          "channel": "broad_raw",
+          "suggested_preset_names": [
+            "νas(CH₂) –CH₂–"
+          ],
+          "source_refs": ["chimactiv", "pavia"]
+        },
+        {
+          "id": "methylene_sym",
+          "label": "CH₂ symmetric stretch",
+          "range_min": 2846.0,
+          "range_max": 2860.0,
+          "expected_intensity": "s",
+          "shape": "sharp",
+          "role": "required",
+          "weight": 0.9,
+          "reliability": 0.82,
+          "channel": "broad_raw",
+          "suggested_preset_names": [
+            "νs(CH₂) –CH₂–"
+          ],
+          "source_refs": ["chimactiv", "pavia"]
+        },
+        {
+          "id": "methylene_bend",
+          "label": "CH₂ scissoring bend",
+          "range_min": 1450.0,
+          "range_max": 1470.0,
+          "expected_intensity": "m",
+          "shape": "sharp",
+          "role": "supporting",
+          "weight": 0.72,
+          "reliability": 0.8,
+          "channel": "sharp_corrected",
+          "suggested_preset_names": [
+            "δ(CH₂) –CH₂–"
+          ],
+          "source_refs": ["sigma", "chimactiv", "pavia"]
+        },
+        {
+          "id": "methylene_long_chain_rock",
+          "label": "Long-chain CH₂ rocking marker",
+          "range_min": 710.0,
+          "range_max": 740.0,
+          "expected_intensity": "m",
+          "shape": "sharp",
+          "role": "exclusion",
+          "weight": 1.00,
+          "reliability": 1.05,
+          "channel": "sharp_corrected",
+          "suggested_preset_names": [
+            "ρ(CH₂) (CH₂)n– n>3",
+            "ρ(CH₂) propyl/(CH₂)n–O–"
+          ],
+          "source_refs": ["chimactiv", "pavia", "msu"]
+        }
+      ],
+      "coherence_rules": [
+        {
+          "band_ids": ["methylene_asym", "methylene_sym"],
+          "bonus": 0.24,
+          "threshold": 0.4,
+          "label": "CH₂ stretch pair"
+        },
+        {
+          "band_ids": ["methylene_asym", "methylene_sym", "methylene_bend"],
+          "bonus": 0.14,
+          "threshold": 0.4,
+          "label": "CH₂-rich alkyl triad"
+        }
+      ]
+    },
+    {
+      "id": "methyl_rich_alkyl",
+      "name": "Methyl-rich Alkyl",
+      "color": "#AF601A",
+      "summary": "CH₃-dominant alkyl pattern with methyl bends and stretches.",
+      "source_refs": ["chimactiv", "niu", "pavia"],
+      "bands": [
+        {
+          "id": "methyl_asym",
+          "label": "CH₃ asymmetric stretch",
+          "range_min": 2952.0,
+          "range_max": 2972.0,
+          "expected_intensity": "m",
+          "shape": "sharp",
+          "role": "required",
+          "weight": 0.9,
+          "reliability": 0.78,
+          "channel": "broad_raw",
+          "suggested_preset_names": [
+            "νas(CH₃) –CH₃"
+          ],
+          "source_refs": ["chimactiv", "pavia"]
+        },
+        {
+          "id": "methyl_sym",
+          "label": "CH₃ symmetric stretch",
+          "range_min": 2864.0,
+          "range_max": 2884.0,
+          "expected_intensity": "m",
+          "shape": "sharp",
+          "role": "required",
+          "weight": 0.82,
+          "reliability": 0.76,
+          "channel": "broad_raw",
+          "suggested_preset_names": [
+            "νs(CH₃) –CH₃"
+          ],
+          "source_refs": ["chimactiv", "pavia"]
+        },
+        {
+          "id": "methyl_deformation_high",
+          "label": "CH₃ deformation",
+          "range_min": 1440.0,
+          "range_max": 1470.0,
+          "expected_intensity": "m",
+          "shape": "sharp",
+          "role": "supporting",
+          "weight": 0.6,
+          "reliability": 0.68,
+          "channel": "sharp_corrected",
+          "suggested_preset_names": [
+            "δd(CH₃) –CH₃"
+          ],
+          "source_refs": ["niu", "chimactiv"]
+        },
+        {
+          "id": "methyl_deformation_low",
+          "label": "CH₃ umbrella bend",
+          "range_min": 1368.0,
+          "range_max": 1382.0,
+          "expected_intensity": "m",
+          "shape": "sharp",
+          "role": "supporting",
+          "weight": 0.78,
+          "reliability": 0.82,
+          "channel": "sharp_corrected",
+          "suggested_preset_names": [
+            "δs(CH₃) (CH₃)₂CH isopropyl",
+            "δd(CH₃) –CH₃"
+          ],
+          "source_refs": ["niu", "chimactiv", "pavia"]
+        },
+        {
+          "id": "methyl_tert_butyl_marker",
+          "label": "tert-Butyl marker overlap",
+          "range_min": 925.0,
+          "range_max": 930.0,
+          "expected_intensity": "m",
+          "shape": "sharp",
+          "role": "exclusion",
+          "weight": 0.95,
+          "reliability": 1.05,
+          "channel": "sharp_corrected",
+          "suggested_preset_names": [
+            "–C(CH₃)₃ tert-butyl"
+          ],
+          "source_refs": ["pavia"]
+        }
+      ],
+      "coherence_rules": [
+        {
+          "band_ids": ["methyl_asym", "methyl_sym"],
+          "bonus": 0.24,
+          "threshold": 0.4,
+          "label": "CH₃ stretch pair"
+        },
+        {
+          "band_ids": ["methyl_asym", "methyl_sym", "methyl_deformation_low"],
+          "bonus": 0.2,
+          "threshold": 0.4,
+          "label": "CH₃-rich alkyl pattern"
+        }
+      ]
+    },
+    {
+      "id": "isopropyl_group",
+      "name": "Isopropyl Group",
+      "color": "#A04000",
+      "summary": "Isopropyl motif supported by the 1380 cm⁻¹ bend and 1170 cm⁻¹ skeletal band.",
+      "source_refs": ["sigma", "niu", "pavia"],
+      "bands": [
+        {
+          "id": "isopropyl_bend",
+          "label": "Isopropyl CH₃ symmetric bend",
+          "range_min": 1345.0,
+          "range_max": 1395.0,
+          "expected_intensity": "m",
+          "shape": "sharp",
+          "role": "required",
+          "weight": 1.0,
+          "reliability": 0.96,
+          "channel": "sharp_corrected",
+          "suggested_preset_names": [
+            "δs(CH₃) (CH₃)₂CH isopropyl"
+          ],
+          "source_refs": ["niu", "pavia"]
+        },
+        {
+          "id": "isopropyl_cc",
+          "label": "Isopropyl skeletal C-C stretch",
+          "range_min": 1165.0,
+          "range_max": 1175.0,
+          "expected_intensity": "m",
+          "shape": "sharp",
+          "role": "required",
+          "weight": 1.12,
+          "reliability": 1.05,
+          "channel": "sharp_corrected",
+          "suggested_preset_names": [
+            "ν(CC) –CH(CH₃)₂"
+          ],
+          "source_refs": ["pavia"]
+        },
+        {
+          "id": "isopropyl_asym",
+          "label": "Isopropyl CH₃ asymmetric stretch",
+          "range_min": 2952.0,
+          "range_max": 2972.0,
+          "expected_intensity": "m",
+          "shape": "sharp",
+          "role": "supporting",
+          "weight": 0.7,
+          "reliability": 0.72,
+          "channel": "broad_raw",
+          "suggested_preset_names": [
+            "νas(CH₃) –CH₃"
+          ],
+          "source_refs": ["sigma", "pavia"]
+        },
+        {
+          "id": "isopropyl_sym",
+          "label": "Isopropyl CH₃ symmetric stretch",
+          "range_min": 2864.0,
+          "range_max": 2884.0,
+          "expected_intensity": "m",
+          "shape": "sharp",
+          "role": "supporting",
+          "weight": 0.62,
+          "reliability": 0.72,
+          "channel": "broad_raw",
+          "suggested_preset_names": [
+            "νs(CH₃) –CH₃"
+          ],
+          "source_refs": ["sigma", "pavia"]
+        }
+      ],
+      "coherence_rules": [
+        {
+          "band_ids": ["isopropyl_bend", "isopropyl_cc"],
+          "bonus": 0.55,
+          "threshold": 0.4,
+          "label": "Isopropyl diagnostic pair"
+        },
+        {
+          "band_ids": ["isopropyl_bend", "isopropyl_cc", "isopropyl_asym"],
+          "bonus": 0.2,
+          "threshold": 0.4,
+          "label": "Isopropyl alkyl support"
+        }
+      ]
+    },
+    {
+      "id": "tert_butyl_group",
+      "name": "tert-Butyl Group",
+      "color": "#935116",
+      "summary": "tert-Butyl motif marked by the 925–930 cm⁻¹ tert-butyl band and methyl-rich support.",
+      "source_refs": ["sigma", "niu", "pavia"],
+      "bands": [
+        {
+          "id": "tert_butyl_marker",
+          "label": "tert-Butyl marker band",
+          "range_min": 925.0,
+          "range_max": 930.0,
+          "expected_intensity": "m",
+          "shape": "sharp",
+          "role": "required",
+          "weight": 1.25,
+          "reliability": 1.08,
+          "channel": "sharp_corrected",
+          "suggested_preset_names": [
+            "–C(CH₃)₃ tert-butyl"
+          ],
+          "source_refs": ["pavia"]
+        },
+        {
+          "id": "tert_butyl_bend",
+          "label": "tert-Butyl methyl bend",
+          "range_min": 1368.0,
+          "range_max": 1395.0,
+          "expected_intensity": "m",
+          "shape": "sharp",
+          "role": "required",
+          "weight": 0.95,
+          "reliability": 0.92,
+          "channel": "sharp_corrected",
+          "suggested_preset_names": [
+            "δd(CH₃) –CH₃",
+            "δs(CH₃) (CH₃)₂CH isopropyl"
+          ],
+          "source_refs": ["niu", "pavia"]
+        },
+        {
+          "id": "tert_butyl_asym",
+          "label": "tert-Butyl CH₃ asymmetric stretch",
+          "range_min": 2952.0,
+          "range_max": 2972.0,
+          "expected_intensity": "m",
+          "shape": "sharp",
+          "role": "supporting",
+          "weight": 0.72,
+          "reliability": 0.72,
+          "channel": "broad_raw",
+          "suggested_preset_names": [
+            "νas(CH₃) –CH₃"
+          ],
+          "source_refs": ["sigma", "pavia"]
+        },
+        {
+          "id": "tert_butyl_sym",
+          "label": "tert-Butyl CH₃ symmetric stretch",
+          "range_min": 2864.0,
+          "range_max": 2884.0,
+          "expected_intensity": "m",
+          "shape": "sharp",
+          "role": "supporting",
+          "weight": 0.64,
+          "reliability": 0.72,
+          "channel": "broad_raw",
+          "suggested_preset_names": [
+            "νs(CH₃) –CH₃"
+          ],
+          "source_refs": ["sigma", "pavia"]
+        },
+        {
+          "id": "tert_butyl_high_bend",
+          "label": "tert-Butyl methyl deformation",
+          "range_min": 1440.0,
+          "range_max": 1470.0,
+          "expected_intensity": "m",
+          "shape": "sharp",
+          "role": "supporting",
+          "weight": 0.55,
+          "reliability": 0.68,
+          "channel": "sharp_corrected",
+          "suggested_preset_names": [
+            "δd(CH₃) –CH₃"
+          ],
+          "source_refs": ["sigma", "niu"]
+        }
+      ],
+      "coherence_rules": [
+        {
+          "band_ids": ["tert_butyl_marker", "tert_butyl_bend"],
+          "bonus": 0.35,
+          "threshold": 0.4,
+          "label": "tert-Butyl diagnostic pair"
+        },
+        {
+          "band_ids": ["tert_butyl_marker", "tert_butyl_bend", "tert_butyl_asym"],
+          "bonus": 0.22,
+          "threshold": 0.4,
+          "label": "tert-Butyl alkyl support"
+        }
+      ]
+    },
+    {
+      "id": "long_chain_n_alkyl",
+      "name": "Long-chain n-Alkyl",
+      "color": "#B7950B",
+      "summary": "Long methylene sequence supported by the CH₂ rocking band near 720 cm⁻¹.",
+      "source_refs": ["chimactiv", "pavia", "msu"],
+      "bands": [
+        {
+          "id": "long_chain_rock",
+          "label": "CH₂ rocking (long-chain band)",
+          "range_min": 710.0,
+          "range_max": 740.0,
+          "expected_intensity": "s",
+          "shape": "sharp",
+          "role": "required",
+          "weight": 1.55,
+          "reliability": 1.12,
+          "channel": "sharp_corrected",
+          "suggested_preset_names": [
+            "ρ(CH₂) (CH₂)n– n>3",
+            "ρ(CH₂) propyl/(CH₂)n–O–"
+          ],
+          "source_refs": ["chimactiv", "pavia", "msu"]
+        },
+        {
+          "id": "long_chain_asym",
+          "label": "Long-chain CH₂ asymmetric stretch",
+          "range_min": 2918.0,
+          "range_max": 2936.0,
+          "expected_intensity": "s",
+          "shape": "sharp",
+          "role": "supporting",
+          "weight": 1.0,
+          "reliability": 0.86,
+          "channel": "broad_raw",
+          "suggested_preset_names": [
+            "νas(CH₂) –CH₂–"
+          ],
+          "source_refs": ["chimactiv", "pavia"]
+        },
+        {
+          "id": "long_chain_sym",
+          "label": "Long-chain CH₂ symmetric stretch",
+          "range_min": 2846.0,
+          "range_max": 2860.0,
+          "expected_intensity": "s",
+          "shape": "sharp",
+          "role": "supporting",
+          "weight": 0.95,
+          "reliability": 0.86,
+          "channel": "broad_raw",
+          "suggested_preset_names": [
+            "νs(CH₂) –CH₂–"
+          ],
+          "source_refs": ["chimactiv", "pavia"]
+        },
+        {
+          "id": "long_chain_bend",
+          "label": "Long-chain CH₂ bend",
+          "range_min": 1450.0,
+          "range_max": 1470.0,
+          "expected_intensity": "m",
+          "shape": "sharp",
+          "role": "supporting",
+          "weight": 0.58,
+          "reliability": 0.72,
+          "channel": "sharp_corrected",
+          "suggested_preset_names": [
+            "δ(CH₂) –CH₂–"
+          ],
+          "source_refs": ["sigma", "chimactiv", "pavia"]
+        }
+      ],
+      "coherence_rules": [
+        {
+          "band_ids": ["long_chain_rock", "long_chain_asym", "long_chain_sym"],
+          "bonus": 1.0,
+          "threshold": 0.4,
+          "label": "Long-chain alkyl signature"
+        },
+        {
+          "band_ids": ["long_chain_rock", "long_chain_bend"],
+          "bonus": 0.1,
+          "threshold": 0.35,
+          "label": "Long-chain CH₂ support"
         }
       ]
     },
@@ -760,6 +2094,87 @@
           "reliability": 0.9,
           "channel": "sharp_corrected",
           "source_refs": ["sigma", "ucla", "msu"]
+        },
+        {
+          "id": "alkene_terminal_oop_exclusion",
+          "label": "Terminal alkene vinyl oop pattern",
+          "range_min": 905.0,
+          "range_max": 995.0,
+          "expected_intensity": "m",
+          "shape": "paired",
+          "role": "exclusion",
+          "weight": 0.82,
+          "reliability": 0.95,
+          "channel": "sharp_corrected",
+          "suggested_preset_names": [
+            "γ(CH) –CH=CH₂ vinyl",
+            "γ(CH) R–CH=CH₂ terminal"
+          ],
+          "source_refs": ["sigma", "nist_chart"]
+        },
+        {
+          "id": "alkene_vinylidene_oop_exclusion",
+          "label": "Vinylidene alkene oop marker",
+          "range_min": 885.0,
+          "range_max": 895.0,
+          "expected_intensity": "m",
+          "shape": "sharp",
+          "role": "exclusion",
+          "weight": 0.78,
+          "reliability": 0.92,
+          "channel": "sharp_corrected",
+          "suggested_preset_names": [
+            "γ(CH) RR'C=CH₂ vinylidene"
+          ],
+          "source_refs": ["sigma", "nist_chart"]
+        },
+        {
+          "id": "alkene_trans_oop_exclusion",
+          "label": "Trans alkene oop marker",
+          "range_min": 955.0,
+          "range_max": 980.0,
+          "expected_intensity": "m",
+          "shape": "sharp",
+          "role": "exclusion",
+          "weight": 0.74,
+          "reliability": 0.90,
+          "channel": "sharp_corrected",
+          "suggested_preset_names": [
+            "γ(CH) R–CH=CH–R trans"
+          ],
+          "source_refs": ["sigma", "nist_chart"]
+        },
+        {
+          "id": "alkene_cis_oop_exclusion",
+          "label": "Cis alkene oop marker",
+          "range_min": 665.0,
+          "range_max": 730.0,
+          "expected_intensity": "m",
+          "shape": "sharp",
+          "role": "exclusion",
+          "weight": 0.66,
+          "reliability": 0.84,
+          "channel": "sharp_corrected",
+          "suggested_preset_names": [
+            "γ(CH) R–CH=CH–R' cis"
+          ],
+          "source_refs": ["sigma", "ucla", "nist_chart"]
+        },
+        {
+          "id": "alkene_trisub_oop_exclusion",
+          "label": "Trisubstituted alkene oop marker",
+          "range_min": 790.0,
+          "range_max": 850.0,
+          "expected_intensity": "m",
+          "shape": "sharp",
+          "role": "exclusion",
+          "weight": 0.62,
+          "reliability": 0.82,
+          "channel": "sharp_corrected",
+          "suggested_preset_names": [
+            "γ(CH) RR'C=CHR'' trisubst."
+          ],
+          "source_refs": ["sigma", "ucla"]
         }
       ],
       "coherence_rules": [
@@ -768,6 +2183,436 @@
           "bonus": 0.18,
           "threshold": 0.4,
           "label": "Alkene C=C + =C-H coherence"
+        }
+      ]
+    },
+    {
+      "id": "terminal_alkene",
+      "name": "Terminal Alkene",
+      "color": "#2E86C1",
+      "summary": "Terminal alkene with characteristic vinyl out-of-plane pair.",
+      "source_refs": ["sigma", "ucla", "nist_chart"],
+      "bands": [
+        {
+          "id": "terminal_alkene_oop_high",
+          "label": "Terminal alkene vinyl oop high band",
+          "range_min": 980.0,
+          "range_max": 995.0,
+          "expected_intensity": "s",
+          "shape": "sharp",
+          "role": "required",
+          "weight": 0.95,
+          "reliability": 0.96,
+          "channel": "sharp_corrected",
+          "suggested_preset_names": [
+            "γ(CH) –CH=CH₂ vinyl"
+          ],
+          "source_refs": ["sigma", "nist_chart"]
+        },
+        {
+          "id": "terminal_alkene_oop_low",
+          "label": "Terminal alkene vinyl oop low band",
+          "range_min": 905.0,
+          "range_max": 915.0,
+          "expected_intensity": "s",
+          "shape": "sharp",
+          "role": "required",
+          "weight": 0.95,
+          "reliability": 0.96,
+          "channel": "sharp_corrected",
+          "suggested_preset_names": [
+            "γ(CH) R–CH=CH₂ terminal"
+          ],
+          "source_refs": ["sigma", "nist_chart"]
+        },
+        {
+          "id": "terminal_alkene_cc",
+          "label": "Terminal alkene C=C stretch",
+          "range_min": 1620.0,
+          "range_max": 1680.0,
+          "expected_intensity": "m",
+          "shape": "sharp",
+          "role": "required",
+          "weight": 0.9,
+          "reliability": 0.8,
+          "channel": "sharp_corrected",
+          "suggested_preset_names": [
+            "ν(C=C) >C=C< alkene"
+          ],
+          "source_refs": ["sigma", "ucla"]
+        },
+        {
+          "id": "terminal_alkene_ch",
+          "label": "Terminal alkene =C-H stretch",
+          "range_min": 3000.0,
+          "range_max": 3100.0,
+          "expected_intensity": "m",
+          "shape": "sharp",
+          "role": "supporting",
+          "weight": 0.6,
+          "reliability": 0.65,
+          "channel": "broad_raw",
+          "suggested_preset_names": [
+            "ν(CH) =CH–",
+            "νas(CH₂) >C=CH₂"
+          ],
+          "source_refs": ["sigma", "ucla"]
+        }
+      ],
+      "coherence_rules": [
+        {
+          "band_ids": ["terminal_alkene_oop_high", "terminal_alkene_oop_low"],
+          "bonus": 0.22,
+          "threshold": 0.4,
+          "label": "Terminal alkene vinyl oop pair coherence"
+        },
+        {
+          "band_ids": ["terminal_alkene_oop_high", "terminal_alkene_oop_low", "terminal_alkene_cc"],
+          "bonus": 0.35,
+          "threshold": 0.4,
+          "label": "Terminal alkene oop + C=C coherence"
+        },
+        {
+          "band_ids": ["terminal_alkene_oop_high", "terminal_alkene_oop_low", "terminal_alkene_cc", "terminal_alkene_ch"],
+          "bonus": 0.18,
+          "threshold": 0.4,
+          "label": "Terminal alkene full signature"
+        }
+      ]
+    },
+    {
+      "id": "vinylidene_alkene",
+      "name": "Vinylidene Alkene",
+      "color": "#2471A3",
+      "summary": "Vinylidene / exocyclic methylene with a strong ~890 cm⁻¹ oop marker.",
+      "source_refs": ["sigma", "ucla", "nist_chart"],
+      "bands": [
+        {
+          "id": "vinylidene_oop",
+          "label": "Vinylidene oop bend",
+          "range_min": 885.0,
+          "range_max": 895.0,
+          "expected_intensity": "s",
+          "shape": "sharp",
+          "role": "required",
+          "weight": 1.08,
+          "reliability": 0.98,
+          "channel": "sharp_corrected",
+          "suggested_preset_names": [
+            "γ(CH) RR'C=CH₂ vinylidene"
+          ],
+          "source_refs": ["sigma", "nist_chart"]
+        },
+        {
+          "id": "vinylidene_cc",
+          "label": "Vinylidene C=C stretch",
+          "range_min": 1620.0,
+          "range_max": 1685.0,
+          "expected_intensity": "m",
+          "shape": "sharp",
+          "role": "required",
+          "weight": 0.88,
+          "reliability": 0.80,
+          "channel": "sharp_corrected",
+          "suggested_preset_names": [
+            "ν(C=C) >C=C< alkene"
+          ],
+          "source_refs": ["sigma", "ucla"]
+        },
+        {
+          "id": "vinylidene_ch2",
+          "label": "Vinylidene =CH₂ stretch",
+          "range_min": 3075.0,
+          "range_max": 3095.0,
+          "expected_intensity": "m",
+          "shape": "sharp",
+          "role": "supporting",
+          "weight": 0.66,
+          "reliability": 0.72,
+          "channel": "broad_raw",
+          "suggested_preset_names": [
+            "νas(CH₂) >C=CH₂"
+          ],
+          "source_refs": ["sigma", "ucla"]
+        },
+        {
+          "id": "vinylidene_ch2_bend",
+          "label": "Vinylidene CH₂ bend",
+          "range_min": 1390.0,
+          "range_max": 1440.0,
+          "expected_intensity": "m",
+          "shape": "sharp",
+          "role": "supporting",
+          "weight": 0.52,
+          "reliability": 0.62,
+          "channel": "sharp_corrected",
+          "suggested_preset_names": [
+            "δ(CH₂) –HC=CH₂"
+          ],
+          "source_refs": ["sigma", "ucla"]
+        }
+      ],
+      "coherence_rules": [
+        {
+          "band_ids": ["vinylidene_oop", "vinylidene_cc"],
+          "bonus": 0.34,
+          "threshold": 0.4,
+          "label": "Vinylidene oop + C=C coherence"
+        },
+        {
+          "band_ids": ["vinylidene_oop", "vinylidene_cc", "vinylidene_ch2"],
+          "bonus": 0.16,
+          "threshold": 0.4,
+          "label": "Vinylidene full signature"
+        }
+      ]
+    },
+    {
+      "id": "trans_disubstituted_alkene",
+      "name": "Trans Disubstituted Alkene",
+      "color": "#1F618D",
+      "summary": "Trans-disubstituted alkene with a strong ~965 cm⁻¹ out-of-plane band.",
+      "source_refs": ["sigma", "ucla", "nist_chart"],
+      "bands": [
+        {
+          "id": "trans_alkene_oop",
+          "label": "Trans alkene oop bend",
+          "range_min": 955.0,
+          "range_max": 980.0,
+          "expected_intensity": "s",
+          "shape": "sharp",
+          "role": "required",
+          "weight": 1.02,
+          "reliability": 0.96,
+          "channel": "sharp_corrected",
+          "suggested_preset_names": [
+            "γ(CH) R–CH=CH–R trans"
+          ],
+          "source_refs": ["sigma", "nist_chart"]
+        },
+        {
+          "id": "trans_alkene_cc",
+          "label": "Trans alkene C=C stretch",
+          "range_min": 1620.0,
+          "range_max": 1680.0,
+          "expected_intensity": "m",
+          "shape": "sharp",
+          "role": "required",
+          "weight": 0.88,
+          "reliability": 0.80,
+          "channel": "sharp_corrected",
+          "suggested_preset_names": [
+            "ν(C=C) >C=C< alkene"
+          ],
+          "source_refs": ["sigma", "ucla"]
+        },
+        {
+          "id": "trans_alkene_inplane",
+          "label": "Trans alkene in-plane bend",
+          "range_min": 1300.0,
+          "range_max": 1350.0,
+          "expected_intensity": "m",
+          "shape": "sharp",
+          "role": "supporting",
+          "weight": 0.72,
+          "reliability": 0.80,
+          "channel": "sharp_corrected",
+          "suggested_preset_names": [
+            "δ(CH) –HC=CH– trans"
+          ],
+          "source_refs": ["sigma", "ucla"]
+        },
+        {
+          "id": "trans_alkene_ch",
+          "label": "Trans alkene =C-H stretch",
+          "range_min": 3000.0,
+          "range_max": 3100.0,
+          "expected_intensity": "m",
+          "shape": "sharp",
+          "role": "supporting",
+          "weight": 0.48,
+          "reliability": 0.55,
+          "channel": "broad_raw",
+          "suggested_preset_names": [
+            "ν(CH) =CH–"
+          ],
+          "source_refs": ["sigma", "ucla"]
+        }
+      ],
+      "coherence_rules": [
+        {
+          "band_ids": ["trans_alkene_oop", "trans_alkene_cc"],
+          "bonus": 0.32,
+          "threshold": 0.4,
+          "label": "Trans alkene oop + C=C coherence"
+        },
+        {
+          "band_ids": ["trans_alkene_oop", "trans_alkene_cc", "trans_alkene_inplane"],
+          "bonus": 0.18,
+          "threshold": 0.4,
+          "label": "Trans alkene full signature"
+        }
+      ]
+    },
+    {
+      "id": "cis_disubstituted_alkene",
+      "name": "Cis Disubstituted Alkene",
+      "color": "#2C82C9",
+      "summary": "Cis-disubstituted alkene with a low-frequency oop band and cis in-plane bend.",
+      "source_refs": ["sigma", "ucla", "nist_chart"],
+      "bands": [
+        {
+          "id": "cis_alkene_oop",
+          "label": "Cis alkene oop bend",
+          "range_min": 665.0,
+          "range_max": 730.0,
+          "expected_intensity": "s",
+          "shape": "sharp",
+          "role": "required",
+          "weight": 1.0,
+          "reliability": 0.90,
+          "channel": "sharp_corrected",
+          "suggested_preset_names": [
+            "γ(CH) R–CH=CH–R' cis"
+          ],
+          "source_refs": ["sigma", "ucla", "nist_chart"]
+        },
+        {
+          "id": "cis_alkene_cc",
+          "label": "Cis alkene C=C stretch",
+          "range_min": 1626.0,
+          "range_max": 1662.0,
+          "expected_intensity": "m",
+          "shape": "sharp",
+          "role": "required",
+          "weight": 0.84,
+          "reliability": 0.76,
+          "channel": "sharp_corrected",
+          "suggested_preset_names": [
+            "ν(C=C) >C=C< alkene"
+          ],
+          "source_refs": ["sigma", "ucla"]
+        },
+        {
+          "id": "cis_alkene_inplane",
+          "label": "Cis alkene in-plane bend",
+          "range_min": 1350.0,
+          "range_max": 1415.0,
+          "expected_intensity": "m",
+          "shape": "sharp",
+          "role": "supporting",
+          "weight": 0.70,
+          "reliability": 0.80,
+          "channel": "sharp_corrected",
+          "suggested_preset_names": [
+            "δ(CH) –CH=CH– cis"
+          ],
+          "source_refs": ["sigma", "ucla"]
+        },
+        {
+          "id": "cis_alkene_aromatic_exclusion",
+          "label": "Aromatic ring exclusion",
+          "range_min": 1490.0,
+          "range_max": 1625.0,
+          "expected_intensity": "m",
+          "shape": "paired",
+          "role": "exclusion",
+          "weight": 0.82,
+          "reliability": 0.88,
+          "channel": "sharp_corrected",
+          "source_refs": ["sigma", "msu"]
+        }
+      ],
+      "coherence_rules": [
+        {
+          "band_ids": ["cis_alkene_oop", "cis_alkene_cc"],
+          "bonus": 0.30,
+          "threshold": 0.4,
+          "label": "Cis alkene oop + C=C coherence"
+        },
+        {
+          "band_ids": ["cis_alkene_oop", "cis_alkene_cc", "cis_alkene_inplane"],
+          "bonus": 0.18,
+          "threshold": 0.4,
+          "label": "Cis alkene full signature"
+        }
+      ]
+    },
+    {
+      "id": "trisubstituted_alkene",
+      "name": "Trisubstituted Alkene",
+      "color": "#1B4F72",
+      "summary": "Trisubstituted alkene with a characteristic oop band near 790–850 cm⁻¹.",
+      "source_refs": ["sigma", "ucla"],
+      "bands": [
+        {
+          "id": "trisub_alkene_oop",
+          "label": "Trisubstituted alkene oop bend",
+          "range_min": 790.0,
+          "range_max": 850.0,
+          "expected_intensity": "m",
+          "shape": "sharp",
+          "role": "required",
+          "weight": 0.98,
+          "reliability": 0.90,
+          "channel": "sharp_corrected",
+          "suggested_preset_names": [
+            "γ(CH) RR'C=CHR'' trisubst."
+          ],
+          "source_refs": ["sigma", "ucla"]
+        },
+        {
+          "id": "trisub_alkene_cc",
+          "label": "Trisubstituted alkene C=C stretch",
+          "range_min": 1660.0,
+          "range_max": 1680.0,
+          "expected_intensity": "m",
+          "shape": "sharp",
+          "role": "required",
+          "weight": 0.84,
+          "reliability": 0.74,
+          "channel": "sharp_corrected",
+          "suggested_preset_names": [
+            "ν(C=C) >C=C< alkene"
+          ],
+          "source_refs": ["sigma", "ucla"]
+        },
+        {
+          "id": "trisub_alkene_ch",
+          "label": "Trisubstituted alkene =C-H stretch",
+          "range_min": 3000.0,
+          "range_max": 3100.0,
+          "expected_intensity": "w",
+          "shape": "sharp",
+          "role": "supporting",
+          "weight": 0.34,
+          "reliability": 0.45,
+          "channel": "broad_raw",
+          "suggested_preset_names": [
+            "ν(CH) =CH–"
+          ],
+          "source_refs": ["sigma", "ucla"]
+        },
+        {
+          "id": "trisub_alkene_aromatic_exclusion",
+          "label": "Aromatic ring exclusion",
+          "range_min": 1490.0,
+          "range_max": 1625.0,
+          "expected_intensity": "m",
+          "shape": "paired",
+          "role": "exclusion",
+          "weight": 0.84,
+          "reliability": 0.90,
+          "channel": "sharp_corrected",
+          "source_refs": ["sigma", "msu"]
+        }
+      ],
+      "coherence_rules": [
+        {
+          "band_ids": ["trisub_alkene_oop", "trisub_alkene_cc"],
+          "bonus": 0.28,
+          "threshold": 0.4,
+          "label": "Trisubstituted alkene oop + C=C coherence"
         }
       ]
     },
@@ -840,6 +2685,600 @@
           "bonus": 0.35,
           "threshold": 0.4,
           "label": "Aromatic ring + out-of-plane coherence"
+        }
+      ]
+    },
+    {
+      "id": "benzene",
+      "name": "Benzene",
+      "color": "#4D5656",
+      "summary": "Unsubstituted benzene ring with the characteristic ~670 cm⁻¹ out-of-plane band.",
+      "source_refs": ["sigma", "msu", "nist_chart"],
+      "bands": [
+        {
+          "id": "benzene_oop",
+          "label": "Benzene ~670 cm⁻¹ oop bend",
+          "range_min": 660.0,
+          "range_max": 680.0,
+          "expected_intensity": "m",
+          "shape": "sharp",
+          "role": "required",
+          "weight": 1.0,
+          "reliability": 0.96,
+          "channel": "sharp_corrected",
+          "suggested_preset_names": [
+            "γ(CH) Ar 6H benzene ~670"
+          ],
+          "source_refs": ["sigma", "msu", "nist_chart"]
+        },
+        {
+          "id": "benzene_ring",
+          "label": "Aromatic ring stretches",
+          "range_min": 1490.0,
+          "range_max": 1625.0,
+          "expected_intensity": "m",
+          "shape": "paired",
+          "role": "required",
+          "weight": 0.84,
+          "reliability": 0.82,
+          "channel": "sharp_corrected",
+          "suggested_preset_names": [
+            "ν(C=C) Ar ~1600",
+            "ν(C=C) Ar conj. ~1580",
+            "ν(C=C) Ar ~1490"
+          ],
+          "source_refs": ["sigma", "msu"]
+        },
+        {
+          "id": "benzene_ch",
+          "label": "Aromatic C-H stretch",
+          "range_min": 3000.0,
+          "range_max": 3090.0,
+          "expected_intensity": "w",
+          "shape": "sharp",
+          "role": "supporting",
+          "weight": 0.36,
+          "reliability": 0.52,
+          "channel": "broad_raw",
+          "suggested_preset_names": [
+            "ν(CH) Ar"
+          ],
+          "source_refs": ["sigma", "msu"]
+        }
+      ],
+      "coherence_rules": [
+        {
+          "band_ids": ["benzene_oop", "benzene_ring"],
+          "bonus": 0.34,
+          "threshold": 0.4,
+          "label": "Benzene oop + ring coherence"
+        }
+      ]
+    },
+    {
+      "id": "monosubstituted_benzene",
+      "name": "Monosubstituted Benzene",
+      "color": "#566573",
+      "summary": "Monosubstituted benzene out-of-plane pair with aromatic ring support.",
+      "source_refs": ["sigma", "msu", "nist_chart"],
+      "bands": [
+        {
+          "id": "mono_benzene_high",
+          "label": "Monosubstituted benzene oop bend",
+          "range_min": 735.0,
+          "range_max": 770.0,
+          "expected_intensity": "s",
+          "shape": "sharp",
+          "role": "required",
+          "weight": 1.0,
+          "reliability": 0.92,
+          "channel": "sharp_corrected",
+          "suggested_preset_names": [
+            "γ(CH) Ar 5H monosubst."
+          ],
+          "source_refs": ["sigma", "msu", "nist_chart"]
+        },
+        {
+          "id": "mono_benzene_low",
+          "label": "Monosubstituted benzene low oop bend",
+          "range_min": 690.0,
+          "range_max": 710.0,
+          "expected_intensity": "m",
+          "shape": "sharp",
+          "role": "required",
+          "weight": 0.72,
+          "reliability": 0.74,
+          "channel": "sharp_corrected",
+          "suggested_preset_names": [
+            "γ(CH) Ar mono/1,3-/1,2,3-/1,2,4-"
+          ],
+          "source_refs": ["msu", "nist_chart"]
+        },
+        {
+          "id": "mono_benzene_ring",
+          "label": "Aromatic ring support",
+          "range_min": 1490.0,
+          "range_max": 1625.0,
+          "expected_intensity": "m",
+          "shape": "paired",
+          "role": "supporting",
+          "weight": 0.78,
+          "reliability": 0.8,
+          "channel": "sharp_corrected",
+          "suggested_preset_names": [
+            "ν(C=C) Ar ~1600",
+            "ν(C=C) Ar conj. ~1580",
+            "ν(C=C) Ar ~1490"
+          ],
+          "source_refs": ["sigma", "msu"]
+        }
+      ],
+      "coherence_rules": [
+        {
+          "band_ids": ["mono_benzene_high", "mono_benzene_low"],
+          "bonus": 0.35,
+          "threshold": 0.4,
+          "label": "Monosubstituted benzene oop pair"
+        },
+        {
+          "band_ids": ["mono_benzene_high", "mono_benzene_low", "mono_benzene_ring"],
+          "bonus": 0.18,
+          "threshold": 0.4,
+          "label": "Monosubstituted benzene full pattern"
+        }
+      ]
+    },
+    {
+      "id": "ortho_disubstituted_benzene",
+      "name": "Ortho-disubstituted Benzene",
+      "color": "#5D6D7E",
+      "summary": "Ortho-disubstituted aromatic ring with a strong 1,2-pattern oop band.",
+      "source_refs": ["sigma", "msu", "nist_chart"],
+      "bands": [
+        {
+          "id": "ortho_benzene_oop",
+          "label": "1,2-disubstituted aromatic oop bend",
+          "range_min": 735.0,
+          "range_max": 770.0,
+          "expected_intensity": "s",
+          "shape": "sharp",
+          "role": "required",
+          "weight": 0.98,
+          "reliability": 0.95,
+          "channel": "sharp_corrected",
+          "suggested_preset_names": [
+            "γ(CH) Ar 4H 1,2-disubst."
+          ],
+          "source_refs": ["sigma", "msu", "nist_chart"]
+        },
+        {
+          "id": "ortho_benzene_ring",
+          "label": "Aromatic ring support",
+          "range_min": 1490.0,
+          "range_max": 1625.0,
+          "expected_intensity": "m",
+          "shape": "paired",
+          "role": "supporting",
+          "weight": 0.72,
+          "reliability": 0.8,
+          "channel": "sharp_corrected",
+          "suggested_preset_names": [
+            "ν(C=C) Ar ~1600",
+            "ν(C=C) Ar conj. ~1580",
+            "ν(C=C) Ar ~1490"
+          ],
+          "source_refs": ["sigma", "msu"]
+        },
+        {
+          "id": "ortho_benzene_low",
+          "label": "1,2-disubstituted auxiliary low oop bend",
+          "range_min": 680.0,
+          "range_max": 690.0,
+          "expected_intensity": "w",
+          "shape": "sharp",
+          "role": "supporting",
+          "weight": 0.42,
+          "reliability": 0.55,
+          "channel": "sharp_corrected",
+          "suggested_preset_names": [
+            "γ(CH) Ar mono/1,3-/1,2,3-/1,2,4-"
+          ],
+          "source_refs": ["msu", "nist_chart"]
+        }
+      ],
+      "coherence_rules": [
+        {
+          "band_ids": ["ortho_benzene_oop", "ortho_benzene_low"],
+          "bonus": 0.25,
+          "threshold": 0.4,
+          "label": "Ortho aromatic oop pattern"
+        },
+        {
+          "band_ids": ["ortho_benzene_oop", "ortho_benzene_low", "ortho_benzene_ring"],
+          "bonus": 0.12,
+          "threshold": 0.4,
+          "label": "Ortho aromatic coherence"
+        }
+      ]
+    },
+    {
+      "id": "meta_disubstituted_benzene",
+      "name": "Meta-disubstituted Benzene",
+      "color": "#5F6A6A",
+      "summary": "Meta-disubstituted benzene pattern with three characteristic oop bands.",
+      "source_refs": ["sigma", "msu", "nist_chart"],
+      "bands": [
+        {
+          "id": "meta_benzene_high",
+          "label": "Meta aromatic oop bend (high)",
+          "range_min": 860.0,
+          "range_max": 900.0,
+          "expected_intensity": "s",
+          "shape": "sharp",
+          "role": "required",
+          "weight": 0.92,
+          "reliability": 0.88,
+          "channel": "sharp_corrected",
+          "suggested_preset_names": [
+            "γ(CH) Ar 1H isolated"
+          ],
+          "source_refs": ["sigma", "msu", "nist_chart"]
+        },
+        {
+          "id": "meta_benzene_mid",
+          "label": "Meta aromatic oop bend (mid)",
+          "range_min": 760.0,
+          "range_max": 800.0,
+          "expected_intensity": "s",
+          "shape": "sharp",
+          "role": "required",
+          "weight": 0.88,
+          "reliability": 0.84,
+          "channel": "sharp_corrected",
+          "suggested_preset_names": [
+            "γ(CH) Ar 3H adjacent"
+          ],
+          "source_refs": ["sigma", "msu", "nist_chart"]
+        },
+        {
+          "id": "meta_benzene_low",
+          "label": "Meta aromatic oop bend (low)",
+          "range_min": 680.0,
+          "range_max": 725.0,
+          "expected_intensity": "m",
+          "shape": "sharp",
+          "role": "supporting",
+          "weight": 0.52,
+          "reliability": 0.62,
+          "channel": "sharp_corrected",
+          "suggested_preset_names": [
+            "γ(CH) Ar mono/1,3-/1,2,3-/1,2,4-"
+          ],
+          "source_refs": ["sigma", "msu", "nist_chart"]
+        },
+        {
+          "id": "meta_benzene_ring",
+          "label": "Aromatic ring support",
+          "range_min": 1490.0,
+          "range_max": 1625.0,
+          "expected_intensity": "m",
+          "shape": "paired",
+          "role": "supporting",
+          "weight": 0.68,
+          "reliability": 0.78,
+          "channel": "sharp_corrected",
+          "suggested_preset_names": [
+            "ν(C=C) Ar ~1600",
+            "ν(C=C) Ar conj. ~1580",
+            "ν(C=C) Ar ~1490"
+          ],
+          "source_refs": ["sigma", "msu"]
+        }
+      ],
+      "coherence_rules": [
+        {
+          "band_ids": ["meta_benzene_high", "meta_benzene_mid"],
+          "bonus": 0.22,
+          "threshold": 0.4,
+          "label": "Meta benzene oop pair"
+        },
+        {
+          "band_ids": ["meta_benzene_high", "meta_benzene_mid", "meta_benzene_low"],
+          "bonus": 0.18,
+          "threshold": 0.4,
+          "label": "Meta benzene three-band pattern"
+        }
+      ]
+    },
+    {
+      "id": "para_disubstituted_benzene",
+      "name": "Para-disubstituted Benzene",
+      "color": "#626567",
+      "summary": "Para-disubstituted aromatic ring with a strong band near 810 cm⁻¹.",
+      "source_refs": ["sigma", "msu", "nist_chart"],
+      "bands": [
+        {
+          "id": "para_benzene_oop",
+          "label": "1,4-disubstituted aromatic oop bend",
+          "range_min": 790.0,
+          "range_max": 830.0,
+          "expected_intensity": "s",
+          "shape": "sharp",
+          "role": "required",
+          "weight": 0.95,
+          "reliability": 0.9,
+          "channel": "sharp_corrected",
+          "suggested_preset_names": [
+            "γ(CH) Ar 2H adjacent"
+          ],
+          "source_refs": ["sigma", "msu", "nist_chart"]
+        },
+        {
+          "id": "para_benzene_ring",
+          "label": "Aromatic ring support",
+          "range_min": 1490.0,
+          "range_max": 1625.0,
+          "expected_intensity": "m",
+          "shape": "paired",
+          "role": "supporting",
+          "weight": 0.7,
+          "reliability": 0.78,
+          "channel": "sharp_corrected",
+          "suggested_preset_names": [
+            "ν(C=C) Ar ~1600",
+            "ν(C=C) Ar conj. ~1580",
+            "ν(C=C) Ar ~1490"
+          ],
+          "source_refs": ["sigma", "msu"]
+        }
+      ],
+      "coherence_rules": [
+        {
+          "band_ids": ["para_benzene_oop", "para_benzene_ring"],
+          "bonus": 0.2,
+          "threshold": 0.4,
+          "label": "Para aromatic coherence"
+        }
+      ]
+    },
+    {
+      "id": "trisubstituted_benzene_1_2_4",
+      "name": "1,2,4-Trisubstituted Benzene",
+      "color": "#6E7377",
+      "summary": "1,2,4-Trisubstituted aromatic ring with 875/810/700 cm⁻¹ oop pattern.",
+      "source_refs": ["sigma", "msu", "nist_chart"],
+      "bands": [
+        {
+          "id": "trisub124_high",
+          "label": "1,2,4-Trisubstituted oop bend (high)",
+          "range_min": 860.0,
+          "range_max": 900.0,
+          "expected_intensity": "m",
+          "shape": "sharp",
+          "role": "required",
+          "weight": 0.92,
+          "reliability": 0.88,
+          "channel": "sharp_corrected",
+          "suggested_preset_names": [
+            "γ(CH) Ar 1H isolated"
+          ],
+          "source_refs": ["sigma", "msu", "nist_chart"]
+        },
+        {
+          "id": "trisub124_mid",
+          "label": "1,2,4-Trisubstituted oop bend (mid)",
+          "range_min": 800.0,
+          "range_max": 830.0,
+          "expected_intensity": "s",
+          "shape": "sharp",
+          "role": "required",
+          "weight": 0.98,
+          "reliability": 0.92,
+          "channel": "sharp_corrected",
+          "suggested_preset_names": [
+            "γ(CH) Ar 2H adjacent"
+          ],
+          "source_refs": ["sigma", "msu", "nist_chart"]
+        },
+        {
+          "id": "trisub124_low",
+          "label": "1,2,4-Trisubstituted oop bend (low)",
+          "range_min": 680.0,
+          "range_max": 730.0,
+          "expected_intensity": "m",
+          "shape": "sharp",
+          "role": "supporting",
+          "weight": 0.6,
+          "reliability": 0.7,
+          "channel": "sharp_corrected",
+          "suggested_preset_names": [
+            "γ(CH) Ar mono/1,3-/1,2,3-/1,2,4-"
+          ],
+          "source_refs": ["sigma", "msu", "nist_chart"]
+        },
+        {
+          "id": "trisub124_ring",
+          "label": "Aromatic ring support",
+          "range_min": 1490.0,
+          "range_max": 1625.0,
+          "expected_intensity": "m",
+          "shape": "paired",
+          "role": "supporting",
+          "weight": 0.72,
+          "reliability": 0.8,
+          "channel": "sharp_corrected",
+          "suggested_preset_names": [
+            "ν(C=C) Ar ~1600",
+            "ν(C=C) Ar conj. ~1580",
+            "ν(C=C) Ar ~1490"
+          ],
+          "source_refs": ["sigma", "msu"]
+        }
+      ],
+      "coherence_rules": [
+        {
+          "band_ids": ["trisub124_high", "trisub124_mid"],
+          "bonus": 0.28,
+          "threshold": 0.4,
+          "label": "1,2,4-Trisubstituted oop pair"
+        },
+        {
+          "band_ids": ["trisub124_high", "trisub124_mid", "trisub124_low"],
+          "bonus": 0.2,
+          "threshold": 0.4,
+          "label": "1,2,4-Trisubstituted three-band pattern"
+        },
+        {
+          "band_ids": ["trisub124_high", "trisub124_mid", "trisub124_ring"],
+          "bonus": 0.18,
+          "threshold": 0.4,
+          "label": "1,2,4-Trisubstituted aromatic support"
+        }
+      ]
+    },
+    {
+      "id": "trisubstituted_benzene_1_2_3",
+      "name": "1,2,3-Trisubstituted Benzene",
+      "color": "#626567",
+      "summary": "1,2,3-trisubstituted aromatic ring with low and mid out-of-plane bands.",
+      "source_refs": ["sigma", "msu", "nist_chart"],
+      "bands": [
+        {
+          "id": "trisub123_low",
+          "label": "1,2,3-trisubstituted low oop band",
+          "range_min": 685.0,
+          "range_max": 720.0,
+          "expected_intensity": "m",
+          "shape": "sharp",
+          "role": "required",
+          "weight": 0.88,
+          "reliability": 0.84,
+          "channel": "sharp_corrected",
+          "suggested_preset_names": [
+            "γ(CH) Ar mono/1,3-/1,2,3-/1,2,4-"
+          ],
+          "source_refs": ["msu", "nist_chart"]
+        },
+        {
+          "id": "trisub123_mid",
+          "label": "1,2,3-trisubstituted mid oop band",
+          "range_min": 750.0,
+          "range_max": 810.0,
+          "expected_intensity": "s",
+          "shape": "sharp",
+          "role": "required",
+          "weight": 0.98,
+          "reliability": 0.92,
+          "channel": "sharp_corrected",
+          "suggested_preset_names": [
+            "γ(CH) Ar 3H adjacent"
+          ],
+          "source_refs": ["sigma", "msu"]
+        },
+        {
+          "id": "trisub123_ring",
+          "label": "Aromatic ring support",
+          "range_min": 1490.0,
+          "range_max": 1625.0,
+          "expected_intensity": "m",
+          "shape": "paired",
+          "role": "supporting",
+          "weight": 0.72,
+          "reliability": 0.8,
+          "channel": "sharp_corrected",
+          "suggested_preset_names": [
+            "ν(C=C) Ar ~1600",
+            "ν(C=C) Ar conj. ~1580",
+            "ν(C=C) Ar ~1490"
+          ],
+          "source_refs": ["sigma", "msu"]
+        }
+      ],
+      "coherence_rules": [
+        {
+          "band_ids": ["trisub123_low", "trisub123_mid"],
+          "bonus": 0.30,
+          "threshold": 0.4,
+          "label": "1,2,3-trisubstituted aromatic coherence"
+        },
+        {
+          "band_ids": ["trisub123_low", "trisub123_mid", "trisub123_ring"],
+          "bonus": 0.18,
+          "threshold": 0.4,
+          "label": "1,2,3-trisubstituted aromatic full signature"
+        }
+      ]
+    },
+    {
+      "id": "trisubstituted_benzene_1_3_5",
+      "name": "1,3,5-Trisubstituted Benzene",
+      "color": "#5D6D7E",
+      "summary": "1,3,5-trisubstituted aromatic ring with low and high out-of-plane bands.",
+      "source_refs": ["msu", "nist_chart"],
+      "bands": [
+        {
+          "id": "trisub135_low",
+          "label": "1,3,5-trisubstituted low oop band",
+          "range_min": 685.0,
+          "range_max": 720.0,
+          "expected_intensity": "m",
+          "shape": "sharp",
+          "role": "required",
+          "weight": 0.84,
+          "reliability": 0.80,
+          "channel": "sharp_corrected",
+          "suggested_preset_names": [
+            "γ(CH) Ar mono/1,3-/1,2,3-/1,2,4-"
+          ],
+          "source_refs": ["msu", "nist_chart"]
+        },
+        {
+          "id": "trisub135_high",
+          "label": "1,3,5-trisubstituted high oop band",
+          "range_min": 820.0,
+          "range_max": 900.0,
+          "expected_intensity": "s",
+          "shape": "sharp",
+          "role": "required",
+          "weight": 1.0,
+          "reliability": 0.92,
+          "channel": "sharp_corrected",
+          "suggested_preset_names": [
+            "γ(CH) Ar 1H isolated"
+          ],
+          "source_refs": ["msu", "nist_chart"]
+        },
+        {
+          "id": "trisub135_ring",
+          "label": "Aromatic ring support",
+          "range_min": 1490.0,
+          "range_max": 1625.0,
+          "expected_intensity": "m",
+          "shape": "paired",
+          "role": "supporting",
+          "weight": 0.70,
+          "reliability": 0.8,
+          "channel": "sharp_corrected",
+          "suggested_preset_names": [
+            "ν(C=C) Ar ~1600",
+            "ν(C=C) Ar conj. ~1580",
+            "ν(C=C) Ar ~1490"
+          ],
+          "source_refs": ["sigma", "msu"]
+        }
+      ],
+      "coherence_rules": [
+        {
+          "band_ids": ["trisub135_low", "trisub135_high"],
+          "bonus": 0.30,
+          "threshold": 0.4,
+          "label": "1,3,5-trisubstituted aromatic coherence"
+        },
+        {
+          "band_ids": ["trisub135_low", "trisub135_high", "trisub135_ring"],
+          "bonus": 0.18,
+          "threshold": 0.4,
+          "label": "1,3,5-trisubstituted aromatic full signature"
         }
       ]
     },
@@ -1126,7 +3565,7 @@
           "range_max": 1610.0,
           "expected_intensity": "m",
           "shape": "sharp",
-          "role": "supporting",
+          "role": "required",
           "weight": 0.75,
           "reliability": 0.75,
           "channel": "sharp_corrected",
@@ -1164,6 +3603,22 @@
           "reliability": 0.9,
           "channel": "sharp_corrected",
           "source_refs": ["sigma"]
+        },
+        {
+          "id": "amine_salt_tert_butyl_exclusion",
+          "label": "tert-Butyl marker exclusion",
+          "range_min": 925.0,
+          "range_max": 930.0,
+          "expected_intensity": "m",
+          "shape": "sharp",
+          "role": "exclusion",
+          "weight": 0.85,
+          "reliability": 1.0,
+          "channel": "sharp_corrected",
+          "suggested_preset_names": [
+            "–C(CH₃)₃ tert-butyl"
+          ],
+          "source_refs": ["pavia"]
         }
       ],
       "coherence_rules": [

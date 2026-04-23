@@ -82,9 +82,175 @@ def test_functional_group_scoring_ranks_nitrile_first():
     assert analysis.results[0].bands[0].source_links
 
 
+def test_functional_group_repository_contains_common_backbone_groups():
+    from storage.functional_group_repository import FunctionalGroupRepository
+
+    knowledge_base = FunctionalGroupRepository().load()
+    group_ids = {group.id for group in knowledge_base.groups}
+
+    assert "aliphatic_hydrocarbon" in group_ids
+    assert "methylene_rich_alkyl" in group_ids
+    assert "methyl_rich_alkyl" in group_ids
+    assert "long_chain_n_alkyl" in group_ids
+    assert "monosubstituted_benzene" in group_ids
+    assert "ortho_disubstituted_benzene" in group_ids
+    assert "meta_disubstituted_benzene" in group_ids
+    assert "para_disubstituted_benzene" in group_ids
+    assert "trisubstituted_benzene_1_2_4" in group_ids
+    assert "trisubstituted_benzene_1_2_3" in group_ids
+    assert "trisubstituted_benzene_1_3_5" in group_ids
+    assert "primary_alcohol" in group_ids
+    assert "secondary_alcohol" in group_ids
+    assert "primary_amide" in group_ids
+    assert "secondary_amide" in group_ids
+    assert "primary_amine" in group_ids
+    assert "secondary_amine" in group_ids
+    assert "tertiary_alcohol" in group_ids
+    assert "isopropyl_group" in group_ids
+    assert "tert_butyl_group" in group_ids
+    assert "terminal_alkene" in group_ids
+    assert "vinylidene_alkene" in group_ids
+    assert "trans_disubstituted_alkene" in group_ids
+    assert "cis_disubstituted_alkene" in group_ids
+    assert "trisubstituted_alkene" in group_ids
+    assert "benzene" in group_ids
+
+
 @pytest.mark.parametrize(
     ("group_id", "features", "minimum_score"),
     [
+        (
+            "methylene_rich_alkyl",
+            [(2926.0, 9.0, 0.34), (2852.0, 9.0, 0.32), (1455.0, 10.0, 0.25)],
+            55.0,
+        ),
+        (
+            "methyl_rich_alkyl",
+            [(2962.0, 9.0, 0.30), (2872.0, 9.0, 0.28), (1460.0, 10.0, 0.22), (1375.0, 9.0, 0.26)],
+            55.0,
+        ),
+        (
+            "long_chain_n_alkyl",
+            [(2926.0, 9.0, 0.32), (2852.0, 9.0, 0.30), (1455.0, 10.0, 0.22), (723.0, 8.0, 0.28)],
+            60.0,
+        ),
+        (
+            "monosubstituted_benzene",
+            [(3030.0, 10.0, 0.10), (1600.0, 10.0, 0.22), (1495.0, 10.0, 0.20), (750.0, 8.0, 0.30), (700.0, 8.0, 0.22)],
+            60.0,
+        ),
+        (
+            "ortho_disubstituted_benzene",
+            [(3030.0, 10.0, 0.08), (1600.0, 10.0, 0.22), (1495.0, 10.0, 0.20), (755.0, 8.0, 0.30), (685.0, 8.0, 0.10)],
+            55.0,
+        ),
+        (
+            "meta_disubstituted_benzene",
+            [(1600.0, 10.0, 0.22), (1495.0, 10.0, 0.20), (880.0, 8.0, 0.28), (780.0, 8.0, 0.24), (700.0, 8.0, 0.18)],
+            60.0,
+        ),
+        (
+            "para_disubstituted_benzene",
+            [(3030.0, 10.0, 0.08), (1600.0, 10.0, 0.22), (1495.0, 10.0, 0.20), (810.0, 8.0, 0.28)],
+            55.0,
+        ),
+        (
+            "trisubstituted_benzene_1_2_4",
+            [(1600.0, 10.0, 0.22), (1495.0, 10.0, 0.20), (875.0, 8.0, 0.24), (812.0, 8.0, 0.26), (705.0, 8.0, 0.18)],
+            60.0,
+        ),
+        (
+            "trisubstituted_benzene_1_2_3",
+            [(1600.0, 10.0, 0.22), (1495.0, 10.0, 0.20), (705.0, 8.0, 0.18), (780.0, 8.0, 0.26)],
+            60.0,
+        ),
+        (
+            "trisubstituted_benzene_1_3_5",
+            [(1600.0, 10.0, 0.22), (1495.0, 10.0, 0.20), (705.0, 8.0, 0.18), (860.0, 8.0, 0.24)],
+            60.0,
+        ),
+        (
+            "primary_alcohol",
+            [(3360.0, 80.0, 0.32), (1062.0, 10.0, 0.40), (1295.0, 12.0, 0.18)],
+            65.0,
+        ),
+        (
+            "secondary_alcohol",
+            [(3360.0, 80.0, 0.32), (1102.0, 10.0, 0.38), (1295.0, 12.0, 0.18)],
+            65.0,
+        ),
+        (
+            "tertiary_alcohol",
+            [(3380.0, 85.0, 0.30), (1165.0, 10.0, 0.34), (1370.0, 12.0, 0.22)],
+            60.0,
+        ),
+        (
+            "primary_amide",
+            [
+                (3385.0, 16.0, 0.16),
+                (3195.0, 16.0, 0.14),
+                (1662.0, 10.0, 0.70),
+                (1625.0, 10.0, 0.28),
+                (1410.0, 8.0, 0.18),
+                (690.0, 10.0, 0.12),
+            ],
+            60.0,
+        ),
+        (
+            "secondary_amide",
+            [(3315.0, 35.0, 0.20), (1658.0, 10.0, 0.72), (1325.0, 10.0, 0.26), (725.0, 10.0, 0.16)],
+            60.0,
+        ),
+        (
+            "primary_amine",
+            [(3450.0, 12.0, 0.14), (3360.0, 12.0, 0.12), (1605.0, 10.0, 0.30), (1060.0, 10.0, 0.20), (780.0, 12.0, 0.12)],
+            60.0,
+        ),
+        (
+            "secondary_amine",
+            [(3340.0, 16.0, 0.18), (1535.0, 10.0, 0.24), (1180.0, 8.0, 0.30), (725.0, 10.0, 0.12)],
+            60.0,
+        ),
+        (
+            "isopropyl_group",
+            [(2962.0, 9.0, 0.26), (2872.0, 9.0, 0.24), (1372.0, 9.0, 0.30), (1170.0, 6.0, 0.32)],
+            60.0,
+        ),
+        (
+            "tert_butyl_group",
+            [(2962.0, 9.0, 0.24), (2872.0, 9.0, 0.22), (1375.0, 9.0, 0.28), (927.0, 6.0, 0.34), (1460.0, 10.0, 0.20)],
+            60.0,
+        ),
+        (
+            "terminal_alkene",
+            [(3080.0, 12.0, 0.14), (1642.0, 10.0, 0.28), (910.0, 8.0, 0.30), (988.0, 8.0, 0.26)],
+            60.0,
+        ),
+        (
+            "vinylidene_alkene",
+            [(3086.0, 10.0, 0.16), (1644.0, 10.0, 0.28), (890.0, 7.0, 0.32), (1412.0, 10.0, 0.18)],
+            60.0,
+        ),
+        (
+            "trans_disubstituted_alkene",
+            [(3070.0, 12.0, 0.10), (1650.0, 10.0, 0.26), (967.0, 7.0, 0.34), (1325.0, 8.0, 0.22)],
+            60.0,
+        ),
+        (
+            "cis_disubstituted_alkene",
+            [(1650.0, 10.0, 0.28), (1380.0, 10.0, 0.22), (705.0, 8.0, 0.30)],
+            60.0,
+        ),
+        (
+            "trisubstituted_alkene",
+            [(1668.0, 8.0, 0.24), (820.0, 8.0, 0.26), (3065.0, 12.0, 0.08)],
+            55.0,
+        ),
+        (
+            "benzene",
+            [(3030.0, 10.0, 0.08), (1600.0, 10.0, 0.22), (1495.0, 10.0, 0.20), (670.0, 8.0, 0.26)],
+            55.0,
+        ),
         ("acid_halide", [(1792.0, 7.0, 0.95)], 60.0),
         ("anhydride", [(1812.0, 8.0, 0.90), (1760.0, 8.0, 0.82)], 70.0),
         ("aliphatic_ether", [(1120.0, 12.0, 0.70)], 55.0),
