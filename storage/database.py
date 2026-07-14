@@ -217,12 +217,12 @@ class Database:
         count_builtin = cursor.execute(
             "SELECT COUNT(*) FROM vibration_presets WHERE is_builtin = 1"
         ).fetchone()[0]
-        has_second_wave = cursor.execute(
+        has_third_wave = cursor.execute(
             "SELECT 1 FROM vibration_presets WHERE is_builtin = 1 AND name = ? LIMIT 1",
-            ("ν(N=C=N) carbodiimide",),
+            ("ν(P=O) phosphoryl",),
         ).fetchone()
         # Re-seed if the builtin library does not contain the current sourced expansion.
-        if count_builtin == 145 and has_second_wave:
+        if count_builtin == 153 and has_third_wave:
             return
         cursor.execute("DELETE FROM vibration_presets WHERE is_builtin = 1")
 
@@ -398,6 +398,15 @@ class Database:
             ("γ(CH) Ar 6H benzene ~670", 660.0, 680.0, "oop", "", "#5D6D7E"),
             ("γ(NH) –NH₂", 650.0, 900.0, "oop", "", "#E67E22"),
             ("δ(CO₂) ~670", 660.0, 680.0, "bend", "", "#95A5A6"),
+            # Third sourced wave — imine, epoxide, silicone, organophosphate
+            ("ν(C=N) R₂C=N–R imine", 1640.0, 1690.0, "stretch", "", "#2E86C1"),
+            ("ν(ring) oxirane breathing", 1230.0, 1280.0, "stretch", "", "#148F77"),
+            ("νas(ring) oxirane", 880.0, 950.0, "stretch", "", "#148F77"),
+            ("δs(Si–CH₃) silicone", 1255.0, 1270.0, "bend", "", "#7D6608"),
+            ("νas(Si–O–Si) siloxane", 1000.0, 1130.0, "stretch", "", "#7D6608"),
+            ("ν(Si–C)+ρ(CH₃) silicone", 780.0, 840.0, "stretch", "", "#7D6608"),
+            ("ν(P=O) phosphoryl", 1150.0, 1280.0, "stretch", "", "#6C3483"),
+            ("ν(P–O–C) aliph. phosphate", 970.0, 1060.0, "stretch", "", "#6C3483"),
         ]
 
         cursor.executemany(

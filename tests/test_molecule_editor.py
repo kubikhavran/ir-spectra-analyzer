@@ -300,3 +300,56 @@ def test_molecule_widget_no_signal_if_same_smiles(qtbot):
         mw_module.MoleculeWidget._open_editor = original
 
     assert emitted == []
+
+
+def test_molecule_editor_html_queues_structure_until_jsme_ready():
+    """Regression: structures loaded before jsmeOnLoad must be queued, not dropped.
+
+    Qt's loadFinished fires before JSME finishes its async GWT bootstrap, so
+    loadMolBlock()/loadSMILES() used to no-op and re-opening the editor always
+    showed an empty canvas.
+    """
+    from ui.dialogs.molecule_editor_dialog import _JSME_HTML_TEMPLATE
+
+    assert "pendingMolBlock" in _JSME_HTML_TEMPLATE
+    assert "pendingSmiles" in _JSME_HTML_TEMPLATE
+    # jsmeOnLoad must apply the queued structure after the applet exists
+    on_load = _JSME_HTML_TEMPLATE.split("function jsmeOnLoad()")[1].split("function loadSMILES")[0]
+    assert "readMolFile(pendingMolBlock)" in on_load
+
+
+def test_molecule_editor_dialog_accepts_initial_mol_block(qtbot):
+    """The stored MOL block is preferred so the drawn 2D layout survives reopen."""
+    from ui.dialogs.molecule_editor_dialog import MoleculeEditorDialog
+
+    dlg = MoleculeEditorDialog(initial_smiles="CCO", initial_mol_block="FAKE MOL")
+    qtbot.addWidget(dlg)
+    assert dlg._initial_mol_block == "FAKE MOL"
+
+
+def test_molecule_widget_passes_current_structure_to_editor(qtbot, monkeypatch):
+    """Edit Structure... must reopen the editor with the current structure loaded."""
+    from ui.dialogs import molecule_editor_dialog as med
+    from ui.molecule_widget import MoleculeWidget
+
+    captured: dict = {}
+
+    class _FakeDialog:
+        DialogCode = med.MoleculeEditorDialog.DialogCode
+
+        def __init__(self, initial_smiles="", initial_mol_block="", parent=None):
+            captured["smiles"] = initial_smiles
+            captured["mol_block"] = initial_mol_block
+
+        def exec(self):
+            return med.MoleculeEditorDialog.DialogCode.Rejected
+
+    monkeypatch.setattr(med, "MoleculeEditorDialog", _FakeDialog)
+
+    widget = MoleculeWidget()
+    qtbot.addWidget(widget)
+    widget.set_structure("CCO", mol_block="MOL BLOCK CONTENT")
+    widget._open_editor()
+
+    assert captured["smiles"] == "CCO"
+    assert captured["mol_block"] == "MOL BLOCK CONTENT"

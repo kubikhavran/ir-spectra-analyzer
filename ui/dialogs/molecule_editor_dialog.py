@@ -76,6 +76,12 @@ _JSME_HTML_TEMPLATE = """\
 <script>
 var jsmeApplet = null;
 var pyBridge = null;
+// Structures requested before JSME finished its async GWT bootstrap are
+// queued here and applied inside jsmeOnLoad. Qt's loadFinished fires before
+// jsmeOnLoad, so without this queue the initial structure is silently lost
+// and re-opening the editor always shows an empty canvas.
+var pendingMolBlock = null;
+var pendingSmiles = null;
 
 new QWebChannel(qt.webChannelTransport, function(channel) {{
     pyBridge = channel.objects.pyBridge;
@@ -88,20 +94,34 @@ function jsmeOnLoad() {{
     jsmeApplet.setCallBack("AfterStructureModified", function() {{
         sendSMILES();
     }});
+    if (pendingMolBlock) {{
+        jsmeApplet.readMolFile(pendingMolBlock);
+        pendingMolBlock = null;
+        pendingSmiles = null;
+    }} else if (pendingSmiles) {{
+        jsmeApplet.readMolecule(pendingSmiles);
+        pendingSmiles = null;
+    }}
 }}
 
 function loadSMILES(smiles) {{
     // Fallback only — the SMILES path goes through loadMolBlock (see
     // _on_load_finished) because jsmeApplet.readMolecule() silently fails in
     // the packaged JSME build. Kept as a last-resort escape hatch.
-    if (jsmeApplet && smiles) {{
+    if (!smiles) return;
+    if (jsmeApplet) {{
         jsmeApplet.readMolecule(smiles);
+    }} else {{
+        pendingSmiles = smiles;
     }}
 }}
 
 function loadMolBlock(mol) {{
-    if (jsmeApplet && mol) {{
+    if (!mol) return;
+    if (jsmeApplet) {{
         jsmeApplet.readMolFile(mol);
+    }} else {{
+        pendingMolBlock = mol;
     }}
 }}
 
@@ -340,12 +360,13 @@ class MoleculeEditorDialog(QDialog):
     Tab 2 — SMILES: text input with live RDKit preview.
     """
 
-    def __init__(self, initial_smiles: str = "", parent=None) -> None:
+    def __init__(self, initial_smiles: str = "", initial_mol_block: str = "", parent=None) -> None:
         super().__init__(parent)
         self.setWindowTitle("Edit Molecular Structure")
         self.resize(620, 680)
 
         self._initial_smiles = initial_smiles
+        self._initial_mol_block = initial_mol_block
         self._draw_smiles: str = initial_smiles  # updated by JS bridge
         self._accepted_smiles: str = ""
         self._canvas_png_bytes: bytes = b""
@@ -509,12 +530,18 @@ class MoleculeEditorDialog(QDialog):
         ``readMolFile`` instead, which works for all elements including ones
         that are not on the default sidebar (Na, K, Fe, ...).
         """
-        if not (ok and self._initial_smiles and self._web_view is not None):
+        if not (ok and self._web_view is not None):
+            return
+        if not (self._initial_smiles or self._initial_mol_block):
             return
 
-        from chemistry.structure_renderer import smiles_to_mol_block  # noqa: PLC0415
+        # Prefer the stored MOL block: it preserves the exact 2D layout the
+        # user drew last time, and it works without RDKit.
+        mol_block = self._initial_mol_block
+        if not mol_block and self._initial_smiles:
+            from chemistry.structure_renderer import smiles_to_mol_block  # noqa: PLC0415
 
-        mol_block = smiles_to_mol_block(self._initial_smiles)
+            mol_block = smiles_to_mol_block(self._initial_smiles)
         if mol_block:
             js = f"loadMolBlock({json.dumps(mol_block)})"
         else:
@@ -575,6 +602,11 @@ class MoleculeEditorDialog(QDialog):
             self._flush_draw_smiles()
             self._flush_mol_block()
             self._accepted_smiles = self._draw_smiles
+            # If the structure was not modified and JSME gave us nothing back
+            # (e.g. editor failed to load), keep the stored layout instead of
+            # silently wiping it.
+            if not self._canvas_mol_block and self._draw_smiles == self._initial_smiles:
+                self._canvas_mol_block = self._initial_mol_block
         else:
             self._accepted_smiles = self._smiles_input.text().strip()
         self.accept()

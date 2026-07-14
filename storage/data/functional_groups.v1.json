@@ -9,7 +9,8 @@
     "pavia": "https://diverdi.colostate.edu/C372/experiments/vibrational%20spectra%20of%20halogenated%20methanes/references/IR-Tables-Pavia.pdf",
     "libretexts": "https://chem.libretexts.org/Bookshelves/Organic_Chemistry/Organic_Chemistry_%28Morsch_et_al.%29/12%3A_Structure_Determination_-_Mass_Spectrometry_and_Infrared_Spectroscopy/12.08%3A_Infrared_Spectra_of_Some_Common_Functional_Groups",
     "nist_chart": "https://nvlpubs.nist.gov/nistpubs/Legacy/TN/nbstechnicalnote1096.pdf",
-    "socrates_biblio": "https://books.google.com/books/about/Infrared_and_Raman_Characteristic_Group.html?id=LDoAAjMnwEIC"
+    "socrates_biblio": "https://books.google.com/books/about/Infrared_and_Raman_Characteristic_Group.html?id=LDoAAjMnwEIC",
+    "acs_oxirane": "https://pubs.acs.org/doi/10.1021/ac60089a009"
   },
   "groups": [
     {
@@ -4379,6 +4380,369 @@
           "bonus": 0.22,
           "threshold": 0.35,
           "label": "Vinyl ether C-O + vinyl bend coherence"
+        }
+      ]
+    },
+    {
+      "id": "imine",
+      "name": "Imine / Schiff base",
+      "color": "#2E86C1",
+      "summary": "C=N stretch at 1640-1690 cm-1 without a matching carbonyl or amide N-H pattern.",
+      "source_refs": ["sigma", "ucla", "msu"],
+      "bands": [
+        {
+          "id": "imine_cn",
+          "label": "Imine C=N stretch",
+          "range_min": 1640.0,
+          "range_max": 1690.0,
+          "expected_intensity": "m",
+          "shape": "sharp",
+          "role": "required",
+          "weight": 1.2,
+          "reliability": 1.0,
+          "channel": "sharp_corrected",
+          "suggested_preset_names": ["ν(C=N) R₂C=N–R imine"],
+          "source_refs": ["sigma", "ucla", "msu"]
+        },
+        {
+          "id": "imine_carbonyl_excl",
+          "label": "Strong carbonyl (ester/ketone/acid) counters imine",
+          "range_min": 1695.0,
+          "range_max": 1760.0,
+          "expected_intensity": "s",
+          "shape": "sharp",
+          "role": "exclusion",
+          "weight": 0.9,
+          "reliability": 1.0,
+          "channel": "sharp_corrected",
+          "suggested_preset_names": [],
+          "source_refs": ["sigma"]
+        },
+        {
+          "id": "imine_amide_nh_excl",
+          "label": "Amide-style N-H counters plain imine",
+          "range_min": 3170.0,
+          "range_max": 3370.0,
+          "expected_intensity": "m",
+          "shape": "broad",
+          "role": "exclusion",
+          "weight": 0.6,
+          "reliability": 0.9,
+          "channel": "broad_raw",
+          "suggested_preset_names": [],
+          "source_refs": ["sigma"]
+        },
+        {
+          "id": "imine_oxime_oh_excl",
+          "label": "Broad O-H (oxime/alcohol) counters plain imine",
+          "range_min": 3050.0,
+          "range_max": 3500.0,
+          "expected_intensity": "m",
+          "shape": "broad",
+          "role": "exclusion",
+          "weight": 0.7,
+          "reliability": 0.9,
+          "channel": "broad_raw",
+          "suggested_preset_names": [],
+          "source_refs": ["sigma"]
+        },
+        {
+          "id": "imine_oxime_no_excl",
+          "label": "Oxime N-O marker counters plain imine",
+          "range_min": 925.0,
+          "range_max": 965.0,
+          "expected_intensity": "m",
+          "shape": "sharp",
+          "role": "exclusion",
+          "weight": 0.6,
+          "reliability": 0.9,
+          "channel": "sharp_corrected",
+          "suggested_preset_names": [],
+          "source_refs": ["sigma"]
+        }
+      ]
+    },
+    {
+      "id": "epoxide",
+      "name": "Epoxide (oxirane)",
+      "color": "#148F77",
+      "summary": "Oxirane ring breathing near 1250 cm-1 with the 880-950 cm-1 asymmetric ring band.",
+      "source_refs": ["sigma", "msu", "acs_oxirane"],
+      "bands": [
+        {
+          "id": "epoxide_ring_breathe",
+          "label": "Oxirane ring breathing",
+          "range_min": 1230.0,
+          "range_max": 1280.0,
+          "expected_intensity": "m",
+          "shape": "sharp",
+          "role": "required",
+          "weight": 1.1,
+          "reliability": 0.95,
+          "channel": "sharp_corrected",
+          "suggested_preset_names": ["ν(ring) oxirane breathing"],
+          "source_refs": ["acs_oxirane", "msu"]
+        },
+        {
+          "id": "epoxide_ring_asym",
+          "label": "Oxirane asymmetric ring stretch",
+          "range_min": 880.0,
+          "range_max": 950.0,
+          "expected_intensity": "m",
+          "shape": "sharp",
+          "role": "required",
+          "weight": 1.0,
+          "reliability": 0.9,
+          "channel": "sharp_corrected",
+          "suggested_preset_names": ["νas(ring) oxirane"],
+          "source_refs": ["acs_oxirane"]
+        },
+        {
+          "id": "epoxide_ring_low",
+          "label": "Oxirane low-frequency ring band",
+          "range_min": 790.0,
+          "range_max": 880.0,
+          "expected_intensity": "w",
+          "shape": "sharp",
+          "role": "supporting",
+          "weight": 0.5,
+          "reliability": 0.8,
+          "channel": "sharp_corrected",
+          "suggested_preset_names": ["νas(ring) oxirane"],
+          "source_refs": ["acs_oxirane"]
+        },
+        {
+          "id": "epoxide_carbonyl_excl",
+          "label": "Strong carbonyl counters epoxide C-O evidence",
+          "range_min": 1700.0,
+          "range_max": 1770.0,
+          "expected_intensity": "s",
+          "shape": "sharp",
+          "role": "exclusion",
+          "weight": 0.8,
+          "reliability": 1.0,
+          "channel": "sharp_corrected",
+          "suggested_preset_names": [],
+          "source_refs": ["sigma"]
+        },
+        {
+          "id": "epoxide_aromatic_excl",
+          "label": "Aromatic ring pattern counters aryl-ether-style 1250 band",
+          "range_min": 1580.0,
+          "range_max": 1615.0,
+          "expected_intensity": "m",
+          "shape": "sharp",
+          "role": "exclusion",
+          "weight": 0.6,
+          "reliability": 0.9,
+          "channel": "sharp_corrected",
+          "suggested_preset_names": [],
+          "source_refs": ["sigma"]
+        }
+      ],
+      "coherence_rules": [
+        {
+          "band_ids": ["epoxide_ring_breathe", "epoxide_ring_asym"],
+          "bonus": 0.5,
+          "threshold": 0.42,
+          "label": "Oxirane ring pair"
+        }
+      ]
+    },
+    {
+      "id": "siloxane_silicone",
+      "name": "Silicone / siloxane",
+      "color": "#7D6608",
+      "summary": "Very sharp Si-CH3 band at ~1260 cm-1 with a strong broad Si-O-Si stretch at 1000-1130 cm-1.",
+      "source_refs": ["sigma", "niu"],
+      "bands": [
+        {
+          "id": "siloxane_si_ch3",
+          "label": "Si-CH₃ symmetric deformation",
+          "range_min": 1255.0,
+          "range_max": 1270.0,
+          "expected_intensity": "s",
+          "shape": "sharp",
+          "role": "required",
+          "weight": 1.2,
+          "reliability": 1.1,
+          "channel": "sharp_corrected",
+          "suggested_preset_names": ["δs(Si–CH₃) silicone"],
+          "source_refs": ["sigma", "niu"]
+        },
+        {
+          "id": "siloxane_si_o_si",
+          "label": "Si-O-Si asymmetric stretch",
+          "range_min": 1000.0,
+          "range_max": 1130.0,
+          "expected_intensity": "vs",
+          "shape": "broad",
+          "role": "required",
+          "weight": 1.1,
+          "reliability": 1.0,
+          "channel": "broad_raw",
+          "suggested_preset_names": ["νas(Si–O–Si) siloxane"],
+          "source_refs": ["sigma", "niu"]
+        },
+        {
+          "id": "siloxane_si_c",
+          "label": "Si-C stretch + CH₃ rock",
+          "range_min": 780.0,
+          "range_max": 840.0,
+          "expected_intensity": "s",
+          "shape": "sharp",
+          "role": "supporting",
+          "weight": 0.6,
+          "reliability": 0.9,
+          "channel": "sharp_corrected",
+          "suggested_preset_names": ["ν(Si–C)+ρ(CH₃) silicone"],
+          "source_refs": ["niu"]
+        }
+      ],
+      "coherence_rules": [
+        {
+          "band_ids": ["siloxane_si_ch3", "siloxane_si_o_si"],
+          "bonus": 0.5,
+          "threshold": 0.42,
+          "label": "Silicone Si-CH₃ + Si-O-Si pair"
+        }
+      ]
+    },
+    {
+      "id": "organophosphate",
+      "name": "Organophosphate / phosphoryl",
+      "color": "#6C3483",
+      "summary": "P=O stretch at 1150-1280 cm-1 paired with a very strong P-O-C band at 970-1060 cm-1.",
+      "source_refs": ["sigma", "niu"],
+      "bands": [
+        {
+          "id": "phosphate_po",
+          "label": "P=O stretch",
+          "range_min": 1150.0,
+          "range_max": 1280.0,
+          "expected_intensity": "s",
+          "shape": "sharp",
+          "role": "required",
+          "weight": 1.0,
+          "reliability": 0.95,
+          "channel": "sharp_corrected",
+          "suggested_preset_names": ["ν(P=O) phosphoryl"],
+          "source_refs": ["sigma", "niu"]
+        },
+        {
+          "id": "phosphate_poc",
+          "label": "P-O-C stretch (aliphatic)",
+          "range_min": 970.0,
+          "range_max": 1060.0,
+          "expected_intensity": "vs",
+          "shape": "sharp",
+          "role": "required",
+          "weight": 1.1,
+          "reliability": 0.95,
+          "channel": "sharp_corrected",
+          "suggested_preset_names": ["ν(P–O–C) aliph. phosphate"],
+          "source_refs": ["sigma", "niu"]
+        },
+        {
+          "id": "phosphate_vinyl_ch_excl",
+          "label": "Vinyl/aromatic =C-H counters phosphate ester evidence",
+          "range_min": 3040.0,
+          "range_max": 3120.0,
+          "expected_intensity": "m",
+          "shape": "sharp",
+          "role": "exclusion",
+          "weight": 0.7,
+          "reliability": 0.9,
+          "channel": "sharp_corrected",
+          "suggested_preset_names": [],
+          "source_refs": ["sigma"]
+        },
+        {
+          "id": "phosphate_aromatic_excl",
+          "label": "Aromatic ring pattern counters phosphate-window bands",
+          "range_min": 1580.0,
+          "range_max": 1615.0,
+          "expected_intensity": "m",
+          "shape": "sharp",
+          "role": "exclusion",
+          "weight": 0.8,
+          "reliability": 0.9,
+          "channel": "sharp_corrected",
+          "suggested_preset_names": [],
+          "source_refs": ["sigma"]
+        },
+        {
+          "id": "phosphate_carbonyl_excl",
+          "label": "Strong carbonyl counters phosphate ester evidence",
+          "range_min": 1700.0,
+          "range_max": 1770.0,
+          "expected_intensity": "s",
+          "shape": "sharp",
+          "role": "exclusion",
+          "weight": 0.8,
+          "reliability": 1.0,
+          "channel": "sharp_corrected",
+          "suggested_preset_names": [],
+          "source_refs": ["sigma"]
+        }
+      ],
+      "coherence_rules": [
+        {
+          "band_ids": ["phosphate_po", "phosphate_poc"],
+          "bonus": 0.5,
+          "threshold": 0.55,
+          "label": "Phosphoryl P=O + P-O-C pair"
+        }
+      ]
+    },
+    {
+      "id": "internal_alkyne",
+      "name": "Internal alkyne",
+      "color": "#1ABC9C",
+      "summary": "Weak C≡C stretch at 2190-2260 cm-1 without the terminal ≡C-H band.",
+      "source_refs": ["sigma", "ucla"],
+      "bands": [
+        {
+          "id": "internal_alkyne_cc",
+          "label": "Disubstituted C≡C stretch",
+          "range_min": 2190.0,
+          "range_max": 2260.0,
+          "expected_intensity": "m",
+          "shape": "sharp",
+          "role": "required",
+          "weight": 0.9,
+          "reliability": 0.85,
+          "channel": "sharp_corrected",
+          "suggested_preset_names": ["ν(C≡C) –C≡C– disubst."],
+          "source_refs": ["sigma", "ucla"]
+        },
+        {
+          "id": "internal_alkyne_ch_excl",
+          "label": "Terminal ≡C-H counters internal alkyne",
+          "range_min": 3270.0,
+          "range_max": 3340.0,
+          "expected_intensity": "s",
+          "shape": "sharp",
+          "role": "exclusion",
+          "weight": 0.8,
+          "reliability": 1.0,
+          "channel": "sharp_corrected",
+          "suggested_preset_names": [],
+          "source_refs": ["sigma"]
+        },
+        {
+          "id": "internal_alkyne_nitrile_excl",
+          "label": "Strong sharp 2220-2260 band favours nitrile",
+          "range_min": 2220.0,
+          "range_max": 2260.0,
+          "expected_intensity": "s",
+          "shape": "sharp",
+          "role": "exclusion",
+          "weight": 0.5,
+          "reliability": 0.8,
+          "channel": "sharp_corrected",
+          "suggested_preset_names": [],
+          "source_refs": ["sigma"]
         }
       ]
     }

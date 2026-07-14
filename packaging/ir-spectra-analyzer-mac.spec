@@ -103,12 +103,12 @@ app = BUNDLE(
     name="IR Spectra Analyzer.app",
     icon=str(ICON_ICNS) if ICON_ICNS.exists() else None,
     bundle_identifier="com.irspectra.analyzer",
-    version="0.7.0",
+    version="0.8.0",
     info_plist={
         "NSPrincipalClass": "NSApplication",
         "NSHighResolutionCapable": True,
         "CFBundleDisplayName": "IR Spectra Analyzer",
-        "CFBundleShortVersionString": "0.7.0",
+        "CFBundleShortVersionString": "0.8.0",
         "LSMinimumSystemVersion": "12.0",
         "NSRequiresAquaSystemAppearance": False,
         "CFBundleDocumentTypes": [

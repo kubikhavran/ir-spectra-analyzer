@@ -154,13 +154,15 @@ class MoleculeWidget(QWidget):
     def _open_editor(self) -> None:
         from ui.dialogs.molecule_editor_dialog import MoleculeEditorDialog  # noqa: PLC0415
 
-        dlg = MoleculeEditorDialog(initial_smiles=self._current_smiles, parent=self)
+        dlg = MoleculeEditorDialog(
+            initial_smiles=self._current_smiles,
+            initial_mol_block=self._current_mol_block,
+            parent=self,
+        )
         if dlg.exec() == MoleculeEditorDialog.DialogCode.Accepted:
             new_smiles = dlg.smiles()
             new_mol_block = dlg.mol_block()
-            changed = (
-                new_smiles != self._current_smiles or new_mol_block != self._current_mol_block
-            )
+            changed = new_smiles != self._current_smiles or new_mol_block != self._current_mol_block
             if changed:
                 self._current_smiles = new_smiles
                 self._current_mol_block = new_mol_block

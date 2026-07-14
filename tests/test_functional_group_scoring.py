@@ -148,6 +148,11 @@ def test_functional_group_repository_contains_common_backbone_groups():
     assert "cis_disubstituted_alkene" in group_ids
     assert "trisubstituted_alkene" in group_ids
     assert "benzene" in group_ids
+    assert "imine" in group_ids
+    assert "epoxide" in group_ids
+    assert "siloxane_silicone" in group_ids
+    assert "organophosphate" in group_ids
+    assert "internal_alkyne" in group_ids
 
 
 @pytest.mark.parametrize(
@@ -188,17 +193,35 @@ def test_functional_group_scoring_prefers_specific_group_for_own_signature(group
         ),
         (
             "monosubstituted_benzene",
-            [(3030.0, 10.0, 0.10), (1600.0, 10.0, 0.22), (1495.0, 10.0, 0.20), (750.0, 8.0, 0.30), (700.0, 8.0, 0.22)],
+            [
+                (3030.0, 10.0, 0.10),
+                (1600.0, 10.0, 0.22),
+                (1495.0, 10.0, 0.20),
+                (750.0, 8.0, 0.30),
+                (700.0, 8.0, 0.22),
+            ],
             60.0,
         ),
         (
             "ortho_disubstituted_benzene",
-            [(3030.0, 10.0, 0.08), (1600.0, 10.0, 0.22), (1495.0, 10.0, 0.20), (755.0, 8.0, 0.30), (685.0, 8.0, 0.10)],
+            [
+                (3030.0, 10.0, 0.08),
+                (1600.0, 10.0, 0.22),
+                (1495.0, 10.0, 0.20),
+                (755.0, 8.0, 0.30),
+                (685.0, 8.0, 0.10),
+            ],
             55.0,
         ),
         (
             "meta_disubstituted_benzene",
-            [(1600.0, 10.0, 0.22), (1495.0, 10.0, 0.20), (880.0, 8.0, 0.28), (780.0, 8.0, 0.24), (700.0, 8.0, 0.18)],
+            [
+                (1600.0, 10.0, 0.22),
+                (1495.0, 10.0, 0.20),
+                (880.0, 8.0, 0.28),
+                (780.0, 8.0, 0.24),
+                (700.0, 8.0, 0.18),
+            ],
             60.0,
         ),
         (
@@ -208,7 +231,13 @@ def test_functional_group_scoring_prefers_specific_group_for_own_signature(group
         ),
         (
             "trisubstituted_benzene_1_2_4",
-            [(1600.0, 10.0, 0.22), (1495.0, 10.0, 0.20), (875.0, 8.0, 0.24), (812.0, 8.0, 0.26), (705.0, 8.0, 0.18)],
+            [
+                (1600.0, 10.0, 0.22),
+                (1495.0, 10.0, 0.20),
+                (875.0, 8.0, 0.24),
+                (812.0, 8.0, 0.26),
+                (705.0, 8.0, 0.18),
+            ],
             60.0,
         ),
         (
@@ -255,7 +284,13 @@ def test_functional_group_scoring_prefers_specific_group_for_own_signature(group
         ),
         (
             "primary_amine",
-            [(3450.0, 12.0, 0.14), (3360.0, 12.0, 0.12), (1605.0, 10.0, 0.30), (1060.0, 10.0, 0.20), (780.0, 12.0, 0.12)],
+            [
+                (3450.0, 12.0, 0.14),
+                (3360.0, 12.0, 0.12),
+                (1605.0, 10.0, 0.30),
+                (1060.0, 10.0, 0.20),
+                (780.0, 12.0, 0.12),
+            ],
             60.0,
         ),
         (
@@ -270,7 +305,13 @@ def test_functional_group_scoring_prefers_specific_group_for_own_signature(group
         ),
         (
             "tert_butyl_group",
-            [(2962.0, 9.0, 0.24), (2872.0, 9.0, 0.22), (1375.0, 9.0, 0.28), (927.0, 6.0, 0.34), (1460.0, 10.0, 0.20)],
+            [
+                (2962.0, 9.0, 0.24),
+                (2872.0, 9.0, 0.22),
+                (1375.0, 9.0, 0.28),
+                (927.0, 6.0, 0.34),
+                (1460.0, 10.0, 0.20),
+            ],
             60.0,
         ),
         (
@@ -332,6 +373,28 @@ def test_functional_group_scoring_prefers_specific_group_for_own_signature(group
         ("sulfate", [(1400.0, 8.0, 0.55), (1192.0, 8.0, 0.44)], 55.0),
         ("sulfonate", [(1352.0, 8.0, 0.58), (1180.0, 8.0, 0.46)], 60.0),
         ("vinyl_ether", [(1210.0, 8.0, 0.52), (3075.0, 10.0, 0.14), (988.0, 8.0, 0.30)], 60.0),
+        # Third sourced wave — imine, epoxide, silicone, organophosphate, internal alkyne
+        ("imine", [(1665.0, 9.0, 0.55), (2930.0, 12.0, 0.20), (1450.0, 10.0, 0.15)], 55.0),
+        (
+            "epoxide",
+            [(1252.0, 8.0, 0.40), (915.0, 9.0, 0.34), (840.0, 9.0, 0.12), (2930.0, 12.0, 0.20)],
+            55.0,
+        ),
+        (
+            "siloxane_silicone",
+            [(1262.0, 5.0, 0.55), (1065.0, 45.0, 0.60), (1020.0, 30.0, 0.50), (800.0, 9.0, 0.35)],
+            60.0,
+        ),
+        (
+            "organophosphate",
+            [(1240.0, 10.0, 0.50), (1025.0, 14.0, 0.65), (2930.0, 12.0, 0.20)],
+            55.0,
+        ),
+        (
+            "internal_alkyne",
+            [(2215.0, 6.0, 0.14), (2930.0, 12.0, 0.30), (2860.0, 10.0, 0.25)],
+            30.0,
+        ),
     ],
 )
 def test_functional_group_scoring_ranks_expanded_groups_first(group_id, features, minimum_score):
