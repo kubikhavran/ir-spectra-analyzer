@@ -732,7 +732,11 @@ class MainWindow(QMainWindow):
         try:
             spectrum = self._project.corrected_spectrum or self._project.spectrum
             CSVExporter().export(
-                self._project.peaks, Path(path), spectrum, include_unassigned=include_unassigned
+                self._project.peaks,
+                Path(path),
+                spectrum,
+                include_unassigned=include_unassigned,
+                project=self._project,
             )
             self.statusBar().showMessage(f"CSV exported: {Path(path).name}")
         except Exception as e:  # noqa: BLE001
@@ -756,7 +760,11 @@ class MainWindow(QMainWindow):
         try:
             spectrum = self._project.corrected_spectrum or self._project.spectrum
             XLSXExporter().export(
-                self._project.peaks, Path(path), spectrum, include_unassigned=include_unassigned
+                self._project.peaks,
+                Path(path),
+                spectrum,
+                include_unassigned=include_unassigned,
+                project=self._project,
             )
             self.statusBar().showMessage(f"Excel exported: {Path(path).name}")
         except Exception as e:  # noqa: BLE001

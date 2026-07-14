@@ -4,8 +4,13 @@ from __future__ import annotations
 
 from collections.abc import Sequence
 from dataclasses import dataclass
+from typing import TYPE_CHECKING
 
 from core.peak import Peak
+
+if TYPE_CHECKING:
+    from core.project import Project
+    from core.spectrum import Spectrum
 
 
 @dataclass(frozen=True)
@@ -57,6 +62,75 @@ def classify_peak_intensities(peaks: Sequence[Peak], *, is_dip_spectrum: bool) -
         else:
             result[id(peak)] = "w"
     return result
+
+
+def collect_export_metadata(
+    project: Project | None,
+    spectrum: Spectrum | None,
+) -> list[tuple[str, str]]:
+    """Build ordered (label, value) metadata rows shared by CSV and XLSX exports.
+
+    Values are pulled from the editable project metadata first, then from the
+    source-spectrum header, so the export matches what the PDF report shows.
+    Empty fields are omitted.
+    """
+    rows: list[tuple[str, str]] = []
+
+    def _add(label: str, value: object) -> None:
+        if value is None:
+            return
+        text = str(value).strip()
+        if text:
+            rows.append((label, text))
+
+    metadata = getattr(project, "metadata", None)
+    extra = getattr(spectrum, "extra_metadata", {}) or {}
+    meta_extra = getattr(metadata, "extra", {}) or {}
+
+    sample_name = getattr(metadata, "sample_name", "") or ""
+    title = getattr(metadata, "title", "") or getattr(spectrum, "title", "") or ""
+    project_name = getattr(project, "name", "") or ""
+    _add("Sample", sample_name or project_name)
+    _add("Title", title)
+    _add("Operator", getattr(metadata, "operator", ""))
+    _add(
+        "Instrument",
+        getattr(metadata, "instrument", "") or extra.get("instrument_serial"),
+    )
+    _add("Client", meta_extra.get("omnic_client") or extra.get("omnic_custom_info_2"))
+    _add("Order", meta_extra.get("omnic_order") or extra.get("omnic_custom_info_1"))
+
+    acquired_at = getattr(metadata, "acquired_at", None) or getattr(spectrum, "acquired_at", None)
+    if acquired_at is not None:
+        _add("Acquired", acquired_at.strftime("%Y-%m-%d %H:%M"))
+
+    resolution = getattr(metadata, "resolution", None)
+    if resolution is None:
+        resolution = extra.get("resolution_cm")
+    if resolution is not None:
+        try:
+            _add("Resolution (cm⁻¹)", f"{float(resolution):.3f}")
+        except (TypeError, ValueError):
+            _add("Resolution (cm⁻¹)", resolution)
+
+    scans = getattr(metadata, "scans", None)
+    if scans is not None:
+        _add("Scans", scans)
+
+    _add("Comment", getattr(metadata, "comments", "") or extra.get("omnic_comment"))
+
+    if spectrum is not None:
+        _add("Y unit", spectrum.y_unit.value)
+        try:
+            wavenumbers = list(spectrum.wavenumbers)
+            if wavenumbers:
+                x_lo, x_hi = float(min(wavenumbers)), float(max(wavenumbers))
+                _add("X range (cm⁻¹)", f"{max(x_lo, x_hi):.0f} – {min(x_lo, x_hi):.0f}")
+                _add("Data points", len(wavenumbers))
+        except (TypeError, ValueError):
+            pass
+
+    return rows
 
 
 def build_peak_assignment_rows(

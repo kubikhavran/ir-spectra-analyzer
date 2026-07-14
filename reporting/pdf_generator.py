@@ -489,7 +489,7 @@ class PDFGenerator:
         # Narrow numeric columns leave the assignment text as much width as
         # possible, so multi-vibration assignments stay on one line.
         col_pos_w = 1.9 * cm
-        col_cls_w = 0.9 * cm
+        col_cls_w = 1.15 * cm
 
         def _make_header() -> list:
             return [
