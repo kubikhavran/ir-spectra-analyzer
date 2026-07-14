@@ -46,6 +46,11 @@ _OVERLAY_COLORS = [
 
 _PEAK_LABEL_FONT_SIZE_PT = 8.0
 
+# Split-view constants
+_SPLIT_WN = 2000.0  # cm⁻¹ split boundary
+_SPLIT_HI_FRAC = 35  # width fraction for hi-wavenumber panel (2000–3800)
+_SPLIT_LO_FRAC = 65  # width fraction for fingerprint panel (400–2000)
+
 
 class _DraggableLabel(pg.TextItem):
     """TextItem with a live OMNIC-style leader line.
@@ -184,6 +189,13 @@ class SpectrumWidget(QWidget):
         self._overlay_spectra_cache: list = []  # keep for redraw on slider change
         self._diagnostic_regions_cache: list = []
         self._diagnostic_regions_visible: bool = True
+        # Split-view state
+        self._split_mode: bool = False
+        self._fp_plot_widget: pg.PlotWidget | None = None
+        self._spectrum_curve_fp: pg.PlotDataItem | None = None
+        self._peak_items_fp: list = []
+        self._overlay_curves_fp: list = []
+        self._diagnostic_region_items_fp: list = []
         self._setup_ui()
 
     def _setup_ui(self) -> None:
@@ -230,6 +242,23 @@ class SpectrumWidget(QWidget):
         self._overlay_bar.setVisible(False)
         layout.addWidget(self._overlay_bar)
 
+        # ── Toolbar bar (always visible) — split-view toggle ─────────────────
+        self._toolbar_bar = QWidget()
+        self._toolbar_bar.setStyleSheet(
+            "QWidget { background: #F8F8F8; border-bottom: 1px solid #DDD; }"
+        )
+        toolbar_row = QHBoxLayout(self._toolbar_bar)
+        toolbar_row.setContentsMargins(8, 2, 8, 2)
+        toolbar_row.setSpacing(8)
+        self._split_btn = QPushButton("Split view")
+        self._split_btn.setCheckable(True)
+        self._split_btn.setFixedHeight(22)
+        self._split_btn.setToolTip("Show fingerprint region (400–2000 cm⁻¹) expanded")
+        self._split_btn.toggled.connect(self._on_split_toggled)
+        toolbar_row.addWidget(self._split_btn)
+        toolbar_row.addStretch()
+        layout.addWidget(self._toolbar_bar)
+
         # ── Plot widget ──────────────────────────────────────────────────────
         self._plot_widget = pg.PlotWidget()
 
@@ -252,8 +281,6 @@ class SpectrumWidget(QWidget):
             ax.setPen(pg.mkPen(color="k", width=1))
             ax.setTextPen(pg.mkPen(color="k"))
 
-        layout.addWidget(self._plot_widget)
-
         # Override PyQtGraph "A" button: disconnect default autoBtnClicked, wire to our reset
         _pi = self._plot_widget.getPlotItem()
         _pi.autoBtn.clicked.disconnect()
@@ -270,6 +297,129 @@ class SpectrumWidget(QWidget):
 
         # Mouse move for cursor position tracking
         self._plot_widget.scene().sigMouseMoved.connect(self._on_mouse_moved)
+
+        # ── Plots container (holds main + optional fingerprint panel) ─────────
+        self._plots_container = QWidget()
+        self._plots_layout = QHBoxLayout(self._plots_container)
+        self._plots_layout.setContentsMargins(0, 0, 0, 0)
+        self._plots_layout.setSpacing(0)
+        self._plots_layout.addWidget(self._plot_widget, _SPLIT_HI_FRAC)
+        layout.addWidget(self._plots_container)
+
+    # ── Split-view helpers ────────────────────────────────────────────────────
+
+    def _create_fp_plot_widget(self) -> pg.PlotWidget:
+        """Create and configure the fingerprint-region PlotWidget."""
+        fp = pg.PlotWidget()
+        fp.setBackground("w")
+        fp.showGrid(x=False, y=False)
+        fp.invertX(True)
+        fp.setXRange(_X_DEFAULT_MIN, _SPLIT_WN, padding=0.0)
+        fp.hideAxis("left")
+        for axis_name in ("bottom",):
+            ax = fp.getAxis(axis_name)
+            ax.setPen(pg.mkPen(color="k", width=1))
+            ax.setTextPen(pg.mkPen(color="k"))
+        label_style = {"color": "#000000", "font-size": "10pt"}
+        fp.setLabel("bottom", "Wavenumber (cm⁻¹)", **label_style)
+        self._spectrum_curve_fp = fp.plot(pen=pg.mkPen("k", width=1))
+        fp.scene().sigMouseClicked.connect(self._on_fp_mouse_clicked)
+        fp.scene().sigMouseMoved.connect(self._on_fp_mouse_moved)
+        return fp
+
+    def _on_split_toggled(self, checked: bool) -> None:
+        """Enable or disable the split-view mode."""
+        self._split_mode = checked
+        if checked:
+            if self._fp_plot_widget is None:
+                self._fp_plot_widget = self._create_fp_plot_widget()
+                self._plots_layout.addWidget(self._fp_plot_widget, _SPLIT_LO_FRAC)
+                self._fp_plot_widget.getPlotItem().vb.setYLink(self._plot_widget.getPlotItem().vb)
+            self._fp_plot_widget.setVisible(True)
+            self._plot_widget.setXRange(_SPLIT_WN, _X_DEFAULT_MAX, padding=0.0)
+            if self._spectrum is not None and self._spectrum_curve_fp is not None:
+                self._spectrum_curve_fp.setData(
+                    x=self._spectrum.wavenumbers,
+                    y=self._spectrum.intensities,
+                )
+            self.set_peaks(self._peaks)
+            self._redraw_overlays()
+            self._redraw_diagnostic_regions()
+        else:
+            if self._fp_plot_widget is not None:
+                self._fp_plot_widget.setVisible(False)
+            # Re-render all peaks back into the main plot (set_peaks clears the
+            # fingerprint panel first), then restore the full-range view.
+            self.set_peaks(self._peaks)
+            self.reset_view()
+            self._redraw_overlays()
+            self._redraw_diagnostic_regions()
+
+    def _clear_fp_items(self) -> None:
+        """Remove peak annotations added to the fingerprint panel.
+
+        Overlay curves and diagnostic regions are owned by _redraw_overlays /
+        _redraw_diagnostic_regions, which clear their own fingerprint items.
+        """
+        if self._fp_plot_widget is None:
+            return
+        for item in self._peak_items_fp:
+            self._fp_plot_widget.removeItem(item)
+        self._peak_items_fp.clear()
+
+    def _render_peaks_to(
+        self,
+        peaks: list[Peak],
+        plot_widget: pg.PlotWidget,
+        items_list: list,
+        peaks_are_dips: bool,
+        y_span: float,
+    ) -> None:
+        """Render peak leaders and labels into the given plot widget."""
+        if peaks_are_dips:
+            label_offset = -y_span * 0.065
+            anchor = (1, 0.5)
+        else:
+            label_offset = y_span * 0.065
+            anchor = (0, 0.5)
+
+        leader_pen = pg.mkPen((0, 0, 0), width=0.8)
+
+        for peak in peaks:
+            leader = pg.PlotCurveItem(pen=leader_pen)
+            plot_widget.addItem(leader)
+            items_list.append(leader)
+
+            if peak.manual_placement:
+                lx = peak.position + peak.label_offset_x
+                ly = peak.intensity + peak.label_offset_y
+            else:
+                lx = peak.position
+                ly = peak.intensity + label_offset
+
+            label = _DraggableLabel(
+                peak=peak,
+                peak_x=peak.position,
+                peak_y=peak.intensity,
+                label_offset=ly - peak.intensity,
+                label_x=lx,
+                label_y=ly,
+                click_callback=self._on_label_clicked,
+                shift_click_callback=self._on_label_shift_clicked,
+                text=str(int(round(peak.position))),
+                color=(0, 0, 0),
+                angle=90,
+                anchor=anchor,
+            )
+            font = QFont(label.textItem.font())
+            font.setPointSizeF(_PEAK_LABEL_FONT_SIZE_PT)
+            label.setFont(font)
+            plot_widget.addItem(label)
+            label.setPos(lx, ly)
+            items_list.append(label)
+            label.set_leader(leader)
+
+    # ── End split-view helpers ────────────────────────────────────────────────
 
     def set_add_peak_mode(self, enabled: bool) -> None:
         """Enable or disable peak-adding mode.
@@ -309,11 +459,19 @@ class SpectrumWidget(QWidget):
         label_style = {"color": "#000000", "font-size": "10pt"}
         self._plot_widget.setLabel("left", spectrum.display_y_unit.value, **label_style)
 
+        if self._split_mode and self._spectrum_curve_fp is not None:
+            self._spectrum_curve_fp.setData(x=spectrum.wavenumbers, y=spectrum.intensities)
+
         self.reset_view()
 
     def reset_view(self) -> None:
         """Reset to standard IR view: X=3800–400 cm⁻¹, Y auto-fitted to visible data + labels."""
-        self._plot_widget.setXRange(_X_DEFAULT_MIN, _X_DEFAULT_MAX, padding=0.0)
+        if self._split_mode:
+            self._plot_widget.setXRange(_SPLIT_WN, _X_DEFAULT_MAX, padding=0.0)
+            if self._fp_plot_widget is not None:
+                self._fp_plot_widget.setXRange(_X_DEFAULT_MIN, _SPLIT_WN, padding=0.0)
+        else:
+            self._plot_widget.setXRange(_X_DEFAULT_MIN, _X_DEFAULT_MAX, padding=0.0)
 
         if self._spectrum is None:
             return
@@ -359,12 +517,15 @@ class SpectrumWidget(QWidget):
     def get_x_view_range(self) -> tuple[float, float]:
         """Return the current visible wavenumber range as (x_min, x_max).
 
-        Returns the actual data coordinates of the left and right ViewBox edges,
-        regardless of the invert_x setting.  The returned tuple is always ordered
-        (lower_value, higher_value) so callers do not need to know the axis direction.
+        In split mode both panels are combined so callers (e.g. PDF export)
+        see the full range rather than only the hi-wavenumber panel.
         """
         vb = self._plot_widget.getPlotItem().vb
-        x_range = vb.viewRange()[0]  # [[xmin, xmax], [ymin, ymax]]
+        x_range = vb.viewRange()[0]
+        if self._split_mode and self._fp_plot_widget is not None:
+            fp_range = self._fp_plot_widget.getPlotItem().vb.viewRange()[0]
+            all_x = list(x_range) + list(fp_range)
+            return (float(min(all_x)), float(max(all_x)))
         return (float(min(x_range)), float(max(x_range)))
 
     def get_y_view_range(self) -> tuple[float, float]:
@@ -389,10 +550,13 @@ class SpectrumWidget(QWidget):
         """
         self._peaks = peaks
 
-        # Clear previous peak annotations
+        # Clear previous peak annotations from the main plot
         for item in self._peak_items:
             self._plot_widget.removeItem(item)
         self._peak_items.clear()
+
+        # Clear previous peak annotations from the fingerprint panel
+        self._clear_fp_items()
 
         if not peaks:
             return
@@ -409,54 +573,20 @@ class SpectrumWidget(QWidget):
         if y_span == 0:
             y_span = 1.0
 
-        if peaks_are_dips:
-            label_offset = -y_span * 0.065  # labels below dips
-            anchor = (1, 0.5)  # text extends downward from anchor
-        else:
-            label_offset = y_span * 0.065  # labels above maxima
-            anchor = (0, 0.5)  # text extends upward from anchor
-
-        leader_pen = pg.mkPen((0, 0, 0), width=0.8)
-
-        for peak in peaks:
-            # Diagonal leader line: from peak apex to label, managed by the label
-            leader = pg.PlotCurveItem(pen=leader_pen)
-            self._plot_widget.addItem(leader)
-            self._peak_items.append(leader)
-
-            # Draggable rotated label — owns the leader and updates it on drag
-            if peak.manual_placement:
-                lx = peak.position + peak.label_offset_x
-                ly = peak.intensity + peak.label_offset_y
-            else:
-                lx = peak.position
-                ly = peak.intensity + label_offset
-
-            label = _DraggableLabel(
-                peak=peak,
-                peak_x=peak.position,
-                peak_y=peak.intensity,
-                label_offset=ly - peak.intensity,
-                label_x=lx,
-                label_y=ly,
-                click_callback=self._on_label_clicked,
-                shift_click_callback=self._on_label_shift_clicked,
-                text=str(int(round(peak.position))),
-                color=(0, 0, 0),
-                angle=90,
-                anchor=anchor,
+        if self._split_mode and self._fp_plot_widget is not None:
+            # Split: hi peaks (>split) to main plot, lo peaks (<=split) to fp panel
+            hi_peaks = [p for p in peaks if p.position > _SPLIT_WN]
+            lo_peaks = [p for p in peaks if p.position <= _SPLIT_WN]
+            self._render_peaks_to(
+                hi_peaks, self._plot_widget, self._peak_items, peaks_are_dips, y_span
             )
-            font = QFont(label.textItem.font())
-            font.setPointSizeF(_PEAK_LABEL_FONT_SIZE_PT)
-            label.setFont(font)
-            # IMPORTANT: addItem BEFORE setPos so ViewBox is the parent when the
-            # position is stored.  Without a ViewBox parent, PyQtGraph interprets
-            # the coordinates as scene-pixel values; after addItem it re-interprets
-            # the stored value as data coordinates — giving the wrong visual position.
-            self._plot_widget.addItem(label)
-            label.setPos(lx, ly)
-            self._peak_items.append(label)
-            label.set_leader(leader)
+            self._render_peaks_to(
+                lo_peaks, self._fp_plot_widget, self._peak_items_fp, peaks_are_dips, y_span
+            )
+        else:
+            self._render_peaks_to(
+                peaks, self._plot_widget, self._peak_items, peaks_are_dips, y_span
+            )
 
     def compute_auto_label_placements(self) -> list[tuple[Peak, float, float]]:
         """Compute vertical-only label offsets for the current peak set.
@@ -505,18 +635,19 @@ class SpectrumWidget(QWidget):
                 rect_height = max(natural_rect[3] - natural_rect[2], view_y_span * 0.04)
                 vertical_step = rect_height + y_clearance
 
-                best_candidate: tuple[
-                    float,
-                    float,
-                    tuple[float, float, float, float],
-                    tuple[tuple[float, float], tuple[float, float], tuple[float, float]],
-                    float,
-                ] | None = None
+                best_candidate: (
+                    tuple[
+                        float,
+                        float,
+                        tuple[float, float, float, float],
+                        tuple[tuple[float, float], tuple[float, float], tuple[float, float]],
+                        float,
+                    ]
+                    | None
+                ) = None
 
                 for level in range(18):
-                    candidate_y = label._peak_y + (
-                        direction * (base_gap + (level * vertical_step))
-                    )
+                    candidate_y = label._peak_y + (direction * (base_gap + (level * vertical_step)))
                     rect = self._data_rect_for_label_position(label, candidate_x, candidate_y)
                     leader = self._leader_polyline_for_label_position(
                         label,
@@ -632,6 +763,10 @@ class SpectrumWidget(QWidget):
         for curve in self._overlay_curves:
             self._plot_widget.removeItem(curve)
         self._overlay_curves.clear()
+        for curve in self._overlay_curves_fp:
+            if self._fp_plot_widget is not None:
+                self._fp_plot_widget.removeItem(curve)
+        self._overlay_curves_fp.clear()
 
         alpha = int(self._overlay_alpha / 100 * 255)
         for i, spectrum in enumerate(self._overlay_spectra_cache):
@@ -639,26 +774,40 @@ class SpectrumWidget(QWidget):
             r = int(hex_color[1:3], 16)
             g = int(hex_color[3:5], 16)
             b = int(hex_color[5:7], 16)
+            pen = pg.mkPen((r, g, b, alpha), width=1.5)
             curve = self._plot_widget.plot(
                 x=spectrum.wavenumbers,
                 y=spectrum.intensities,
-                pen=pg.mkPen((r, g, b, alpha), width=1.5),
+                pen=pen,
             )
             self._overlay_curves.append(curve)
+            if self._split_mode and self._fp_plot_widget is not None:
+                curve_fp = self._fp_plot_widget.plot(
+                    x=spectrum.wavenumbers,
+                    y=spectrum.intensities,
+                    pen=pen,
+                )
+                self._overlay_curves_fp.append(curve_fp)
 
     def _redraw_diagnostic_regions(self) -> None:
         for item in self._diagnostic_region_items:
             self._plot_widget.removeItem(item)
         self._diagnostic_region_items.clear()
+        for item in self._diagnostic_region_items_fp:
+            if self._fp_plot_widget is not None:
+                self._fp_plot_widget.removeItem(item)
+        self._diagnostic_region_items_fp.clear()
 
         if not self._diagnostic_regions_visible:
             return
 
         for region in self._diagnostic_regions_cache:
             brush, pen = self._diagnostic_region_style(region)
+            rmin, rmax = float(region.range_min), float(region.range_max)
 
+            # Add to main plot (always — the main plot shows the full range or the hi panel)
             item = pg.LinearRegionItem(
-                values=(float(region.range_min), float(region.range_max)),
+                values=(rmin, rmax),
                 brush=brush,
                 pen=pen,
                 movable=False,
@@ -667,6 +816,20 @@ class SpectrumWidget(QWidget):
             item.setZValue(-50)
             self._plot_widget.addItem(item)
             self._diagnostic_region_items.append(item)
+
+            # In split mode, also add to fingerprint panel if region overlaps its range
+            if self._split_mode and self._fp_plot_widget is not None:
+                if rmin < _SPLIT_WN:
+                    item_fp = pg.LinearRegionItem(
+                        values=(rmin, min(rmax, _SPLIT_WN)),
+                        brush=brush,
+                        pen=pen,
+                        movable=False,
+                        swapMode="sort",
+                    )
+                    item_fp.setZValue(-50)
+                    self._fp_plot_widget.addItem(item_fp)
+                    self._diagnostic_region_items_fp.append(item_fp)
 
     def _diagnostic_region_style(self, region) -> tuple[QColor, object]:
         if getattr(region, "is_missing_required", False):
@@ -702,7 +865,10 @@ class SpectrumWidget(QWidget):
             self.peak_selected_in_viewer.emit(closest)
 
     def _peak_label_items(self) -> list[_DraggableLabel]:
-        return [item for item in self._peak_items if isinstance(item, _DraggableLabel)]
+        items = [item for item in self._peak_items if isinstance(item, _DraggableLabel)]
+        if self._split_mode:
+            items += [item for item in self._peak_items_fp if isinstance(item, _DraggableLabel)]
+        return items
 
     @staticmethod
     def _leader_polyline_for_label_position(
@@ -816,27 +982,8 @@ class SpectrumWidget(QWidget):
         last_anchor_x: float | None,
         allow_left_shifts: bool,
         min_candidate_x: float | None = None,
-    ) -> tuple[
-        float,
-        float,
-        float,
-        float,
-        float,
-        float,
-        float,
-        int,
-        tuple[tuple[float, float], tuple[float, float], tuple[float, float]],
-    ] | None:
-        natural_rect = self._data_rect_for_label_position(
-            label,
-            label._peak_x,
-            label._peak_y + (direction * (float(np.ptp(self._spectrum.intensities)) or 1.0) * 0.065),
-        )
-        rect_width = max(natural_rect[1] - natural_rect[0], x_span * 0.01)
-        rect_height = max(natural_rect[3] - natural_rect[2], view_y_span * 0.04)
-        horizontal_step = rect_width + x_clearance
-        vertical_step = rect_height + y_clearance
-        best_candidate: tuple[
+    ) -> (
+        tuple[
             float,
             float,
             float,
@@ -846,7 +993,33 @@ class SpectrumWidget(QWidget):
             float,
             int,
             tuple[tuple[float, float], tuple[float, float], tuple[float, float]],
-        ] | None = None
+        ]
+        | None
+    ):
+        natural_rect = self._data_rect_for_label_position(
+            label,
+            label._peak_x,
+            label._peak_y
+            + (direction * (float(np.ptp(self._spectrum.intensities)) or 1.0) * 0.065),
+        )
+        rect_width = max(natural_rect[1] - natural_rect[0], x_span * 0.01)
+        rect_height = max(natural_rect[3] - natural_rect[2], view_y_span * 0.04)
+        horizontal_step = rect_width + x_clearance
+        vertical_step = rect_height + y_clearance
+        best_candidate: (
+            tuple[
+                float,
+                float,
+                float,
+                float,
+                float,
+                float,
+                float,
+                int,
+                tuple[tuple[float, float], tuple[float, float], tuple[float, float]],
+            ]
+            | None
+        ) = None
 
         if allow_left_shifts:
             shift_multipliers = (
@@ -1001,9 +1174,7 @@ class SpectrumWidget(QWidget):
     def _leader_polyline_overlaps_any(
         cls,
         leader: tuple[tuple[float, float], tuple[float, float], tuple[float, float]],
-        placed_leaders: list[
-            tuple[tuple[float, float], tuple[float, float], tuple[float, float]]
-        ],
+        placed_leaders: list[tuple[tuple[float, float], tuple[float, float], tuple[float, float]]],
     ) -> bool:
         leader_segments = cls._polyline_segments(leader)
         for other in placed_leaders:
@@ -1102,9 +1273,8 @@ class SpectrumWidget(QWidget):
         second: tuple[float, float],
         third: tuple[float, float],
     ) -> int:
-        determinant = (
-            (second[1] - first[1]) * (third[0] - second[0])
-            - (second[0] - first[0]) * (third[1] - second[1])
+        determinant = (second[1] - first[1]) * (third[0] - second[0]) - (second[0] - first[0]) * (
+            third[1] - second[1]
         )
         if abs(determinant) <= 1e-9:
             return 0
@@ -1130,9 +1300,23 @@ class SpectrumWidget(QWidget):
             self.peak_delete_requested.emit(closest)
 
     def _on_mouse_clicked(self, event) -> None:
-        """Handle mouse click on the plot scene for peak picking or selection."""
+        """Handle mouse click on the main plot scene."""
+        self._handle_mouse_clicked(event, self._plot_widget)
+
+    def _on_fp_mouse_clicked(self, event) -> None:
+        """Handle mouse click on the fingerprint-panel scene."""
+        if self._fp_plot_widget is not None:
+            self._handle_mouse_clicked(event, self._fp_plot_widget)
+
+    def _handle_mouse_clicked(self, event, plot_widget: pg.PlotWidget) -> None:
+        """Handle mouse click for peak picking or selection.
+
+        Coordinates are mapped through the ViewBox of the panel that produced
+        the event — each panel has its own scene, so mapping through the main
+        plot's ViewBox would return wrong wavenumbers for the fingerprint panel.
+        """
         pos = event.scenePos()
-        plot_item = self._plot_widget.getPlotItem()
+        plot_item = plot_widget.getPlotItem()
         vb = plot_item.vb
 
         if not vb.sceneBoundingRect().contains(pos):
@@ -1159,8 +1343,17 @@ class SpectrumWidget(QWidget):
                 self.peak_selected_in_viewer.emit(closest)
 
     def _on_mouse_moved(self, pos) -> None:
-        """Handle mouse move on the plot scene for cursor position."""
-        plot_item = self._plot_widget.getPlotItem()
+        """Handle mouse move on the main plot scene."""
+        self._handle_mouse_moved(pos, self._plot_widget)
+
+    def _on_fp_mouse_moved(self, pos) -> None:
+        """Handle mouse move on the fingerprint-panel scene."""
+        if self._fp_plot_widget is not None:
+            self._handle_mouse_moved(pos, self._fp_plot_widget)
+
+    def _handle_mouse_moved(self, pos, plot_widget: pg.PlotWidget) -> None:
+        """Emit cursor position for the panel that produced the event."""
+        plot_item = plot_widget.getPlotItem()
         vb = plot_item.vb
 
         if not vb.sceneBoundingRect().contains(pos):

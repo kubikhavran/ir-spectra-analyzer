@@ -26,6 +26,7 @@ class XLSXExporter:
         peaks: list[Peak],
         output_path: Path,
         spectrum: Spectrum | None = None,
+        include_unassigned: bool = False,
     ) -> None:
         """Export peaks to an xlsx workbook.
 
@@ -33,6 +34,7 @@ class XLSXExporter:
             peaks: List of peaks to export.
             output_path: Destination .xlsx file path.
             spectrum: Optional spectrum for metadata rows.
+            include_unassigned: Whether to include peaks without vibration assignments.
         """
         import openpyxl  # noqa: PLC0415
         from openpyxl.styles import Font  # noqa: PLC0415
@@ -45,6 +47,7 @@ class XLSXExporter:
         assignment_rows = build_peak_assignment_rows(
             peaks,
             is_dip_spectrum=spectrum.is_dip_spectrum if spectrum is not None else False,
+            include_unassigned=include_unassigned,
         )
 
         # Peaks headers

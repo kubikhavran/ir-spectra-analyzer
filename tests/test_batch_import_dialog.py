@@ -279,7 +279,10 @@ def test_batch_import_dialog_runs_background_import_for_file_db(qtbot, file_db):
     expected_rows = len(list(folder.glob("*.SPA")))
     qtbot.waitUntil(lambda: dlg._results_table.rowCount() == expected_rows, timeout=10000)
     if dlg._import_thread is not None:
-        qtbot.waitUntil(lambda: not dlg._import_thread.isRunning(), timeout=10000)
+        qtbot.waitUntil(
+            lambda: dlg._import_thread is None or not dlg._import_thread.isRunning(),
+            timeout=10000,
+        )
 
     assert dlg._results_table.rowCount() == expected_rows
     assert "Imported:" in dlg._summary_label.text()

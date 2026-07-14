@@ -60,9 +60,12 @@ class ReportOptionsWidget(QWidget):
         self._include_peak_table_checkbox.setChecked(True)
         self._include_structures_checkbox = QCheckBox("Include structures")
         self._include_structures_checkbox.setChecked(True)
+        self._split_xaxis_checkbox = QCheckBox("Split X-axis at 2000 cm⁻¹")
+        self._split_xaxis_checkbox.setChecked(True)
         checkbox_layout.addWidget(self._include_metadata_checkbox)
         checkbox_layout.addWidget(self._include_peak_table_checkbox)
         checkbox_layout.addWidget(self._include_structures_checkbox)
+        checkbox_layout.addWidget(self._split_xaxis_checkbox)
         checkbox_layout.addStretch()
         root_layout.addLayout(checkbox_layout)
 
@@ -70,6 +73,7 @@ class ReportOptionsWidget(QWidget):
             self._include_metadata_checkbox,
             self._include_peak_table_checkbox,
             self._include_structures_checkbox,
+            self._split_xaxis_checkbox,
         ):
             checkbox.toggled.connect(self._on_options_toggled)
 
@@ -79,6 +83,7 @@ class ReportOptionsWidget(QWidget):
             include_metadata=self._include_metadata_checkbox.isChecked(),
             include_peak_table=self._include_peak_table_checkbox.isChecked(),
             include_structures=self._include_structures_checkbox.isChecked(),
+            split_xaxis=self._split_xaxis_checkbox.isChecked(),
         )
 
     def current_preset_name(self) -> str | None:
@@ -100,6 +105,7 @@ class ReportOptionsWidget(QWidget):
         self._include_metadata_checkbox.setEnabled(enabled)
         self._include_peak_table_checkbox.setEnabled(enabled)
         self._include_structures_checkbox.setEnabled(enabled)
+        self._split_xaxis_checkbox.setEnabled(enabled)
 
     def _load_initial_state(self) -> None:
         """Load presets and select the last-used named preset when available."""
@@ -155,6 +161,7 @@ class ReportOptionsWidget(QWidget):
             self._include_metadata_checkbox.setChecked(options.include_metadata)
             self._include_peak_table_checkbox.setChecked(options.include_peak_table)
             self._include_structures_checkbox.setChecked(options.include_structures)
+            self._split_xaxis_checkbox.setChecked(options.split_xaxis)
         finally:
             self._suppress_state_updates = False
         self.options_changed.emit()

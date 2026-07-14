@@ -651,9 +651,9 @@ class MainWindow(QMainWindow):
             if self._export_pdf(dialog.report_options):
                 dialog.remember_selected_preset()
         elif format_choice == "csv":
-            self._export_csv()
+            self._export_csv(include_unassigned=dialog.include_unassigned)
         elif format_choice == "xlsx":
-            self._export_xlsx()
+            self._export_xlsx(include_unassigned=dialog.include_unassigned)
 
     def _export_pdf(self, report_options=None) -> bool:
         """Export the current project to a PDF report."""
@@ -686,7 +686,7 @@ class MainWindow(QMainWindow):
             QMessageBox.critical(self, "Export Error", f"Failed to export PDF:\n{e}")
             return False
 
-    def _export_csv(self) -> None:
+    def _export_csv(self, *, include_unassigned: bool = False) -> None:
         """Export peaks to a CSV file."""
         path, _ = QFileDialog.getSaveFileName(
             self,
@@ -703,12 +703,14 @@ class MainWindow(QMainWindow):
 
         try:
             spectrum = self._project.corrected_spectrum or self._project.spectrum
-            CSVExporter().export(self._project.peaks, Path(path), spectrum)
+            CSVExporter().export(
+                self._project.peaks, Path(path), spectrum, include_unassigned=include_unassigned
+            )
             self.statusBar().showMessage(f"CSV exported: {Path(path).name}")
         except Exception as e:  # noqa: BLE001
             QMessageBox.critical(self, "Export Error", f"Failed to export CSV:\n{e}")
 
-    def _export_xlsx(self) -> None:
+    def _export_xlsx(self, *, include_unassigned: bool = False) -> None:
         """Export peaks and spectrum to an Excel file."""
         path, _ = QFileDialog.getSaveFileName(
             self,
@@ -725,7 +727,9 @@ class MainWindow(QMainWindow):
 
         try:
             spectrum = self._project.corrected_spectrum or self._project.spectrum
-            XLSXExporter().export(self._project.peaks, Path(path), spectrum)
+            XLSXExporter().export(
+                self._project.peaks, Path(path), spectrum, include_unassigned=include_unassigned
+            )
             self.statusBar().showMessage(f"Excel exported: {Path(path).name}")
         except Exception as e:  # noqa: BLE001
             QMessageBox.critical(self, "Export Error", f"Failed to export Excel:\n{e}")
@@ -1157,10 +1161,20 @@ class MainWindow(QMainWindow):
 
         from processing.functional_group_scoring import score_functional_groups  # noqa: PLC0415
 
-        analysis = score_functional_groups(
-            self._project.spectrum,
-            self._project.corrected_spectrum,
-        )
+        try:
+            analysis = score_functional_groups(
+                self._project.spectrum,
+                self._project.corrected_spectrum,
+            )
+        except Exception as exc:  # noqa: BLE001 — a broken/missing knowledge base
+            # must degrade to an empty panel instead of aborting spectrum load
+            # (e.g. data file missing from a packaged build).
+            self._current_functional_group_results = []
+            self._functional_group_panel.clear()
+            self._spectrum_widget.set_diagnostic_regions([])
+            self._refresh_consensus_analysis()
+            self.statusBar().showMessage(f"Functional-group analysis unavailable: {exc}")
+            return
         self._current_functional_group_results = list(analysis.results)
         self._functional_group_panel.set_results(list(analysis.results))
         self._restore_functional_group_selection(preferred_group_id)

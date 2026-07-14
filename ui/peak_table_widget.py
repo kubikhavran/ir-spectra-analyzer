@@ -11,9 +11,43 @@ Zodpovědnost:
 from __future__ import annotations
 
 from PySide6.QtCore import Qt, Signal
-from PySide6.QtWidgets import QTableWidget, QTableWidgetItem, QVBoxLayout, QWidget
+from PySide6.QtGui import QKeySequence
+from PySide6.QtWidgets import (
+    QApplication,
+    QHBoxLayout,
+    QPushButton,
+    QTableWidget,
+    QTableWidgetItem,
+    QVBoxLayout,
+    QWidget,
+)
 
 from core.peak import Peak
+
+_HEADERS = ["Position (cm⁻¹)", "Intensity", "Label", "Vibration"]
+
+
+class _CopyableTable(QTableWidget):
+    """QTableWidget that copies selected rows as TSV on Ctrl+C."""
+
+    def keyPressEvent(self, event) -> None:  # noqa: N802
+        if event.matches(QKeySequence.StandardKey.Copy):
+            self._copy_selection_to_clipboard()
+        else:
+            super().keyPressEvent(event)
+
+    def _copy_selection_to_clipboard(self) -> None:
+        selected_rows = sorted({idx.row() for idx in self.selectedIndexes()})
+        if not selected_rows:
+            return
+        lines = ["\t".join(_HEADERS)]
+        for row in selected_rows:
+            cells = []
+            for col in range(self.columnCount()):
+                item = self.item(row, col)
+                cells.append(item.text() if item else "")
+            lines.append("\t".join(cells))
+        QApplication.clipboard().setText("\n".join(lines))
 
 
 class PeakTableWidget(QWidget):
@@ -33,16 +67,35 @@ class PeakTableWidget(QWidget):
         layout = QVBoxLayout(self)
         layout.setContentsMargins(0, 0, 0, 0)
 
-        self._table = QTableWidget(0, 4)
-        self._table.setHorizontalHeaderLabels(
-            ["Position (cm⁻¹)", "Intensity", "Label", "Vibration"]
-        )
+        toolbar = QHBoxLayout()
+        toolbar.setContentsMargins(0, 0, 0, 0)
+        self._copy_all_btn = QPushButton("Copy all")
+        self._copy_all_btn.setFixedHeight(22)
+        self._copy_all_btn.setToolTip("Copy entire peak table to clipboard (TSV)")
+        self._copy_all_btn.clicked.connect(self._copy_all_to_clipboard)
+        toolbar.addStretch()
+        toolbar.addWidget(self._copy_all_btn)
+        layout.addLayout(toolbar)
+
+        self._table = _CopyableTable(0, 4)
+        self._table.setHorizontalHeaderLabels(_HEADERS)
         self._table.horizontalHeader().setStretchLastSection(True)
         self._table.setSelectionBehavior(self._table.SelectionBehavior.SelectRows)
         self._table.itemSelectionChanged.connect(self._on_selection_changed)
         self._table.itemChanged.connect(self._on_item_changed)
         self._table.cellDoubleClicked.connect(self._on_cell_double_clicked)
         layout.addWidget(self._table)
+
+    def _copy_all_to_clipboard(self) -> None:
+        """Copy all rows to clipboard as TSV."""
+        lines = ["\t".join(_HEADERS)]
+        for row in range(self._table.rowCount()):
+            cells = []
+            for col in range(self._table.columnCount()):
+                item = self._table.item(row, col)
+                cells.append(item.text() if item else "")
+            lines.append("\t".join(cells))
+        QApplication.clipboard().setText("\n".join(lines))
 
     def _on_selection_changed(self) -> None:
         row = self._table.currentRow()

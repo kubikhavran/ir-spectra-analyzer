@@ -34,6 +34,10 @@ from core.spectrum import SpectralUnit
 _WN_MAJOR_STEP = 500.0  # cm⁻¹
 _WN_MINOR_STEP = 100.0  # cm⁻¹
 
+# Split-axis width ratios (hi-wavenumber : fingerprint)
+_HI_RATIO = 35
+_LO_RATIO = 65
+
 
 class SpectrumRenderer:
     """Renders IR spectrum as a static Matplotlib figure for PDF embedding."""
@@ -51,6 +55,7 @@ class SpectrumRenderer:
         x_max: float = 3800.0,
         y_view_range: tuple[float, float] | None = None,
         diagnostic_regions: tuple[object, ...] | list[object] = (),
+        split_at: float | None = 2000.0,
     ) -> bytes:
         """Render spectrum with peak annotations to PNG bytes in memory.
 
@@ -62,6 +67,8 @@ class SpectrumRenderer:
             y_unit: Spectral intensity unit — controls Y-axis label and range.
             is_dip_spectrum: When True, peaks are downward dips (%T style) and
                 labels are drawn below the apex, matching the live viewer.
+            split_at: When not None and within the x range, render two side-by-side
+                axes split at this wavenumber (hi-region left, fingerprint right).
 
         Returns:
             PNG image as bytes.
@@ -72,12 +79,51 @@ class SpectrumRenderer:
         import matplotlib.pyplot as plt  # noqa: PLC0415
         import matplotlib.ticker as ticker  # noqa: PLC0415
 
-        # --- Figure / axes setup ---
-        fig, ax = plt.subplots(figsize=figsize)
         _fscale = figsize[0] / 7.5  # font scale relative to default width
         _fs_label = max(8, round(9 * _fscale))
         _fs_tick = max(7, round(8 * _fscale))
-        _fs_peak = max(6, round(7 * _fscale))
+        _fs_peak = max(5, round(5.5 * _fscale))
+        _plot_x_lo, _plot_x_hi = min(x_min, x_max), max(x_min, x_max)
+        _is_dip = is_dip_spectrum or y_unit == SpectralUnit.TRANSMITTANCE
+
+        _y_min, _y_max = self._resolve_y_limits(
+            wavenumbers=wavenumbers,
+            intensities=intensities,
+            peaks=peaks,
+            x_min=_plot_x_lo,
+            x_max=_plot_x_hi,
+            y_view_range=y_view_range,
+            is_dip_spectrum=_is_dip,
+        )
+
+        # Decide rendering mode
+        _use_split = split_at is not None and _plot_x_lo < split_at < _plot_x_hi
+
+        if _use_split:
+            return self._render_split(
+                wavenumbers=wavenumbers,
+                intensities=intensities,
+                peaks=peaks,
+                dpi=dpi,
+                y_unit=y_unit,
+                is_dip_spectrum=is_dip_spectrum,
+                figsize=figsize,
+                split_at=float(split_at),  # type: ignore[arg-type]
+                plot_x_lo=_plot_x_lo,
+                plot_x_hi=_plot_x_hi,
+                y_min=_y_min,
+                y_max=_y_max,
+                diagnostic_regions=diagnostic_regions,
+                fscale=_fscale,
+                fs_label=_fs_label,
+                fs_tick=_fs_tick,
+                fs_peak=_fs_peak,
+                plt=plt,
+                ticker=ticker,
+            )
+
+        # ── Single-axis (original) rendering ──────────────────────────────────
+        fig, ax = plt.subplots(figsize=figsize)
         fig.patch.set_facecolor("white")
         ax.set_facecolor("white")
 
@@ -98,11 +144,12 @@ class SpectrumRenderer:
                 )
 
         # --- Plot spectrum ---
-        ax.plot(wavenumbers, intensities, color="black", linewidth=0.8, antialiased=True, zorder=1.0)
+        ax.plot(
+            wavenumbers, intensities, color="black", linewidth=0.8, antialiased=True, zorder=1.0
+        )
 
         # --- X-axis: inverted, OMNIC-style ticks ---
         ax.invert_xaxis()
-        _plot_x_lo, _plot_x_hi = min(x_min, x_max), max(x_min, x_max)
 
         # Major ticks at every 500 cm⁻¹ within the visible range
         major_start = np.ceil(_plot_x_lo / _WN_MAJOR_STEP) * _WN_MAJOR_STEP
@@ -116,25 +163,28 @@ class SpectrumRenderer:
         ax.set_xticks(minor_ticks, minor=True)
 
         ax.tick_params(
-            axis="x", which="major", length=5, width=0.8, labelsize=_fs_tick, direction="in", top=True
+            axis="x",
+            which="major",
+            length=5,
+            width=0.8,
+            labelsize=_fs_tick,
+            direction="in",
+            top=True,
         )
         ax.tick_params(axis="x", which="minor", length=3, width=0.6, direction="in", top=True)
 
         # --- Y-axis: auto-fit to visible data (matches live viewer reset_view) ---
         ax.tick_params(
-            axis="y", which="major", length=5, width=0.8, labelsize=_fs_tick, direction="in", right=True
+            axis="y",
+            which="major",
+            length=5,
+            width=0.8,
+            labelsize=_fs_tick,
+            direction="in",
+            right=True,
         )
         ax.tick_params(axis="y", which="minor", length=3, width=0.6, direction="in", right=True)
 
-        _y_min, _y_max = self._resolve_y_limits(
-            wavenumbers=wavenumbers,
-            intensities=intensities,
-            peaks=peaks,
-            x_min=_plot_x_lo,
-            x_max=_plot_x_hi,
-            y_view_range=y_view_range,
-            is_dip_spectrum=is_dip_spectrum or y_unit == SpectralUnit.TRANSMITTANCE,
-        )
         ax.set_ylim(bottom=_y_min, top=_y_max)
         ax.yaxis.set_major_locator(ticker.AutoLocator())
         ax.yaxis.set_minor_locator(ticker.AutoMinorLocator(2))
@@ -202,6 +252,234 @@ class SpectrumRenderer:
         buf.seek(0)
         return buf.read()
 
+    def _render_split(  # noqa: PLR0913, PLR0914
+        self,
+        *,
+        wavenumbers: np.ndarray,
+        intensities: np.ndarray,
+        peaks: list[Peak],
+        dpi: int,
+        y_unit: SpectralUnit,
+        is_dip_spectrum: bool,
+        figsize: tuple[float, float],
+        split_at: float,
+        plot_x_lo: float,
+        plot_x_hi: float,
+        y_min: float,
+        y_max: float,
+        diagnostic_regions,
+        fscale: float,
+        fs_label: int,
+        fs_tick: int,
+        fs_peak: int,
+        plt,
+        ticker,
+    ) -> bytes:
+        """Render spectrum using a split-axis layout (hi-wavenumber | fingerprint).
+
+        Uses add_axes with manually computed figure-fraction positions so that
+        tight_layout / GridSpec wspace interactions cannot corrupt the layout.
+        """
+        fig_w, fig_h = figsize
+        fig = plt.figure(figsize=figsize)
+        fig.patch.set_facecolor("white")
+
+        # --- Axis geometry in figure fractions ----------------------------------
+        # Fixed inch margins → figure fractions (scale with figsize automatically)
+        lm = 0.75 / fig_w  # left  — room for Y-axis label + tick labels
+        rm = 0.10 / fig_w  # right — thin margin
+        bm = 0.45 / fig_h  # bottom — room for X-axis tick labels + label
+        tm = 0.10 / fig_h  # top   — thin margin
+
+        total_w = 1.0 - lm - rm
+        hi_frac = _HI_RATIO / (_HI_RATIO + _LO_RATIO)  # 0.35
+        lo_frac = _LO_RATIO / (_HI_RATIO + _LO_RATIO)  # 0.65
+        hi_w = total_w * hi_frac
+        lo_w = total_w * lo_frac
+        plot_h = 1.0 - bm - tm
+
+        # Two independent axes placed side-by-side with zero gap
+        ax_hi = fig.add_axes([lm, bm, hi_w, plot_h])
+        ax_lo = fig.add_axes([lm + hi_w, bm, lo_w, plot_h])
+
+        # --- Plot spectrum on both axes ---
+        for _ax in (ax_hi, ax_lo):
+            _ax.plot(
+                wavenumbers,
+                intensities,
+                color="black",
+                linewidth=0.8,
+                antialiased=True,
+                zorder=1.0,
+            )
+
+        # --- Diagnostic regions ---
+        if diagnostic_regions:
+            for region in diagnostic_regions:
+                facecolor, edgecolor, linestyle, linewidth, alpha = self._diagnostic_region_style(
+                    region
+                )
+                rmin, rmax = float(region.range_min), float(region.range_max)
+                if rmax > split_at:
+                    ax_hi.axvspan(
+                        max(rmin, split_at),
+                        rmax,
+                        facecolor=facecolor,
+                        edgecolor=edgecolor,
+                        linestyle=linestyle,
+                        linewidth=linewidth,
+                        alpha=alpha,
+                        zorder=0.1,
+                    )
+                if rmin < split_at:
+                    ax_lo.axvspan(
+                        rmin,
+                        min(rmax, split_at),
+                        facecolor=facecolor,
+                        edgecolor=edgecolor,
+                        linestyle=linestyle,
+                        linewidth=linewidth,
+                        alpha=alpha,
+                        zorder=0.1,
+                    )
+
+        # --- Ticks on hi panel ---
+        # The boundary tick (split_at itself) is drawn by the lo panel only, so
+        # its label is not printed twice at the shared spine.
+        hi_major_start = np.ceil(split_at / _WN_MAJOR_STEP) * _WN_MAJOR_STEP
+        hi_major_end = np.floor(plot_x_hi / _WN_MAJOR_STEP) * _WN_MAJOR_STEP
+        hi_majors = np.arange(hi_major_start, hi_major_end + 1, _WN_MAJOR_STEP)
+        ax_hi.set_xticks(hi_majors[hi_majors > split_at])
+        hi_minor_start = np.ceil(split_at / _WN_MINOR_STEP) * _WN_MINOR_STEP
+        hi_minor_end = np.floor(plot_x_hi / _WN_MINOR_STEP) * _WN_MINOR_STEP
+        hi_minors = np.arange(hi_minor_start, hi_minor_end + 1, _WN_MINOR_STEP)
+        ax_hi.set_xticks(hi_minors[hi_minors > split_at], minor=True)
+
+        # --- Ticks on lo panel ---
+        lo_major_start = np.ceil(plot_x_lo / _WN_MAJOR_STEP) * _WN_MAJOR_STEP
+        lo_major_end = np.floor(split_at / _WN_MAJOR_STEP) * _WN_MAJOR_STEP
+        ax_lo.set_xticks(np.arange(lo_major_start, lo_major_end + 1, _WN_MAJOR_STEP))
+        lo_minor_start = np.ceil(plot_x_lo / _WN_MINOR_STEP) * _WN_MINOR_STEP
+        lo_minor_end = np.floor(split_at / _WN_MINOR_STEP) * _WN_MINOR_STEP
+        ax_lo.set_xticks(np.arange(lo_minor_start, lo_minor_end + 1, _WN_MINOR_STEP), minor=True)
+
+        # --- Spine / tick style ---
+        for _ax in (ax_hi, ax_lo):
+            _ax.tick_params(
+                axis="x",
+                which="major",
+                length=5,
+                width=0.8,
+                labelsize=fs_tick,
+                direction="in",
+                top=True,
+            )
+            _ax.tick_params(axis="x", which="minor", length=3, width=0.6, direction="in", top=True)
+            _ax.tick_params(
+                axis="y",
+                which="major",
+                length=5,
+                width=0.8,
+                labelsize=fs_tick,
+                direction="in",
+                right=True,
+            )
+            _ax.tick_params(
+                axis="y", which="minor", length=3, width=0.6, direction="in", right=True
+            )
+            for spine in _ax.spines.values():
+                spine.set_linewidth(0.8)
+                spine.set_color("black")
+            _ax.grid(False)
+            _ax.set_facecolor("white")
+
+        # --- Hide inner boundary spines ---
+        ax_hi.spines["right"].set_visible(False)
+        ax_lo.spines["left"].set_visible(False)
+        # Suppress both major AND minor y-ticks on the lo panel — minor ticks
+        # would otherwise float in the middle of the plot at the panel boundary.
+        ax_lo.tick_params(which="both", left=False, labelleft=False)
+        ax_hi.tick_params(which="both", right=False)
+
+        # --- Y axis label + locators only on left panel ---
+        ax_hi.set_ylabel(y_unit.value, fontsize=fs_label, labelpad=4, fontfamily="sans-serif")
+        ax_hi.yaxis.set_major_locator(ticker.AutoLocator())
+        ax_hi.yaxis.set_minor_locator(ticker.AutoMinorLocator(2))
+        ax_lo.yaxis.set_major_locator(ticker.AutoLocator())
+        ax_lo.yaxis.set_minor_locator(ticker.AutoMinorLocator(2))
+
+        # --- Break marks at the split boundary ---
+        _d = 0.015
+        kw = {"color": "k", "clip_on": False, "linewidth": 0.8, "transform": ax_hi.transAxes}
+        ax_hi.plot([1 - _d, 1 + _d], [-_d, +_d], **kw)
+        ax_hi.plot([1 - _d, 1 + _d], [1 - _d, 1 + _d], **kw)
+        kw["transform"] = ax_lo.transAxes
+        ax_lo.plot([-_d, +_d], [-_d, +_d], **kw)
+        ax_lo.plot([-_d, +_d], [1 - _d, 1 + _d], **kw)
+
+        # --- Peak annotations distributed to correct panel ---
+        if peaks:
+            data_y_span = float(np.ptp(intensities))
+            if data_y_span == 0:
+                data_y_span = 1.0
+
+            for peak in peaks:
+                target_ax = ax_hi if peak.position > split_at else ax_lo
+                label_x, label_y = self._label_position(
+                    peak,
+                    data_y_span=data_y_span,
+                    is_dip_spectrum=is_dip_spectrum,
+                )
+                leader_points = self._leader_points(
+                    peak_x=peak.position,
+                    peak_y=peak.intensity,
+                    label_x=label_x,
+                    label_y=label_y,
+                )
+                target_ax.plot(
+                    [point[0] for point in leader_points],
+                    [point[1] for point in leader_points],
+                    color="black",
+                    linewidth=0.7,
+                    solid_capstyle="butt",
+                    zorder=1.2,
+                )
+                target_ax.text(
+                    label_x,
+                    label_y,
+                    str(int(round(peak.position))),
+                    rotation=90,
+                    va="bottom" if label_y >= peak.intensity else "top",
+                    ha="center",
+                    fontsize=fs_peak,
+                    fontfamily="sans-serif",
+                    color="black",
+                    zorder=1.3,
+                )
+
+        # --- X label centred under both panels ---
+        fig.text(
+            lm + total_w / 2,
+            bm * 0.35,
+            "Wavenumber (cm⁻¹)",
+            ha="center",
+            va="center",
+            fontsize=fs_label,
+            fontfamily="sans-serif",
+        )
+
+        # --- Apply axis limits (set_xlim(high, low) produces IR-inverted axis) ---
+        ax_hi.set_xlim(plot_x_hi, split_at)
+        ax_lo.set_xlim(split_at, plot_x_lo)
+        ax_hi.set_ylim(bottom=y_min, top=y_max)
+        ax_lo.set_ylim(bottom=y_min, top=y_max)
+
+        buf = io.BytesIO()
+        fig.savefig(buf, format="png", dpi=dpi, facecolor="white")
+        plt.close(fig)
+        buf.seek(0)
+        return buf.read()
+
     def render_to_file(
         self,
         wavenumbers: np.ndarray,
@@ -211,6 +489,7 @@ class SpectrumRenderer:
         dpi: int = 300,
         y_unit: SpectralUnit = SpectralUnit.ABSORBANCE,
         is_dip_spectrum: bool = False,
+        split_at: float | None = 2000.0,
     ) -> None:
         """Render spectrum with peak annotations to PNG file.
 
@@ -222,6 +501,7 @@ class SpectrumRenderer:
             dpi: Output resolution.
             y_unit: Spectral intensity unit for Y-axis label.
             is_dip_spectrum: When True, peak labels are placed below the apex.
+            split_at: When not None and within the x range, render split axis.
         """
         png_bytes = self.render_to_bytes(
             wavenumbers,
@@ -230,6 +510,7 @@ class SpectrumRenderer:
             dpi=dpi,
             y_unit=y_unit,
             is_dip_spectrum=is_dip_spectrum,
+            split_at=split_at,
         )
         output_path.write_bytes(png_bytes)
 

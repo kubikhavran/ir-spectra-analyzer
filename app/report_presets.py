@@ -109,6 +109,7 @@ class ReportPresetManager:
             "include_peak_table": options.include_peak_table,
             "include_structures": options.include_structures,
             "dpi": options.dpi,
+            "split_xaxis": options.split_xaxis,
         }
 
     @staticmethod
@@ -125,4 +126,5 @@ class ReportPresetManager:
             include_peak_table=bool(data.get("include_peak_table", True)),
             include_structures=bool(data.get("include_structures", True)),
             dpi=dpi_value,
+            split_xaxis=bool(data.get("split_xaxis", True)),
         )

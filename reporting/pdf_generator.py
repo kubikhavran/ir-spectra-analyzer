@@ -114,6 +114,8 @@ class ReportOptions:
             the full data extent. Defaults to (400.0, 3800.0) when None.
         view_y_range: Optional (y_min, y_max) visible y-axis range from the viewer.
         diagnostic_regions: Runtime-only diagnostic overlays currently visible in the viewer.
+        split_xaxis: When True, render the spectrum with a split X-axis at 2000 cm⁻¹
+            (hi-wavenumber region left, fingerprint region right). Default True.
     """
 
     include_structures: bool = True
@@ -123,6 +125,7 @@ class ReportOptions:
     view_x_range: tuple[float, float] | None = None
     view_y_range: tuple[float, float] | None = None
     diagnostic_regions: tuple[object, ...] = ()
+    split_xaxis: bool = True
 
 
 def _footer(canvas, doc) -> None:  # type: ignore[no-untyped-def]
@@ -254,6 +257,7 @@ class PDFGenerator:
             x_max=_x_max,
             y_view_range=options.view_y_range,
             diagnostic_regions=options.diagnostic_regions,
+            split_at=2000.0 if options.split_xaxis else None,
         )
 
         # Switch to portrait for subsequent pages, then page break
@@ -406,6 +410,7 @@ class PDFGenerator:
         x_max: float = 3800.0,
         y_view_range: tuple[float, float] | None = None,
         diagnostic_regions: tuple[object, ...] = (),
+        split_at: float | None = 2000.0,
     ) -> None:
         """Append the rendered spectrum image section."""
         # Compute figsize in inches from the available frame dimensions.
@@ -432,6 +437,7 @@ class PDFGenerator:
             x_max=x_max,
             y_view_range=y_view_range,
             diagnostic_regions=diagnostic_regions,
+            split_at=split_at,
         )
         img_buf = io.BytesIO(png_bytes)
 

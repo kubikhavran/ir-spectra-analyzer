@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import json
+import sys
 from functools import lru_cache
 from pathlib import Path
 
@@ -13,13 +14,25 @@ from core.functional_groups import (
     FunctionalGroupKnowledgeBase,
 )
 
+_DATA_RELATIVE = Path("storage") / "data" / "functional_groups.v1.json"
+
+
+def _default_data_path() -> Path:
+    # PyInstaller unpacks bundled data next to the exe under sys._MEIPASS
+    meipass = getattr(sys, "_MEIPASS", None)
+    if meipass is not None:
+        candidate = Path(meipass) / _DATA_RELATIVE
+        if candidate.exists():
+            return candidate
+    # Normal (source / editable install) path
+    return Path(__file__).resolve().parent / "data" / "functional_groups.v1.json"
+
 
 class FunctionalGroupRepository:
     """Repository for sourced functional-group diagnostics."""
 
     def __init__(self, path: Path | None = None) -> None:
-        base_dir = Path(__file__).resolve().parent
-        self._path = path or (base_dir / "data" / "functional_groups.v1.json")
+        self._path = path or _default_data_path()
 
     def load(self) -> FunctionalGroupKnowledgeBase:
         return _load_knowledge_base(self._path)

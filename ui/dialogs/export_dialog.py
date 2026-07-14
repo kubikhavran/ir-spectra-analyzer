@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from PySide6.QtWidgets import QDialog, QDialogButtonBox, QRadioButton, QVBoxLayout
+from PySide6.QtWidgets import QCheckBox, QDialog, QDialogButtonBox, QRadioButton, QVBoxLayout
 
 from app.report_presets import ReportPresetManager
 from reporting.pdf_generator import ReportOptions
@@ -29,6 +29,9 @@ class ExportDialog(QDialog):
         layout.addWidget(self._csv_radio)
         layout.addWidget(self._xlsx_radio)
 
+        self._include_unassigned_checkbox = QCheckBox("Include peaks without assignment")
+        layout.addWidget(self._include_unassigned_checkbox)
+
         self._report_options_widget = ReportOptionsWidget(
             preset_manager=preset_manager, parent=self
         )
@@ -41,7 +44,10 @@ class ExportDialog(QDialog):
         self._include_structures_checkbox = self._report_options_widget._include_structures_checkbox
 
         self._pdf_radio.toggled.connect(self._update_pdf_option_state)
+        self._csv_radio.toggled.connect(self._update_unassigned_checkbox_state)
+        self._xlsx_radio.toggled.connect(self._update_unassigned_checkbox_state)
         self._update_pdf_option_state()
+        self._update_unassigned_checkbox_state()
 
         buttons = QDialogButtonBox(
             QDialogButtonBox.StandardButton.Ok | QDialogButtonBox.StandardButton.Cancel
@@ -53,6 +59,17 @@ class ExportDialog(QDialog):
     def _update_pdf_option_state(self) -> None:
         """Enable PDF-specific option controls only when PDF export is selected."""
         self._report_options_widget.set_option_controls_enabled(self._pdf_radio.isChecked())
+
+    def _update_unassigned_checkbox_state(self) -> None:
+        """Show the unassigned-peaks checkbox only for CSV and XLSX exports."""
+        self._include_unassigned_checkbox.setVisible(
+            self._csv_radio.isChecked() or self._xlsx_radio.isChecked()
+        )
+
+    @property
+    def include_unassigned(self) -> bool:
+        """Return True when the user wants unassigned peaks included."""
+        return self._include_unassigned_checkbox.isChecked()
 
     @property
     def selected_format(self) -> str:

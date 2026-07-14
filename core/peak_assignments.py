@@ -60,15 +60,15 @@ def classify_peak_intensities(peaks: Sequence[Peak], *, is_dip_spectrum: bool) -
 
 
 def build_peak_assignment_rows(
-    peaks: Sequence[Peak], *, is_dip_spectrum: bool
+    peaks: Sequence[Peak], *, is_dip_spectrum: bool, include_unassigned: bool = False
 ) -> list[PeakAssignmentRow]:
     """Build export rows that match the PDF peak-assignment table."""
-    assigned_peaks = sorted(
-        (peak for peak in peaks if peak_has_assignment(peak)),
+    selected_peaks = sorted(
+        (peak for peak in peaks if include_unassigned or peak_has_assignment(peak)),
         key=lambda peak: peak.position,
         reverse=True,
     )
-    intensity_labels = classify_peak_intensities(assigned_peaks, is_dip_spectrum=is_dip_spectrum)
+    intensity_labels = classify_peak_intensities(selected_peaks, is_dip_spectrum=is_dip_spectrum)
     return [
         PeakAssignmentRow(
             peak=peak,
@@ -77,5 +77,5 @@ def build_peak_assignment_rows(
             intensity_label=intensity_labels.get(id(peak), ""),
             assignment=peak_assignment_text(peak),
         )
-        for peak in assigned_peaks
+        for peak in selected_peaks
     ]

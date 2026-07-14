@@ -27,6 +27,7 @@ class CSVExporter:
         spectrum: Spectrum | None = None,
         delimiter: str = ",",
         include_header: bool = True,
+        include_unassigned: bool = False,
     ) -> None:
         """Export peaks to a CSV file.
 
@@ -36,12 +37,14 @@ class CSVExporter:
             spectrum: Optional spectrum for metadata header.
             delimiter: Field delimiter character.
             include_header: Whether to include column headers.
+            include_unassigned: Whether to include peaks without vibration assignments.
         """
         with output_path.open("w", newline="", encoding="utf-8") as f:
             writer = csv.writer(f, delimiter=delimiter)
             assignment_rows = build_peak_assignment_rows(
                 peaks,
                 is_dip_spectrum=spectrum.is_dip_spectrum if spectrum is not None else False,
+                include_unassigned=include_unassigned,
             )
             if include_header:
                 writer.writerow(["Position (cm⁻¹)", "Intensity", "Int.", "Assignment"])

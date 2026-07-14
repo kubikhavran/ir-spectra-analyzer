@@ -28,6 +28,7 @@ ICON = ASSETS / "icon.ico"
 datas = [
     (str(ASSETS / "icon.ico"), "assets"),
     (str(ASSETS / "icon.png"), "assets"),
+    (str(PROJECT_ROOT / "storage" / "data"), "storage/data"),
 ]
 datas += collect_data_files("rdkit")
 datas += collect_data_files("spectrochempy")
