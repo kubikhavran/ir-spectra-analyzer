@@ -117,12 +117,11 @@ def render_smiles_to_png(
         return None
 
     try:
-        from rdkit import Chem
         from rdkit.Chem import Draw
     except ImportError:
         return None
 
-    mol = Chem.MolFromSmiles(smiles)
+    mol = _mol_from_smiles_relaxed(smiles)
     if mol is None:
         return None
 
@@ -149,18 +148,59 @@ def smiles_to_mol_block(smiles: str) -> str | None:
         return None
     try:
         from rdkit import Chem
-        from rdkit.Chem import AllChem
     except ImportError:
         return None
-    mol = Chem.MolFromSmiles(smiles)
+    mol = _mol_from_smiles_relaxed(smiles)
     if mol is None:
         return None
-    if not mol.GetNumConformers():
-        AllChem.Compute2DCoords(mol)
     try:
         return Chem.MolToMolBlock(mol)
     except Exception:  # noqa: BLE001
-        return None
+        try:
+            return Chem.MolToMolBlock(mol, kekulize=False)
+        except Exception:  # noqa: BLE001
+            return None
+
+
+def _relaxed_sanitize(mol) -> bool:
+    """Partially sanitize a molecule, skipping strict valence checks.
+
+    JSME lets users draw atoms with unusual valences (typed via the "X"
+    element picker); full RDKit sanitization rejects those and the structure
+    would silently vanish from the app. Returns True when the molecule is
+    usable for drawing.
+    """
+    try:
+        from rdkit import Chem
+
+        mol.UpdatePropertyCache(strict=False)
+        Chem.SanitizeMol(
+            mol,
+            Chem.SanitizeFlags.SANITIZE_FINDRADICALS
+            | Chem.SanitizeFlags.SANITIZE_SETAROMATICITY
+            | Chem.SanitizeFlags.SANITIZE_SETCONJUGATION
+            | Chem.SanitizeFlags.SANITIZE_SETHYBRIDIZATION
+            | Chem.SanitizeFlags.SANITIZE_SYMMRINGS,
+            catchErrors=True,
+        )
+    except Exception:  # noqa: BLE001
+        return False
+    return True
+
+
+def _mol_from_smiles_relaxed(smiles: str):  # type: ignore[return]
+    """Parse SMILES with a relaxed-sanitization fallback for unusual valences."""
+    from rdkit import Chem
+    from rdkit.Chem import AllChem
+
+    mol = Chem.MolFromSmiles(smiles)
+    if mol is None:
+        mol = Chem.MolFromSmiles(smiles, sanitize=False)
+        if mol is None or not _relaxed_sanitize(mol):
+            return None
+    if not mol.GetNumConformers():
+        AllChem.Compute2DCoords(mol)
+    return mol
 
 
 def _load_mol(smiles: str = "", mol_block: str = ""):  # type: ignore[return]
@@ -170,7 +210,7 @@ def _load_mol(smiles: str = "", mol_block: str = ""):  # type: ignore[return]
     """
     try:
         from rdkit import Chem
-        from rdkit.Chem import AllChem
+        from rdkit.Chem import AllChem  # noqa: F401
     except ImportError:
         return None
 
@@ -181,10 +221,16 @@ def _load_mol(smiles: str = "", mol_block: str = ""):  # type: ignore[return]
             mol = Chem.MolFromMolBlock(mol_block, removeHs=False, sanitize=True)
         except Exception:  # noqa: BLE001
             mol = None
+        if mol is None:
+            # Relaxed fallback — keep custom/unusual-valence atoms drawable.
+            try:
+                mol = Chem.MolFromMolBlock(mol_block, removeHs=False, sanitize=False)
+                if mol is not None and not _relaxed_sanitize(mol):
+                    mol = None
+            except Exception:  # noqa: BLE001
+                mol = None
 
     if mol is None and smiles and smiles.strip():
-        mol = Chem.MolFromSmiles(smiles)
-        if mol is not None and not mol.GetNumConformers():
-            AllChem.Compute2DCoords(mol)
+        mol = _mol_from_smiles_relaxed(smiles)
 
     return mol

@@ -39,6 +39,7 @@ class ReferenceLibraryService:
 
     _DEFAULT_LIBRARY_CANDIDATES = (Path("reference library_1"),)
     _RERANK_CANDIDATE_COUNT = 25
+
     def __init__(
         self,
         db: Database,
@@ -53,6 +54,9 @@ class ReferenceLibraryService:
         self._import_service = import_service or ReferenceImportService(db)
         self._search_engine = SearchEngine()
         self._reference_spectrum_cache: dict[int, dict] = {}
+        # (source_prefix, include_web_refs, (count, max_id)) of the currently
+        # loaded search matrix — lets repeated searches skip the BLOB reload.
+        self._loaded_search_state: tuple | None = None
         self._selected_library_folder = self._load_selected_library_folder()
 
     def discover_project_library_folder(self) -> Path | None:
@@ -116,10 +120,7 @@ class ReferenceLibraryService:
             if (
                 stored_mtime_ns != 0
                 and stored_size != 0
-                and (
-                    stored_mtime_ns != stat.st_mtime_ns
-                    or stored_size != stat.st_size
-                )
+                and (stored_mtime_ns != stat.st_mtime_ns or stored_size != stat.st_size)
             ):
                 needs_sync = True
                 break
@@ -175,18 +176,31 @@ class ReferenceLibraryService:
                 library_folder=library_folder,
             )
 
-        source_prefix = normalize_source_path(library_folder) if library_folder is not None else None
+        source_prefix = (
+            normalize_source_path(library_folder) if library_folder is not None else None
+        )
         include_web_refs = library_folder is not None
         self._refresh_missing_features(
             source_prefix=source_prefix,
             include_web_refs=include_web_refs,
         )
-        search_rows = self._db.get_reference_search_rows(
+        # Re-fetching every feature BLOB and rebuilding the reference matrix is
+        # the dominant per-search cost on large libraries. Skip it entirely
+        # when the searchable library has not changed since the last load.
+        library_state = self._db.get_reference_library_state(
             source_prefix=source_prefix,
             include_web_refs=include_web_refs,
             feature_version=MATCH_FEATURE_VERSION,
         )
-        self._search_engine.load_references(search_rows)
+        search_state_key = (source_prefix, include_web_refs, library_state)
+        if search_state_key != self._loaded_search_state or self._search_engine.n_references == 0:
+            search_rows = self._db.get_reference_search_rows(
+                source_prefix=source_prefix,
+                include_web_refs=include_web_refs,
+                feature_version=MATCH_FEATURE_VERSION,
+            )
+            self._search_engine.load_references(search_rows)
+            self._loaded_search_state = search_state_key
         coarse_top_n = None if top_n is None else max(int(top_n), self._RERANK_CANDIDATE_COUNT)
         coarse_results = tuple(
             self._search_engine.search(
@@ -208,6 +222,7 @@ class ReferenceLibraryService:
         """Clear cached preprocessed reference vectors."""
         self._search_engine.clear_cache()
         self._reference_spectrum_cache.clear()
+        self._loaded_search_state = None
 
     def get_library_references(self) -> list[dict]:
         """Return reference spectra belonging to the active reference-library folder."""

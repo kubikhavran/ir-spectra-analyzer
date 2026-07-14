@@ -55,7 +55,6 @@ _PREVIEW_COLORS: tuple[tuple[int, int, int], ...] = (
 )
 
 
-
 class ReferenceLibraryDialog(QDialog):
     """Dialog for viewing, renaming, and deleting reference spectra."""
 
@@ -549,7 +548,9 @@ class ReferenceLibraryDialog(QDialog):
         self._delete_btn.setEnabled(has_any and is_idle)
         self._open_in_main_btn.setEnabled(has_single and is_idle)
         self._find_similar_selected_btn.setEnabled(
-            has_single and (self._project_library_folder is not None or bool(self._refs_all)) and is_idle
+            has_single
+            and (self._project_library_folder is not None or bool(self._refs_all))
+            and is_idle
         )
         self._clear_search_btn.setEnabled(bool(self._similarity_by_ref_id) and is_idle)
         self._sync_project_library_btn.setEnabled(
@@ -824,6 +825,7 @@ class ReferenceLibraryDialog(QDialog):
 
         for ref in refs:
             self._db.delete_reference_spectrum(ref["id"])
+        self._library_service.clear_search_cache()
         # Drop any stale similarity entries for deleted rows so the next
         # refresh doesn't try to re-rank ghost ids.
         for ref in refs:
@@ -934,6 +936,7 @@ class ReferenceLibraryDialog(QDialog):
             return
 
         self._db.rename_reference_spectrum(ref["id"], new_name.strip())
+        self._library_service.clear_search_cache()
         self._load_data()
 
     def _select_reference_row(self, ref_id: int) -> None:
@@ -1246,7 +1249,6 @@ class ReferenceLibraryDialog(QDialog):
 
     def _on_similarity_search_completed(self, outcome: ReferenceSearchOutcome) -> None:
         """Apply a completed background similarity search to the table UI."""
-        self._library_service.clear_search_cache()
         self._apply_similarity_search_outcome(outcome)
 
     def _on_similarity_search_failed(self, message: str) -> None:

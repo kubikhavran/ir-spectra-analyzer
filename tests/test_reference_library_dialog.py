@@ -48,6 +48,9 @@ class _FakeLibraryService:
         self._db = db
         self._folder = folder
 
+    def clear_search_cache(self):
+        pass
+
     def discover_project_library_folder(self):
         return self._folder
 

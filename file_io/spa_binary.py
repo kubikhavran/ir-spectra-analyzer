@@ -401,6 +401,7 @@ class SPABinaryReader:
             and custom_info_offset + custom_info_size <= len(data)
         ):
             ci_block = data[custom_info_offset : custom_info_offset + custom_info_size]
+
             # Field layout: each field is a 64-byte null-padded string
             def _read_ci_field(buf: bytes, field_idx: int) -> str:
                 start = field_idx * _OMNIC_CUSTOM_INFO_FIELD_SIZE
@@ -446,12 +447,17 @@ class SPABinaryReader:
             if b"PEAKTABLE" not in block:
                 continue
             text = block.decode("latin-1", errors="replace")
+            # Tolerant pairing: RTF variants may inject control words (\par,
+            # \tab, ...) between the two fields, and some locales emit comma
+            # decimals. Allow limited non-numeric junk between the pair.
             for match in re.finditer(
-                r"Position:\s*([-+]?\d+(?:\.\d+)?)\s*Intensity:\s*([-+]?\d+(?:\.\d+)?)",
+                r"Position:\s*([-+]?\d+(?:[.,]\d+)?)"
+                r"[^0-9+\-]{0,80}?"
+                r"Intensity:\s*([-+]?\d+(?:[.,]\d+)?)",
                 text,
             ):
-                position = float(match.group(1))
-                intensity = float(match.group(2))
+                position = float(match.group(1).replace(",", "."))
+                intensity = float(match.group(2).replace(",", "."))
                 key = (round(position, 6), round(intensity, 6))
                 if key in seen:
                     continue

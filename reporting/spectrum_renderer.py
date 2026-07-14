@@ -56,6 +56,7 @@ class SpectrumRenderer:
         y_view_range: tuple[float, float] | None = None,
         diagnostic_regions: tuple[object, ...] | list[object] = (),
         split_at: float | None = 2000.0,
+        label_placements: dict[int, tuple[float, float]] | None = None,
     ) -> bytes:
         """Render spectrum with peak annotations to PNG bytes in memory.
 
@@ -94,6 +95,7 @@ class SpectrumRenderer:
             x_max=_plot_x_hi,
             y_view_range=y_view_range,
             is_dip_spectrum=_is_dip,
+            label_placements=label_placements,
         )
 
         # Decide rendering mode
@@ -120,6 +122,7 @@ class SpectrumRenderer:
                 fs_peak=_fs_peak,
                 plt=plt,
                 ticker=ticker,
+                label_placements=label_placements,
             )
 
         # ── Single-axis (original) rendering ──────────────────────────────────
@@ -209,10 +212,11 @@ class SpectrumRenderer:
                 data_y_span = 1.0
 
             for peak in peaks:
-                label_x, label_y = self._label_position(
+                label_x, label_y = self._resolve_label_position(
                     peak,
                     data_y_span=data_y_span,
                     is_dip_spectrum=is_dip_spectrum,
+                    label_placements=label_placements,
                 )
                 leader_points = self._leader_points(
                     peak_x=peak.position,
@@ -274,6 +278,7 @@ class SpectrumRenderer:
         fs_peak: int,
         plt,
         ticker,
+        label_placements: dict[int, tuple[float, float]] | None = None,
     ) -> bytes:
         """Render spectrum using a split-axis layout (hi-wavenumber | fingerprint).
 
@@ -425,10 +430,11 @@ class SpectrumRenderer:
 
             for peak in peaks:
                 target_ax = ax_hi if peak.position > split_at else ax_lo
-                label_x, label_y = self._label_position(
+                label_x, label_y = self._resolve_label_position(
                     peak,
                     data_y_span=data_y_span,
                     is_dip_spectrum=is_dip_spectrum,
+                    label_placements=label_placements,
                 )
                 leader_points = self._leader_points(
                     peak_x=peak.position,
@@ -514,6 +520,22 @@ class SpectrumRenderer:
         )
         output_path.write_bytes(png_bytes)
 
+    @classmethod
+    def _resolve_label_position(
+        cls,
+        peak: Peak,
+        *,
+        data_y_span: float,
+        is_dip_spectrum: bool,
+        label_placements: dict[int, tuple[float, float]] | None,
+    ) -> tuple[float, float]:
+        """Prefer the exact viewer label placement; fall back to the default formula."""
+        if label_placements is not None:
+            placement = label_placements.get(id(peak))
+            if placement is not None:
+                return (float(placement[0]), float(placement[1]))
+        return cls._label_position(peak, data_y_span=data_y_span, is_dip_spectrum=is_dip_spectrum)
+
     @staticmethod
     def _label_position(
         peak: Peak,
@@ -563,6 +585,7 @@ class SpectrumRenderer:
         x_max: float,
         y_view_range: tuple[float, float] | None,
         is_dip_spectrum: bool,
+        label_placements: dict[int, tuple[float, float]] | None = None,
     ) -> tuple[float, float]:
         """Resolve the y-axis limits, matching the live viewer's auto-fit when possible."""
         if y_view_range is not None:
@@ -578,10 +601,11 @@ class SpectrumRenderer:
         if visible_peaks:
             label_margin = data_y_span * 0.08
             label_y_values = [
-                cls._label_position(
+                cls._resolve_label_position(
                     peak,
                     data_y_span=data_y_span,
                     is_dip_spectrum=is_dip_spectrum,
+                    label_placements=label_placements,
                 )[1]
                 for peak in visible_peaks
             ]

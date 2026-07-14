@@ -13,6 +13,7 @@ from __future__ import annotations
 from PySide6.QtCore import Qt, Signal
 from PySide6.QtGui import QBrush, QColor
 from PySide6.QtWidgets import (
+    QComboBox,
     QDialog,
     QDialogButtonBox,
     QDoubleSpinBox,
@@ -45,12 +46,26 @@ class VibrationPanel(QWidget):
         self._presets: list[VibrationPreset] = []
         self._db = db
         self._active_peak = None
+        # (group name, preset names) pairs provided by MainWindow from the
+        # functional-group knowledge base — used as quick tag filters.
+        self._group_tags: list[tuple[str, frozenset[str]]] = []
         self._setup_ui()
 
     def _setup_ui(self) -> None:
         layout = QVBoxLayout(self)
         layout.setContentsMargins(4, 4, 4, 4)
         layout.setSpacing(4)
+
+        self._tag_combo = QComboBox()
+        self._tag_combo.addItem("All functional groups")
+        self._tag_combo.setToolTip(
+            "Show only vibrations diagnostic for one functional group "
+            "(e.g. when you already know the molecule contains an acid)"
+        )
+        self._tag_combo.currentIndexChanged.connect(
+            lambda _index: self._rebuild_list(self._filter_edit.text())
+        )
+        layout.addWidget(self._tag_combo)
 
         self._filter_edit = QLineEdit()
         self._filter_edit.setPlaceholderText("Filter vibrations…")
@@ -87,6 +102,27 @@ class VibrationPanel(QWidget):
         self._hint_label.setText("")
         self._rebuild_list(self._filter_edit.text())
 
+    def set_functional_group_tags(self, tags: list[tuple[str, frozenset[str]]]) -> None:
+        """Populate the functional-group tag filter (name, preset-name set) pairs."""
+        self._group_tags = list(tags)
+        current = self._tag_combo.currentText()
+        self._tag_combo.blockSignals(True)
+        self._tag_combo.clear()
+        self._tag_combo.addItem("All functional groups")
+        for name, _preset_names in self._group_tags:
+            self._tag_combo.addItem(name)
+        index = self._tag_combo.findText(current)
+        self._tag_combo.setCurrentIndex(index if index >= 0 else 0)
+        self._tag_combo.blockSignals(False)
+        self._rebuild_list(self._filter_edit.text())
+
+    def _active_tag_preset_names(self) -> frozenset[str] | None:
+        """Return the preset-name set of the selected tag, or None for 'All'."""
+        index = self._tag_combo.currentIndex() - 1
+        if 0 <= index < len(self._group_tags):
+            return self._group_tags[index][1]
+        return None
+
     def set_presets(self, presets: list[VibrationPreset]) -> None:
         self._presets = presets
         self._rebuild_list(self._filter_edit.text())
@@ -105,9 +141,23 @@ class VibrationPanel(QWidget):
                 item.setForeground(QBrush())
 
     def _rebuild_list(self, filter_text: str = "") -> None:
+        # Preserve the scroll position and selection so a rebuild (highlight
+        # refresh, assignment refresh, ...) does not yank the list away from
+        # where the user was browsing. The top visible preset is remembered by
+        # identity and scrolled back into place after the rebuild.
+        scrollbar = self._list.verticalScrollBar()
+        scroll_value = scrollbar.value()
+        top_item = self._list.itemAt(2, 2)
+        top_preset = top_item.data(256) if top_item is not None else None
+        current_item = self._list.currentItem()
+        current_preset = current_item.data(256) if current_item is not None else None
+
         self._list.clear()
         needle = filter_text.strip().lower()
+        tag_names = self._active_tag_preset_names()
         for preset in self._presets:
+            if tag_names is not None and preset.name not in tag_names:
+                continue
             label = (
                 f"{preset.name}  "
                 f"({preset.typical_range_min:.0f}\u2013{preset.typical_range_max:.0f} cm\u207b\u00b9)"
@@ -121,6 +171,26 @@ class VibrationPanel(QWidget):
             if not preset.is_builtin:
                 item.setForeground(QColor("#1A5276"))  # dark blue for custom
             self._list.addItem(item)
+
+        if current_preset is not None:
+            for i in range(self._list.count()):
+                if self._list.item(i).data(256) is current_preset:
+                    self._list.setCurrentRow(i)
+                    break
+        restored = False
+        if top_preset is not None:
+            from PySide6.QtWidgets import QAbstractItemView  # noqa: PLC0415
+
+            for i in range(self._list.count()):
+                if self._list.item(i).data(256) is top_preset:
+                    self._list.scrollToItem(
+                        self._list.item(i),
+                        QAbstractItemView.ScrollHint.PositionAtTop,
+                    )
+                    restored = True
+                    break
+        if not restored:
+            scrollbar.setValue(min(scroll_value, scrollbar.maximum()))
 
     def _apply_filter(self, text: str) -> None:
         self._rebuild_list(text)

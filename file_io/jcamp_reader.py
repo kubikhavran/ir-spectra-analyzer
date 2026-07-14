@@ -25,7 +25,9 @@ class JCAMPReader:
         if not filepath.exists():
             raise FileNotFoundError(f"JCAMP file not found: {filepath}")
 
-        return self.read_bytes(filepath.read_bytes(), source_path=filepath, title_hint=filepath.stem)
+        return self.read_bytes(
+            filepath.read_bytes(), source_path=filepath, title_hint=filepath.stem
+        )
 
     def read_bytes(
         self,

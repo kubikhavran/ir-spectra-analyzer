@@ -47,8 +47,13 @@ class Project:
     db_id: int | None = None
 
     def add_peak(self, peak: Peak) -> None:
-        """Add a peak to the project and update modification time."""
-        self.peaks.append(peak)
+        """Add a peak keeping the list sorted by position descending (IR convention)."""
+        index = len(self.peaks)
+        for i, existing in enumerate(self.peaks):
+            if existing.position < peak.position:
+                index = i
+                break
+        self.peaks.insert(index, peak)
         self.updated_at = datetime.now()
 
     def remove_peak(self, peak: Peak) -> bool:

@@ -806,12 +806,12 @@ def test_delete_peak_shortcut(qtbot):
     window._peak_table.set_peaks(window._project.peaks)
     window._spectrum_widget.set_spectrum(sp)
 
-    # select the first row
+    # Peaks are kept sorted by position descending, so row 0 is 2000 cm-1.
     window._peak_table._table.setCurrentCell(0, 0)
     window._on_delete_peak()
 
     assert len(window._project.peaks) == 1
-    assert window._project.peaks[0].position == pytest.approx(2000.0)
+    assert window._project.peaks[0].position == pytest.approx(1000.0)
 
 
 def test_main_window_save_and_open_project(qtbot, tmp_path):

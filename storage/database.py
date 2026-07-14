@@ -670,6 +670,38 @@ class Database:
             result.append(item)
         return result
 
+    def get_reference_library_state(
+        self,
+        *,
+        source_prefix: str | None = None,
+        include_web_refs: bool = False,
+        feature_version: int,
+    ) -> tuple[int, int]:
+        """Return a cheap (count, max_id) fingerprint of the searchable library.
+
+        Used to skip re-fetching all feature BLOBs when the library has not
+        changed between two searches — important for very large libraries.
+        """
+        assert self._conn is not None
+        sql = """
+            SELECT COUNT(*), COALESCE(MAX(rs.id), 0)
+            FROM reference_spectra rs
+            JOIN reference_features rf
+              ON rf.reference_id = rs.id
+             AND rf.feature_version = ?
+        """
+        params_list: list[object] = [int(feature_version)]
+        where_sql, where_params = self._reference_source_prefix_clause(
+            source_prefix,
+            alias="rs",
+            include_web_refs=include_web_refs,
+        )
+        if where_sql:
+            sql += f" WHERE {where_sql}"
+            params_list.extend(where_params)
+        row = self._conn.execute(sql, tuple(params_list)).fetchone()
+        return (int(row[0]), int(row[1]))
+
     def get_references_missing_features(
         self,
         *,

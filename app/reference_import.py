@@ -164,12 +164,8 @@ class ReferenceImportService:
                 if existing_source_row is not None:
                     stored_mtime_ns = int(existing_source_row.get("source_mtime_ns") or 0)
                     stored_size = int(existing_source_row.get("source_size") or 0)
-                    if (
-                        (stored_mtime_ns == 0 and stored_size == 0)
-                        or (
-                            stored_mtime_ns == stat.st_mtime_ns
-                            and stored_size == stat.st_size
-                        )
+                    if (stored_mtime_ns == 0 and stored_size == 0) or (
+                        stored_mtime_ns == stat.st_mtime_ns and stored_size == stat.st_size
                     ):
                         results.append(
                             BatchImportResult(

@@ -66,7 +66,8 @@ class WebReferenceImportDialog(QDialog):
         self._preview_label = QLabel("No preview loaded.")
         self._preview_label.setWordWrap(True)
         self._preview_label.setTextInteractionFlags(
-            self._preview_label.textInteractionFlags() | Qt.TextInteractionFlag.TextBrowserInteraction
+            self._preview_label.textInteractionFlags()
+            | Qt.TextInteractionFlag.TextBrowserInteraction
         )
         self._preview_label.setOpenExternalLinks(True)
         layout.addWidget(self._preview_label)

@@ -30,6 +30,7 @@ from reportlab.platypus import (
     Frame,
     HRFlowable,
     Image,
+    KeepInFrame,
     NextPageTemplate,
     PageBreak,
     PageTemplate,
@@ -98,6 +99,7 @@ _LAND_TEXT_H = _LAND_H - 2 * _MARGIN - 0.5 * cm  # leave room for footer
 # Portrait A4 (pages 2+)
 _PORT_W, _PORT_H = A4
 _PORT_TEXT_W = _PORT_W - 2 * _MARGIN
+_PORT_TEXT_H = _PORT_H - 2 * _MARGIN - 0.5 * cm  # leave room for footer
 
 
 @dataclass
@@ -126,6 +128,9 @@ class ReportOptions:
     view_y_range: tuple[float, float] | None = None
     diagnostic_regions: tuple[object, ...] = ()
     split_xaxis: bool = True
+    # id(peak) -> (label_x, label_y) in data coordinates, captured from the live
+    # viewer so exported labels reproduce the on-screen layout exactly.
+    peak_label_placements: dict = None  # type: ignore[assignment]
 
 
 def _footer(canvas, doc) -> None:  # type: ignore[no-untyped-def]
@@ -258,6 +263,7 @@ class PDFGenerator:
             y_view_range=options.view_y_range,
             diagnostic_regions=options.diagnostic_regions,
             split_at=2000.0 if options.split_xaxis else None,
+            label_placements=options.peak_label_placements,
         )
 
         # Switch to portrait for subsequent pages, then page break
@@ -411,6 +417,7 @@ class PDFGenerator:
         y_view_range: tuple[float, float] | None = None,
         diagnostic_regions: tuple[object, ...] = (),
         split_at: float | None = 2000.0,
+        label_placements: dict | None = None,
     ) -> None:
         """Append the rendered spectrum image section."""
         # Compute figsize in inches from the available frame dimensions.
@@ -438,6 +445,7 @@ class PDFGenerator:
             y_view_range=y_view_range,
             diagnostic_regions=diagnostic_regions,
             split_at=split_at,
+            label_placements=label_placements,
         )
         img_buf = io.BytesIO(png_bytes)
 
@@ -478,15 +486,17 @@ class PDFGenerator:
             is_dip_spectrum=is_dip_spectrum,
         )
 
-        col_pos_w = 3.0 * cm
-        col_cls_w = 1.6 * cm
-        col_assign_w = _PORT_TEXT_W - col_pos_w - col_cls_w
+        # Narrow numeric columns leave the assignment text as much width as
+        # possible, so multi-vibration assignments stay on one line.
+        col_pos_w = 1.9 * cm
+        col_cls_w = 0.9 * cm
 
-        header_row = [
-            Paragraph("Position (cm\u207b\u00b9)", table_header_style),
-            Paragraph("Int.", table_header_style),
-            Paragraph("Assignment", table_header_style),
-        ]
+        def _make_header() -> list:
+            return [
+                Paragraph("Position (cm\u207b\u00b9)", table_header_style),
+                Paragraph("Int.", table_header_style),
+                Paragraph("Assignment", table_header_style),
+            ]
 
         data_rows = []
         for peak in sorted_peaks:
@@ -499,27 +509,72 @@ class PDFGenerator:
                 ]
             )
 
-        table_data = [header_row] + data_rows
-        peaks_table = Table(
-            table_data,
-            colWidths=[col_pos_w, col_cls_w, col_assign_w],
-        )
+        def _make_table(rows: list, assign_w: float) -> Table:
+            table = Table(
+                [_make_header()] + rows,
+                colWidths=[col_pos_w, col_cls_w, assign_w],
+            )
+            ts = TableStyle(
+                [
+                    ("BACKGROUND", (0, 0), (-1, 0), colors.HexColor("#E8E8E8")),
+                    ("VALIGN", (0, 0), (-1, -1), "TOP"),
+                    ("TOPPADDING", (0, 0), (-1, -1), 3),
+                    ("BOTTOMPADDING", (0, 0), (-1, -1), 3),
+                    ("GRID", (0, 0), (-1, -1), 0.25, colors.lightgrey),
+                ]
+            )
+            for i, _ in enumerate(rows):
+                if i % 2 == 1:
+                    ts.add("BACKGROUND", (0, i + 1), (-1, i + 1), colors.HexColor("#F5F5F5"))
+            table.setStyle(ts)
+            return table
 
-        ts = TableStyle(
-            [
-                ("BACKGROUND", (0, 0), (-1, 0), colors.HexColor("#E8E8E8")),
-                ("VALIGN", (0, 0), (-1, -1), "TOP"),
-                ("TOPPADDING", (0, 0), (-1, -1), 3),
-                ("BOTTOMPADDING", (0, 0), (-1, -1), 3),
-                ("GRID", (0, 0), (-1, -1), 0.25, colors.lightgrey),
-            ]
-        )
-        for i, _ in enumerate(data_rows):
-            row_idx = i + 1
-            if i % 2 == 1:
-                ts.add("BACKGROUND", (0, row_idx), (-1, row_idx), colors.HexColor("#F5F5F5"))
-        peaks_table.setStyle(ts)
-        story.append(peaks_table)
+        # A short list fits inline under the metadata section. Longer lists
+        # move to their own page and switch to a two-column layout so twice as
+        # many assignments still fit on a single page.
+        max_rows_inline = 24
+        if len(data_rows) <= max_rows_inline:
+            story.append(_make_table(data_rows, _PORT_TEXT_W - col_pos_w - col_cls_w))
+            return
+
+        gap_w = 0.5 * cm
+        half_w = (_PORT_TEXT_W - gap_w) / 2.0
+        half_assign_w = half_w - col_pos_w - col_cls_w
+        # Half-width assignment cells can wrap to two lines (~30 pt per row),
+        # so 22 rows per column is the safe capacity of one portrait frame.
+        rows_per_column = 22
+        rows_per_page = rows_per_column * 2
+        for start in range(0, len(data_rows), rows_per_page):
+            chunk = data_rows[start : start + rows_per_page]
+            left_rows = chunk[:rows_per_column]
+            right_rows = chunk[rows_per_column:]
+            left_table = _make_table(left_rows, half_assign_w)
+            cells = [left_table, ""]
+            if right_rows:
+                cells[1] = _make_table(right_rows, half_assign_w)
+            outer = Table([cells], colWidths=[half_w + gap_w, half_w])
+            outer.setStyle(
+                TableStyle(
+                    [
+                        ("VALIGN", (0, 0), (-1, -1), "TOP"),
+                        ("LEFTPADDING", (0, 0), (-1, -1), 0),
+                        ("RIGHTPADDING", (0, 0), (0, 0), gap_w),
+                        ("RIGHTPADDING", (1, 0), (1, 0), 0),
+                        ("TOPPADDING", (0, 0), (-1, -1), 0),
+                        ("BOTTOMPADDING", (0, 0), (-1, -1), 0),
+                    ]
+                )
+            )
+            # Safety net: if unusually tall wrapped rows exceed the frame,
+            # shrink the chunk slightly instead of failing the whole export.
+            story.append(
+                KeepInFrame(
+                    _PORT_TEXT_W,
+                    _PORT_TEXT_H,
+                    [outer],
+                    mode="shrink",
+                )
+            )
 
     def _append_metadata_and_structure_section(
         self,

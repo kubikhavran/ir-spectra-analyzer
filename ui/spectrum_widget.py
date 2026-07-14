@@ -185,6 +185,7 @@ class SpectrumWidget(QWidget):
         self._peaks: list[Peak] = []
         self._peak_items: list = []
         self._add_peak_mode: bool = False
+        self._tool_mode: str = "select"
         self._overlay_alpha: int = 60  # 0–100 percent opacity for reference curves
         self._overlay_spectra_cache: list = []  # keep for redraw on slider change
         self._diagnostic_regions_cache: list = []
@@ -325,6 +326,7 @@ class SpectrumWidget(QWidget):
         self._spectrum_curve_fp = fp.plot(pen=pg.mkPen("k", width=1))
         fp.scene().sigMouseClicked.connect(self._on_fp_mouse_clicked)
         fp.scene().sigMouseMoved.connect(self._on_fp_mouse_moved)
+        self._apply_tool_mode_to(fp)
         return fp
 
     def _on_split_toggled(self, checked: bool) -> None:
@@ -336,7 +338,7 @@ class SpectrumWidget(QWidget):
                 self._plots_layout.addWidget(self._fp_plot_widget, _SPLIT_LO_FRAC)
                 self._fp_plot_widget.getPlotItem().vb.setYLink(self._plot_widget.getPlotItem().vb)
             self._fp_plot_widget.setVisible(True)
-            self._plot_widget.setXRange(_SPLIT_WN, _X_DEFAULT_MAX, padding=0.0)
+            self._plot_widget.setXRange(_SPLIT_WN, self._default_x_range()[1], padding=0.0)
             if self._spectrum is not None and self._spectrum_curve_fp is not None:
                 self._spectrum_curve_fp.setData(
                     x=self._spectrum.wavenumbers,
@@ -432,19 +434,24 @@ class SpectrumWidget(QWidget):
     def set_tool_mode(self, mode: str) -> None:
         """Switch interaction mode of the spectrum viewer.
 
+        Applies to both panels so zoom/pan keep working in split view.
+
         Args:
             mode: One of "select", "zoom", "pan", "add_peak".
         """
-        vb = self._plot_widget.getPlotItem().vb
-        if mode == "zoom":
+        self._tool_mode = mode
+        self._add_peak_mode = mode == "add_peak"
+        self._apply_tool_mode_to(self._plot_widget)
+        if self._fp_plot_widget is not None:
+            self._apply_tool_mode_to(self._fp_plot_widget)
+
+    def _apply_tool_mode_to(self, plot_widget: pg.PlotWidget) -> None:
+        """Apply the current tool mode to one panel's ViewBox."""
+        vb = plot_widget.getPlotItem().vb
+        if self._tool_mode == "zoom":
             vb.setMouseMode(pg.ViewBox.RectMode)
-            self._add_peak_mode = False
-        elif mode == "add_peak":
+        else:  # "select", "pan", "add_peak" — all use PanMode
             vb.setMouseMode(pg.ViewBox.PanMode)
-            self._add_peak_mode = True
-        else:  # "select" or "pan" — both use PanMode
-            vb.setMouseMode(pg.ViewBox.PanMode)
-            self._add_peak_mode = False
 
     def set_spectrum(self, spectrum: Spectrum) -> None:
         """Display a spectrum in the viewer.
@@ -464,14 +471,27 @@ class SpectrumWidget(QWidget):
 
         self.reset_view()
 
+    def _default_x_range(self) -> tuple[float, float]:
+        """Return the full-view x range: the standard IR window widened to the data.
+
+        OMNIC spectra typically span 400–4000 cm⁻¹; a hardcoded 3800 top would
+        hide stored peak annotations above it after load.
+        """
+        x_lo, x_hi = _X_DEFAULT_MIN, _X_DEFAULT_MAX
+        if self._spectrum is not None and len(self._spectrum.wavenumbers):
+            x_lo = min(x_lo, float(np.min(self._spectrum.wavenumbers)))
+            x_hi = max(x_hi, float(np.max(self._spectrum.wavenumbers)))
+        return x_lo, x_hi
+
     def reset_view(self) -> None:
-        """Reset to standard IR view: X=3800–400 cm⁻¹, Y auto-fitted to visible data + labels."""
+        """Reset to full IR view, Y auto-fitted to visible data + labels."""
+        x_lo, x_hi = self._default_x_range()
         if self._split_mode:
-            self._plot_widget.setXRange(_SPLIT_WN, _X_DEFAULT_MAX, padding=0.0)
+            self._plot_widget.setXRange(_SPLIT_WN, x_hi, padding=0.0)
             if self._fp_plot_widget is not None:
-                self._fp_plot_widget.setXRange(_X_DEFAULT_MIN, _SPLIT_WN, padding=0.0)
+                self._fp_plot_widget.setXRange(x_lo, _SPLIT_WN, padding=0.0)
         else:
-            self._plot_widget.setXRange(_X_DEFAULT_MIN, _X_DEFAULT_MAX, padding=0.0)
+            self._plot_widget.setXRange(x_lo, x_hi, padding=0.0)
 
         if self._spectrum is None:
             return
@@ -480,7 +500,7 @@ class SpectrumWidget(QWidget):
         iy = self._spectrum.intensities
 
         # Fit Y only to data within the visible x window
-        mask = (wn >= _X_DEFAULT_MIN) & (wn <= _X_DEFAULT_MAX)
+        mask = (wn >= x_lo) & (wn <= x_hi)
         visible_y = iy[mask] if mask.any() else iy
         if len(visible_y) == 0:
             return
@@ -527,6 +547,18 @@ class SpectrumWidget(QWidget):
             all_x = list(x_range) + list(fp_range)
             return (float(min(all_x)), float(max(all_x)))
         return (float(min(x_range)), float(max(x_range)))
+
+    def get_peak_label_placements(self) -> list[tuple[object, float, float]]:
+        """Return the actual on-screen label position for every rendered peak label.
+
+        Each entry is (peak, label_x, label_y) in data coordinates. Export code
+        uses this so the PDF reproduces the exact viewer label layout instead of
+        recomputing default offsets.
+        """
+        placements: list[tuple[object, float, float]] = []
+        for item in self._peak_label_items():
+            placements.append((item._peak, float(item._data_x), float(item._data_y)))
+        return placements
 
     def get_y_view_range(self) -> tuple[float, float]:
         """Return the current visible y-axis range as (y_min, y_max)."""

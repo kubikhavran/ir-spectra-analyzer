@@ -70,7 +70,6 @@ class MainWindow(QMainWindow):
         self._vibration_presets_cache: list = []
         self._molecule_widget: MoleculeWidget
         self._report_preset_manager = ReportPresetManager(settings)
-        self._pending_preset = None  # preset clicked in VibrationPanel, awaiting peak click
         self._setup_ui()
 
     def _setup_ui(self) -> None:
@@ -253,6 +252,31 @@ class MainWindow(QMainWindow):
             self._view_menu.addAction(dock.toggleViewAction())
 
         self._reload_vibration_presets()
+        self._load_functional_group_tags()
+
+    def _load_functional_group_tags(self) -> None:
+        """Provide functional-group tag filters to the vibration panel.
+
+        Built from the knowledge base's suggested preset mappings, so picking
+        e.g. "Carboxylic Acid" narrows the vibration list to acid-diagnostic
+        bands. Failure is non-fatal — the panel just shows no tag filter.
+        """
+        try:
+            from storage.functional_group_repository import (  # noqa: PLC0415
+                FunctionalGroupRepository,
+            )
+
+            knowledge_base = FunctionalGroupRepository().load()
+        except Exception:  # noqa: BLE001
+            return
+        tags: list[tuple[str, frozenset[str]]] = []
+        for group in sorted(knowledge_base.groups, key=lambda g: g.name.lower()):
+            names: set[str] = set()
+            for band in group.bands:
+                names.update(band.suggested_preset_names)
+            if names:
+                tags.append((group.name, frozenset(names)))
+        self._vibration_panel.set_functional_group_tags(tags)
 
     def _reload_vibration_presets(self) -> None:
         """Fetch vibration presets from the DB and populate the side panel."""
@@ -676,6 +700,10 @@ class MainWindow(QMainWindow):
         report_options.view_x_range = self._spectrum_widget.get_x_view_range()
         report_options.view_y_range = self._spectrum_widget.get_y_view_range()
         report_options.diagnostic_regions = ()
+        report_options.peak_label_placements = {
+            id(peak): (label_x, label_y)
+            for peak, label_x, label_y in self._spectrum_widget.get_peak_label_placements()
+        }
 
         try:
             builder = ReportBuilder()
@@ -842,35 +870,34 @@ class MainWindow(QMainWindow):
         return [label.strip() for label in text.split(" / ") if label.strip()]
 
     def _on_preset_clicked_for_assign(self, preset) -> None:
-        """Store preset as pending — next peak click in viewer will assign it."""
-        self._pending_preset = preset
+        """Assign the clicked preset to the currently selected peak.
+
+        Clicking a peak in the viewer only selects it — assignment happens
+        exclusively here, when the user clicks a vibration in the panel.
+        """
+        if self._project is None:
+            return
+        peak = self._peak_table.selected_peak()
+        if peak is None:
+            self.statusBar().showMessage("Select a peak first, then click a vibration to assign.")
+            return
+        from core.commands import AssignPresetCommand  # noqa: PLC0415
+
+        self._undo_stack.push(AssignPresetCommand(peak, preset))
+        self._refresh_peak_views(peak)
         self.statusBar().showMessage(
-            f'Click a peak to assign: "{preset.name}" — or double-click preset to assign to selected row'
+            f'Assigned "{preset.name}" to peak at {peak.position:.1f} cm\u207b\u00b9'
         )
 
     def _on_peak_selected_in_viewer(self, peak) -> None:
-        """Select peak in table and highlight presets when user clicks a peak in the chart.
-
-        If a preset is pending (clicked in VibrationPanel), assign it immediately.
-        """
-        status_msg = f"Peak: {peak.position:.2f} cm\u207b\u00b9  |  {peak.intensity:.4f}"
-
-        if self._pending_preset is not None and self._project is not None:
-            # Quick-assign: assign pending preset to clicked peak
-            from core.commands import AssignPresetCommand  # noqa: PLC0415
-
-            preset = self._pending_preset
-            self._pending_preset = None  # consume — next peak click won't re-assign
-            self._undo_stack.push(AssignPresetCommand(peak, preset))
-            self._refresh_peak_views(peak)
-            status_msg = f'Assigned "{preset.name}" to {peak.position:.1f} cm\u207b\u00b9'
-
-        # Always select in table and highlight matching vibrations
+        """Select peak in table and highlight presets when user clicks a peak in the chart."""
         self._peak_table.select_peak(peak)
         self._vibration_panel.highlight_for_peak(peak.position)
         self._vibration_panel.set_active_peak(peak)
         self._set_functional_group_active_peak(peak)
-        self.statusBar().showMessage(status_msg)
+        self.statusBar().showMessage(
+            f"Peak: {peak.position:.2f} cm\u207b\u00b9  |  {peak.intensity:.4f}"
+        )
 
     def _on_clear_peaks(self) -> None:
         """Remove all peaks from the project (undoable as a single macro)."""

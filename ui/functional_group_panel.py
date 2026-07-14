@@ -53,7 +53,9 @@ class FunctionalGroupPanel(QWidget):
         self._group_info_label = QLabel()
         self._group_info_label.setWordWrap(True)
         self._group_info_label.setOpenExternalLinks(True)
-        self._group_info_label.setTextInteractionFlags(Qt.TextInteractionFlag.TextBrowserInteraction)
+        self._group_info_label.setTextInteractionFlags(
+            Qt.TextInteractionFlag.TextBrowserInteraction
+        )
         self._group_info_label.setStyleSheet(
             "font-size: 9pt; color: #444; background: #FAFAFA; border: 1px solid #E0E0E0; "
             "padding: 6px; border-radius: 4px;"
@@ -263,9 +265,7 @@ class FunctionalGroupPanel(QWidget):
             )
             return
 
-        local_evidence = [
-            band for band in result.bands if band.covers_wavenumber(active_position)
-        ]
+        local_evidence = [band for band in result.bands if band.covers_wavenumber(active_position)]
         if local_evidence:
             best_band = max(local_evidence, key=lambda band: band.confidence)
             self._peak_info_label.setText(
@@ -304,7 +304,7 @@ class FunctionalGroupPanel(QWidget):
             lines.append(f"Matched at: {band.matched_wavenumber:.1f} cm-1")
         preview_name = self._preview_name_for_band(band)
         if preview_name:
-            lines.append(f'Will assign: {preview_name}')
+            lines.append(f"Will assign: {preview_name}")
         if band.source_links:
             lines.append("Sources: " + ", ".join(band.source_links[:3]))
         if self._is_actionable_band(band):
