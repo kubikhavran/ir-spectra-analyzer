@@ -462,3 +462,57 @@ def test_last_save_dir_persists_across_projects(qtbot, tmp_path):
     suggested = window._suggested_save_path(".irproj")
     assert str(target) in suggested
     assert suggested.endswith("SampleB.irproj")
+
+
+# ── Custom-label structures (JSME "X" pseudo-atoms) ───────────────────────────
+
+_MB_CUSTOM_SYMBOL = """
+  JSME
+
+  3  2  0  0  0  0  0  0  0  0999 V2000
+    0.0000    0.0000    0.0000 C   0  0  0  0  0  0  0  0  0  0  0  0
+    0.8660    0.5000    0.0000 O   0  0  0  0  0  0  0  0  0  0  0  0
+    1.7320    0.0000    0.0000 Boc 0  0  0  0  0  0  0  0  0  0  0  0
+  1  2  1  0  0  0  0
+  2  3  1  0  0  0  0
+M  END
+"""
+
+_MB_ALIAS = """
+  JSME
+
+  3  2  0  0  0  0  0  0  0  0999 V2000
+    0.0000    0.0000    0.0000 C   0  0  0  0  0  0  0  0  0  0  0  0
+    0.8660    0.5000    0.0000 O   0  0  0  0  0  0  0  0  0  0  0  0
+    1.7320    0.0000    0.0000 C   0  0  0  0  0  0  0  0  0  0  0  0
+  1  2  1  0  0  0  0
+  2  3  1  0  0  0  0
+A    3
+Boc
+M  END
+"""
+
+
+def test_structure_renders_custom_atom_label_symbol():
+    pytest.importorskip("rdkit")
+    from chemistry.structure_renderer import render_to_svg
+
+    svg = render_to_svg(mol_block=_MB_CUSTOM_SYMBOL)
+    assert svg  # non-element symbol no longer makes the structure vanish
+
+
+def test_structure_renders_atom_alias_label():
+    pytest.importorskip("rdkit")
+    from chemistry.structure_renderer import render_to_svg
+
+    assert render_to_svg(mol_block=_MB_ALIAS)
+
+
+def test_custom_label_stored_on_atom():
+    pytest.importorskip("rdkit")
+    from chemistry.structure_renderer import _load_mol
+
+    mol = _load_mol(mol_block=_MB_CUSTOM_SYMBOL)
+    assert mol is not None
+    labels = [a.GetProp("atomLabel") for a in mol.GetAtoms() if a.HasProp("atomLabel")]
+    assert "Boc" in labels

@@ -203,6 +203,64 @@ def _mol_from_smiles_relaxed(smiles: str):  # type: ignore[return]
     return mol
 
 
+def _is_real_element(symbol: str) -> bool:
+    """Return True when ``symbol`` is a real periodic-table element."""
+    try:
+        from rdkit.Chem import GetPeriodicTable
+
+        return GetPeriodicTable().GetAtomicNumber(symbol) > 0
+    except Exception:  # noqa: BLE001
+        return False
+
+
+def _replace_pseudo_atoms(mol_block: str) -> tuple[str, dict[int, str]]:
+    """Replace non-element atom symbols in a V2000 mol block with dummy atoms.
+
+    JSME lets the user type an arbitrary label on an atom via the "X" button
+    (e.g. ``Boc``, ``Ph``, ``PG``). Such labels land in the atom block as a
+    non-element symbol, which RDKit refuses to parse, so the structure would
+    vanish. Each unknown symbol is swapped for a ``*`` dummy atom and its
+    original text is returned as ``{atom_index: label}`` so it can be shown.
+    """
+    lines = mol_block.splitlines()
+    try:
+        counts_idx = next(i for i, line in enumerate(lines) if line.rstrip().endswith("V2000"))
+    except StopIteration:
+        return mol_block, {}
+
+    try:
+        n_atoms = int(lines[counts_idx][0:3])
+    except ValueError:
+        return mol_block, {}
+
+    labels: dict[int, str] = {}
+    reserved = {"*", "R", "R#", "A", "Q", "L", "RX"}
+    for atom in range(n_atoms):
+        line_idx = counts_idx + 1 + atom
+        if line_idx >= len(lines) or len(lines[line_idx]) < 34:
+            continue
+        line = lines[line_idx]
+        symbol = line[31:34].strip()
+        if symbol and symbol not in reserved and not _is_real_element(symbol):
+            labels[atom] = symbol
+            lines[line_idx] = line[:31] + "*  " + line[34:]
+    return "\n".join(lines), labels
+
+
+def _apply_atom_labels(mol, labels: dict[int, str]) -> None:
+    """Show custom labels on the molecule: recorded pseudo-atoms + MOL aliases."""
+    for idx, text in labels.items():
+        if 0 <= idx < mol.GetNumAtoms():
+            mol.GetAtomWithIdx(idx).SetProp("atomLabel", text)
+    # MOL "A" alias lines are parsed by RDKit into molFileAlias; surface them
+    # as drawable atom labels too.
+    for atom in mol.GetAtoms():
+        if atom.HasProp("molFileAlias") and not atom.HasProp("atomLabel"):
+            alias = atom.GetProp("molFileAlias").strip()
+            if alias:
+                atom.SetProp("atomLabel", alias)
+
+
 def _load_mol(smiles: str = "", mol_block: str = ""):  # type: ignore[return]
     """Load a molecule from mol_block (preferred) or SMILES.
 
@@ -222,13 +280,29 @@ def _load_mol(smiles: str = "", mol_block: str = ""):  # type: ignore[return]
         except Exception:  # noqa: BLE001
             mol = None
         if mol is None:
-            # Relaxed fallback — keep custom/unusual-valence atoms drawable.
+            # Relaxed fallback — keep unusual-valence atoms drawable.
             try:
                 mol = Chem.MolFromMolBlock(mol_block, removeHs=False, sanitize=False)
                 if mol is not None and not _relaxed_sanitize(mol):
                     mol = None
             except Exception:  # noqa: BLE001
                 mol = None
+        if mol is None:
+            # Custom text labels (e.g. "Boc" typed via JSME's "X") appear as
+            # non-element atom symbols that RDKit cannot parse. Swap them for
+            # dummy atoms and re-attach the text as a drawable label.
+            cleaned, labels = _replace_pseudo_atoms(mol_block)
+            if labels:
+                try:
+                    mol = Chem.MolFromMolBlock(cleaned, removeHs=False, sanitize=False)
+                    if mol is not None and _relaxed_sanitize(mol):
+                        _apply_atom_labels(mol, labels)
+                    else:
+                        mol = None
+                except Exception:  # noqa: BLE001
+                    mol = None
+        if mol is not None:
+            _apply_atom_labels(mol, {})  # promote any A-line aliases to labels
 
     if mol is None and smiles and smiles.strip():
         mol = _mol_from_smiles_relaxed(smiles)
