@@ -78,13 +78,24 @@ class ReferenceImportService:
         self._db = db
 
     def scan_folder(self, folder: Path) -> list[Path]:
-        """Return non-recursive `.spa` files from a folder, sorted by filename."""
+        """Return all readable spectrum files under a folder (recursively), sorted.
+
+        Scans subfolders as well and accepts every format the app can read
+        (``.spa`` plus JCAMP ``.jdx``/``.dx``), so a whole library tree — not
+        just top-level ``.spa`` files — is discovered.
+        """
         if not folder.exists():
             raise FileNotFoundError(f"Folder not found: {folder}")
         if not folder.is_dir():
             raise NotADirectoryError(f"Not a folder: {folder}")
+
+        from file_io.format_registry import FormatRegistry  # noqa: PLC0415
+
+        extensions = FormatRegistry().supported_extensions()
         return sorted(
-            path for path in folder.iterdir() if path.is_file() and path.suffix.lower() == ".spa"
+            path
+            for path in folder.rglob("*")
+            if path.is_file() and path.suffix.lower() in extensions
         )
 
     def import_reference_file(

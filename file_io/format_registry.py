@@ -58,6 +58,10 @@ class FormatRegistry:
         """
         self._readers[extension.lower()] = reader
 
+    def supported_extensions(self) -> set[str]:
+        """Return the set of readable file extensions (lowercase, with dot)."""
+        return set(self._readers.keys())
+
     def read(self, filepath: Path) -> Spectrum:
         """Read a spectral file using the appropriate registered reader.
 
