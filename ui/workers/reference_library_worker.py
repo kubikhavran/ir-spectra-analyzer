@@ -28,6 +28,7 @@ class ReferenceLibrarySearchWorker(QObject):
         spectrum: Spectrum,
         top_n: int | None,
         auto_import_project_library: bool,
+        name_filter: str | None = None,
     ) -> None:
         super().__init__()
         self._db_path = db_path
@@ -35,6 +36,7 @@ class ReferenceLibrarySearchWorker(QObject):
         self._selected_library_folder = selected_library_folder
         self._top_n = top_n
         self._auto_import_project_library = auto_import_project_library
+        self._name_filter = name_filter
         self._spectrum = Spectrum(
             wavenumbers=np.asarray(spectrum.wavenumbers, dtype=np.float64).copy(),
             intensities=np.asarray(spectrum.intensities, dtype=np.float64).copy(),
@@ -59,6 +61,7 @@ class ReferenceLibrarySearchWorker(QObject):
                 self._spectrum,
                 top_n=self._top_n,
                 auto_import_project_library=self._auto_import_project_library,
+                name_filter=self._name_filter,
             )
         except Exception as exc:  # noqa: BLE001
             self.failed.emit(str(exc))

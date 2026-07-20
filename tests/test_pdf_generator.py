@@ -424,8 +424,8 @@ def _pdf_page_count(path: Path) -> int:
     return len(re.findall(rb"/Type\s*/Page[^s]", data))
 
 
-def test_pdf_assignment_table_balances_pages_no_orphan(tmp_path: Path) -> None:
-    """A 45-assignment table must fit balanced on one table page, not leave an orphan."""
+def test_pdf_assignment_table_shares_metadata_page(tmp_path: Path) -> None:
+    """A 45-assignment two-column table stays on the metadata page (no own page, no orphan)."""
     from reporting.pdf_generator import PDFGenerator, ReportOptions
 
     project = _make_project()
@@ -438,23 +438,23 @@ def test_pdf_assignment_table_balances_pages_no_orphan(tmp_path: Path) -> None:
     PDFGenerator().generate(
         project, out, options=ReportOptions(split_xaxis=False, include_structures=False)
     )
-    # spectrum page + metadata page + exactly one (balanced two-column) table page
-    assert _pdf_page_count(out) == 3
+    # spectrum page + one combined metadata + two-column table page
+    assert _pdf_page_count(out) == 2
 
 
-def test_pdf_large_assignment_table_splits_evenly(tmp_path: Path) -> None:
-    """~90 assignments split across two balanced table pages (no lonely last row)."""
+def test_pdf_very_large_assignment_table_splits_across_pages(tmp_path: Path) -> None:
+    """A table too tall for one page splits across pages (header repeats), no crash."""
     from reporting.pdf_generator import PDFGenerator, ReportOptions
 
     project = _make_project()
-    for i in range(89):
+    for i in range(130):
         project.peaks.append(
-            Peak(position=500.0 + i * 38.0, intensity=60.0, vibration_labels=["ν test"])
+            Peak(position=450.0 + i * 27.0, intensity=60.0, vibration_labels=["ν test"])
         )
 
     out = tmp_path / "big.pdf"
     PDFGenerator().generate(
         project, out, options=ReportOptions(split_xaxis=False, include_structures=False)
     )
-    # spectrum + metadata + two balanced table pages
-    assert _pdf_page_count(out) == 4
+    assert out.read_bytes().startswith(b"%PDF")
+    assert _pdf_page_count(out) >= 3

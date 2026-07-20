@@ -30,7 +30,6 @@ from reportlab.platypus import (
     Frame,
     HRFlowable,
     Image,
-    KeepInFrame,
     NextPageTemplate,
     PageBreak,
     PageTemplate,
@@ -507,10 +506,14 @@ class PDFGenerator:
                 ]
             )
 
-        def _make_table(rows: list, assign_w: float) -> Table:
+        story.append(Paragraph("Peak assignments", section_style))
+
+        # Short lists read best as a single full-width column.
+        max_rows_single = 14
+        if len(data_rows) <= max_rows_single:
             table = Table(
-                [_make_header()] + rows,
-                colWidths=[col_pos_w, col_cls_w, assign_w],
+                [_make_header()] + data_rows,
+                colWidths=[col_pos_w, col_cls_w, _PORT_TEXT_W - col_pos_w - col_cls_w],
             )
             ts = TableStyle(
                 [
@@ -521,78 +524,64 @@ class PDFGenerator:
                     ("GRID", (0, 0), (-1, -1), 0.25, colors.lightgrey),
                 ]
             )
-            for i, _ in enumerate(rows):
+            for i in range(len(data_rows)):
                 if i % 2 == 1:
                     ts.add("BACKGROUND", (0, i + 1), (-1, i + 1), colors.HexColor("#F5F5F5"))
             table.setStyle(ts)
-            return table
-
-        # A short list fits inline under the metadata section. Longer lists move
-        # onto their own page(s) with a two-column layout.
-        max_rows_inline = 24
-        if len(data_rows) <= max_rows_inline:
-            story.append(Paragraph("Peak assignments", section_style))
-            story.append(_make_table(data_rows, _PORT_TEXT_W - col_pos_w - col_cls_w))
+            story.append(table)
             return
 
-        gap_w = 0.5 * cm
-        half_w = (_PORT_TEXT_W - gap_w) / 2.0
-        half_assign_w = half_w - col_pos_w - col_cls_w
-        # Assignments are usually one line, so a column comfortably holds ~26
-        # rows; the KeepInFrame(shrink) below rescues the rare page where
-        # two-line assignments would otherwise overflow.
-        rows_per_column = 26
-        rows_per_page_cap = rows_per_column * 2
+        # Longer lists use a single two-column table that flows directly under
+        # the metadata/structure (so both stay on the same page when they fit)
+        # and splits across pages only when necessary, repeating the header.
+        # The first half of the rows fills the left column, the second half the
+        # right, so each column stays sorted by wavenumber.
+        gap_w = 0.4 * cm
+        half_assign_w = (_PORT_TEXT_W - 2 * (col_pos_w + col_cls_w) - gap_w) / 2.0
+        n = len(data_rows)
+        n_rows = -(-n // 2)  # ceil → left column length
 
-        # Spread rows evenly across the needed number of pages (and across the
-        # two columns of each page) so the last page never ends up with a single
-        # orphan row. Each page is emitted as its own flowable with an explicit
-        # page break, otherwise ReportLab would pack several short chunks onto
-        # one physical page and the balancing would be lost.
-        total = len(data_rows)
-        n_pages = max(1, -(-total // rows_per_page_cap))  # ceil division
-        per_page = -(-total // n_pages)  # ceil → balanced rows per page
+        wide_data = [_make_header() + [""] + _make_header()]
+        for i in range(n_rows):
+            left = data_rows[i]
+            right_idx = i + n_rows
+            right = data_rows[right_idx] if right_idx < n else ["", "", ""]
+            wide_data.append([*left, "", *right])
 
-        story.append(PageBreak())
-        first_page = True
-        start = 0
-        while start < total:
-            page_rows = data_rows[start : start + per_page]
-            start += per_page
-            left_count = -(-len(page_rows) // 2)  # ceil → left column gets the extra
-            left_rows = page_rows[:left_count]
-            right_rows = page_rows[left_count:]
-            left_table = _make_table(left_rows, half_assign_w)
-            cells = [left_table, ""]
-            if right_rows:
-                cells[1] = _make_table(right_rows, half_assign_w)
-            outer = Table([cells], colWidths=[half_w + gap_w, half_w])
-            outer.setStyle(
-                TableStyle(
-                    [
-                        ("VALIGN", (0, 0), (-1, -1), "TOP"),
-                        ("LEFTPADDING", (0, 0), (-1, -1), 0),
-                        ("RIGHTPADDING", (0, 0), (0, 0), gap_w),
-                        ("RIGHTPADDING", (1, 0), (1, 0), 0),
-                        ("TOPPADDING", (0, 0), (-1, -1), 0),
-                        ("BOTTOMPADDING", (0, 0), (-1, -1), 0),
-                    ]
-                )
-            )
-            if not first_page:
-                story.append(PageBreak())
-            story.append(Paragraph("Peak assignments", section_style))
-            # Safety net: if unusually tall wrapped rows exceed the frame,
-            # shrink the chunk slightly instead of failing the whole export.
-            story.append(
-                KeepInFrame(
-                    _PORT_TEXT_W,
-                    _PORT_TEXT_H,
-                    [outer],
-                    mode="shrink",
-                )
-            )
-            first_page = False
+        wide_table = Table(
+            wide_data,
+            colWidths=[
+                col_pos_w,
+                col_cls_w,
+                half_assign_w,
+                gap_w,
+                col_pos_w,
+                col_cls_w,
+                half_assign_w,
+            ],
+            repeatRows=1,
+        )
+        ts = TableStyle(
+            [
+                ("VALIGN", (0, 0), (-1, -1), "TOP"),
+                ("TOPPADDING", (0, 0), (-1, -1), 3),
+                ("BOTTOMPADDING", (0, 0), (-1, -1), 3),
+                # Header shading on the two 3-column groups (skip the gap column).
+                ("BACKGROUND", (0, 0), (2, 0), colors.HexColor("#E8E8E8")),
+                ("BACKGROUND", (4, 0), (6, 0), colors.HexColor("#E8E8E8")),
+                # Grid on each column group only, so the gap column has no borders.
+                ("GRID", (0, 0), (2, -1), 0.25, colors.lightgrey),
+                ("GRID", (4, 0), (6, -1), 0.25, colors.lightgrey),
+                ("LEFTPADDING", (3, 0), (3, -1), 0),
+                ("RIGHTPADDING", (3, 0), (3, -1), 0),
+            ]
+        )
+        for i in range(n_rows):
+            if i % 2 == 1:
+                ts.add("BACKGROUND", (0, i + 1), (2, i + 1), colors.HexColor("#F5F5F5"))
+                ts.add("BACKGROUND", (4, i + 1), (6, i + 1), colors.HexColor("#F5F5F5"))
+        wide_table.setStyle(ts)
+        story.append(wide_table)
 
     def _append_metadata_and_structure_section(
         self,

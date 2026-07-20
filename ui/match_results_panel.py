@@ -14,6 +14,7 @@ from PySide6.QtGui import QColor
 from PySide6.QtWidgets import (
     QHBoxLayout,
     QLabel,
+    QLineEdit,
     QListWidget,
     QListWidgetItem,
     QPushButton,
@@ -29,11 +30,16 @@ class MatchResultsPanel(QWidget):
 
     candidate_selected = Signal(object)  # emits MatchResult on selection change
     import_reference = Signal()  # user clicked "Import Reference..."
+    match_requested = Signal()  # user pressed Enter in the name filter
 
     def __init__(self, parent=None) -> None:
         super().__init__(parent)
         self._results: list = []
         self._setup_ui()
+
+    def name_filter(self) -> str:
+        """Return the current name-substring filter for scoping the library search."""
+        return self._name_filter_edit.text().strip()
 
     def _setup_ui(self) -> None:
         layout = QVBoxLayout(self)
@@ -53,6 +59,18 @@ class MatchResultsPanel(QWidget):
         self._import_btn.clicked.connect(self.import_reference)
         header.addWidget(self._import_btn)
         layout.addLayout(header)
+
+        # Name filter: scope Match Spectrum to references whose name contains
+        # this text (e.g. a client prefix "NIT"), so a huge library is searched
+        # as a small subset. Empty = search everything.
+        filter_row = QHBoxLayout()
+        filter_row.addWidget(QLabel("Name filter:"))
+        self._name_filter_edit = QLineEdit()
+        self._name_filter_edit.setPlaceholderText("e.g. NIT — limits Match Spectrum, empty = all")
+        self._name_filter_edit.setClearButtonEnabled(True)
+        self._name_filter_edit.returnPressed.connect(self.match_requested)
+        filter_row.addWidget(self._name_filter_edit)
+        layout.addLayout(filter_row)
 
         self._list = QListWidget()
         self._list.currentRowChanged.connect(self._on_row_changed)

@@ -484,7 +484,7 @@ def test_main_window_match_spectrum_requests_twenty_results(qtbot):
 
     window._on_match_spectrum()
 
-    service.search_spectrum.assert_called_once_with(spectrum, top_n=20)
+    service.search_spectrum.assert_called_once_with(spectrum, top_n=20, name_filter="")
 
 
 def test_main_window_load_spectrum_uses_stored_annotated_peaks(qtbot, tmp_path):

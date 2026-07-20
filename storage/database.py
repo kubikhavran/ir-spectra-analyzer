@@ -651,12 +651,22 @@ class Database:
         result["intensities"] = np.frombuffer(result["intensities"], dtype=np.float64).copy()
         return result
 
+    @staticmethod
+    def _name_filter_clause(name_filter: str | None) -> tuple[str, tuple[object, ...]]:
+        """Return SQL + params for a case-insensitive name-substring filter."""
+        text = (name_filter or "").strip()
+        if not text:
+            return "", ()
+        escaped = text.replace("\\", "\\\\").replace("%", "\\%").replace("_", "\\_")
+        return "rs.name LIKE ? ESCAPE '\\'", (f"%{escaped}%",)
+
     def get_reference_search_rows(
         self,
         *,
         source_prefix: str | None = None,
         include_web_refs: bool = False,
         feature_version: int,
+        name_filter: str | None = None,
     ) -> list[dict]:
         """Return metadata + stored feature vectors for similarity search."""
         assert self._conn is not None
@@ -671,14 +681,21 @@ class Database:
              AND rf.feature_version = ?
         """
         params_list: list[object] = [int(feature_version)]
-        where_sql, where_params = self._reference_source_prefix_clause(
+        conditions: list[str] = []
+        prefix_sql, prefix_params = self._reference_source_prefix_clause(
             source_prefix,
             alias="rs",
             include_web_refs=include_web_refs,
         )
-        if where_sql:
-            sql += f" WHERE {where_sql}"
-            params_list.extend(where_params)
+        if prefix_sql:
+            conditions.append(prefix_sql)
+            params_list.extend(prefix_params)
+        name_sql, name_params = self._name_filter_clause(name_filter)
+        if name_sql:
+            conditions.append(name_sql)
+            params_list.extend(name_params)
+        if conditions:
+            sql += " WHERE " + " AND ".join(conditions)
         sql += " ORDER BY rs.name"
         rows = self._conn.execute(sql, tuple(params_list)).fetchall()
         result = []
@@ -694,6 +711,7 @@ class Database:
         source_prefix: str | None = None,
         include_web_refs: bool = False,
         feature_version: int,
+        name_filter: str | None = None,
     ) -> tuple[int, int]:
         """Return a cheap (count, max_id) fingerprint of the searchable library.
 
@@ -709,14 +727,21 @@ class Database:
              AND rf.feature_version = ?
         """
         params_list: list[object] = [int(feature_version)]
-        where_sql, where_params = self._reference_source_prefix_clause(
+        conditions: list[str] = []
+        prefix_sql, prefix_params = self._reference_source_prefix_clause(
             source_prefix,
             alias="rs",
             include_web_refs=include_web_refs,
         )
-        if where_sql:
-            sql += f" WHERE {where_sql}"
-            params_list.extend(where_params)
+        if prefix_sql:
+            conditions.append(prefix_sql)
+            params_list.extend(prefix_params)
+        name_sql, name_params = self._name_filter_clause(name_filter)
+        if name_sql:
+            conditions.append(name_sql)
+            params_list.extend(name_params)
+        if conditions:
+            sql += " WHERE " + " AND ".join(conditions)
         row = self._conn.execute(sql, tuple(params_list)).fetchone()
         return (int(row[0]), int(row[1]))
 

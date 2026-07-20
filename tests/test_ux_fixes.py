@@ -516,3 +516,73 @@ def test_custom_label_stored_on_atom():
     assert mol is not None
     labels = [a.GetProp("atomLabel") for a in mol.GetAtoms() if a.HasProp("atomLabel")]
     assert "Boc" in labels
+
+
+# ── Match Spectrum name filter ────────────────────────────────────────────────
+
+
+def test_search_name_filter_scopes_results(tmp_path):
+    from app.reference_library_service import ReferenceLibraryService
+    from storage.database import Database
+
+    db = Database(":memory:")
+    db.initialize()
+    wn = np.linspace(400.0, 4000.0, 200)
+    for i in range(3):
+        db.add_reference_spectrum(
+            name=f"NIT{i:03d}",
+            wavenumbers=wn,
+            intensities=np.random.default_rng(i).random(200),
+            description="",
+            source=str(tmp_path / f"NIT{i:03d}.spa"),
+        )
+    for i in range(3):
+        db.add_reference_spectrum(
+            name=f"PAR{i:03d}",
+            wavenumbers=wn,
+            intensities=np.random.default_rng(10 + i).random(200),
+            description="",
+            source=str(tmp_path / f"PAR{i:03d}.spa"),
+        )
+
+    service = ReferenceLibraryService(db, project_root=tmp_path)
+    query = Spectrum(wavenumbers=wn, intensities=np.random.default_rng(9).random(200))
+
+    outcome = service.search_spectrum(query, auto_import_project_library=False, name_filter="NIT")
+    assert outcome.results
+    assert all(r.name.startswith("NIT") for r in outcome.results)
+
+    all_out = service.search_spectrum(query, auto_import_project_library=False)
+    names = {r.name for r in all_out.results}
+    assert any(n.startswith("PAR") for n in names)  # unfiltered includes PAR
+
+
+def test_name_filter_state_reflects_subset(tmp_path):
+    from matching.feature_store import MATCH_FEATURE_VERSION
+    from storage.database import Database
+
+    db = Database(":memory:")
+    db.initialize()
+    wn = np.linspace(400.0, 4000.0, 200)
+    for pfx in ("NIT", "PAR"):
+        for i in range(4):
+            rid = db.add_reference_spectrum(
+                name=f"{pfx}{i}",
+                wavenumbers=wn,
+                intensities=np.ones(200),
+                source=str(tmp_path / f"{pfx}{i}.spa"),
+                commit=False,
+            )
+            db.upsert_reference_feature(
+                rid,
+                feature_version=MATCH_FEATURE_VERSION,
+                feature_vector=np.ones(902, dtype=np.float32),
+                commit=False,
+            )
+    db.commit()
+
+    assert db.get_reference_library_state(feature_version=MATCH_FEATURE_VERSION)[0] == 8
+    assert (
+        db.get_reference_library_state(feature_version=MATCH_FEATURE_VERSION, name_filter="NIT")[0]
+        == 4
+    )

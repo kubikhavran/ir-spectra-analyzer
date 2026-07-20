@@ -159,16 +159,25 @@ class ReferenceLibraryService:
         *,
         top_n: int | None = 10,
         auto_import_project_library: bool = True,
+        name_filter: str | None = None,
     ) -> ReferenceSearchOutcome:
-        """Search the reference library for spectra similar to the given query spectrum."""
+        """Search the reference library for spectra similar to the given query spectrum.
+
+        When ``name_filter`` is set, only references whose name contains that
+        substring are searched — a fast way to scope a huge library to one
+        client/series (e.g. "NIT") without loading every feature vector.
+        """
         imported_summary = None
         library_folder = self.discover_project_library_folder()
         source_prefix = (
             normalize_source_path(library_folder) if library_folder is not None else None
         )
         include_web_refs = library_folder is not None
+        name_filter = (name_filter or "").strip() or None
 
-        library_state = self._db.get_reference_library_state(
+        # Whether the folder needs first-time population is decided on the whole
+        # scope, independent of any name filter.
+        full_state = self._db.get_reference_library_state(
             source_prefix=source_prefix,
             include_web_refs=include_web_refs,
             feature_version=MATCH_FEATURE_VERSION,
@@ -179,15 +188,10 @@ class ReferenceLibraryService:
         # the scope is still empty (first-time population) — once the library is
         # filled, matching skips the folder walk and the user refreshes it
         # explicitly via "Sync Folder".
-        if auto_import_project_library and library_folder is not None and library_state[0] == 0:
+        if auto_import_project_library and library_folder is not None and full_state[0] == 0:
             imported_summary = self.ensure_project_library_imported()
-            library_state = self._db.get_reference_library_state(
-                source_prefix=source_prefix,
-                include_web_refs=include_web_refs,
-                feature_version=MATCH_FEATURE_VERSION,
-            )
 
-        if library_state[0] == 0 and not self._db.get_reference_identity_rows():
+        if full_state[0] == 0 and not self._db.get_reference_identity_rows():
             return ReferenceSearchOutcome(
                 results=(),
                 references=(),
@@ -201,18 +205,21 @@ class ReferenceLibraryService:
         )
         # Re-fetching every feature BLOB and rebuilding the reference matrix is
         # the dominant per-search cost on large libraries. Skip it entirely
-        # when the searchable library has not changed since the last load.
+        # when the searchable (name-filtered) library has not changed since the
+        # last load.
         library_state = self._db.get_reference_library_state(
             source_prefix=source_prefix,
             include_web_refs=include_web_refs,
             feature_version=MATCH_FEATURE_VERSION,
+            name_filter=name_filter,
         )
-        search_state_key = (source_prefix, include_web_refs, library_state)
+        search_state_key = (source_prefix, include_web_refs, name_filter, library_state)
         if search_state_key != self._loaded_search_state or self._search_engine.n_references == 0:
             search_rows = self._db.get_reference_search_rows(
                 source_prefix=source_prefix,
                 include_web_refs=include_web_refs,
                 feature_version=MATCH_FEATURE_VERSION,
+                name_filter=name_filter,
             )
             self._search_engine.load_references(search_rows)
             self._loaded_search_state = search_state_key

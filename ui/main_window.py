@@ -348,6 +348,7 @@ class MainWindow(QMainWindow):
         self._peak_table.vibration_edit_requested.connect(self._on_edit_peak_vibration_requested)
         self._match_results_panel.candidate_selected.connect(self._on_match_candidate_selected)
         self._match_results_panel.import_reference.connect(self._on_import_reference)
+        self._match_results_panel.match_requested.connect(self._on_match_spectrum)
         self._functional_group_panel.group_selected.connect(self._on_functional_group_selected)
         self._functional_group_panel.diagnostic_visibility_changed.connect(
             self._on_functional_group_region_visibility_changed
@@ -1099,6 +1100,7 @@ class MainWindow(QMainWindow):
             spectrum=spectrum,
             top_n=self._MATCH_RESULTS_LIMIT,
             auto_import_project_library=True,
+            name_filter=self._match_results_panel.name_filter(),
         )
         thread = QThread(self)
         worker.moveToThread(thread)
@@ -1121,6 +1123,7 @@ class MainWindow(QMainWindow):
             outcome = self._reference_library_service.search_spectrum(
                 spectrum,
                 top_n=self._MATCH_RESULTS_LIMIT,
+                name_filter=self._match_results_panel.name_filter(),
             )
         except Exception as e:  # noqa: BLE001
             QMessageBox.critical(self, "Match Error", f"Matching failed:\n{e}")
