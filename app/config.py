@@ -12,8 +12,12 @@ from __future__ import annotations
 from pathlib import Path
 
 APP_NAME = "IR Spectra Analyzer"
-APP_VERSION = "0.10.0"
+APP_VERSION = "0.11.0"
 ORG_NAME = "IRSpectra"
+
+# Default spectrometer model pre-filled into the editable "Instrument" metadata
+# field for newly loaded spectra. Users can overwrite it in the Metadata panel.
+DEFAULT_INSTRUMENT = "Nicolet iS 50"
 
 # Data directories
 DATA_DIR = Path.home() / ".ir-spectra-analyzer"

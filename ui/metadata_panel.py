@@ -31,10 +31,12 @@ class MetadataPanel(QWidget):
         self._title_edit = QLineEdit()
         self._sample_edit = QLineEdit()
         self._operator_edit = QLineEdit()
+        self._instrument_edit = QLineEdit()
+        self._instrument_edit.setPlaceholderText("e.g. Nicolet iS 50")
         self._title_edit.textChanged.connect(self._on_editable_fields_changed)
         self._sample_edit.textChanged.connect(self._on_editable_fields_changed)
         self._operator_edit.textChanged.connect(self._on_editable_fields_changed)
-        self._instrument_label = QLabel()
+        self._instrument_edit.textChanged.connect(self._on_editable_fields_changed)
         self._date_label = QLabel()
         self._client_label = QLabel()
         self._client_label.setTextInteractionFlags(Qt.TextInteractionFlag.TextSelectableByMouse)
@@ -47,7 +49,7 @@ class MetadataPanel(QWidget):
         layout.addRow("Title:", self._title_edit)
         layout.addRow("Sample:", self._sample_edit)
         layout.addRow("Operator:", self._operator_edit)
-        layout.addRow("Instrument:", self._instrument_label)
+        layout.addRow("Instrument:", self._instrument_edit)
         layout.addRow("Acquired:", self._date_label)
         layout.addRow("Client:", self._client_label)
         layout.addRow("Order:", self._order_label)
@@ -74,7 +76,7 @@ class MetadataPanel(QWidget):
         self._title_edit.setText(metadata.title)
         self._sample_edit.setText(metadata.sample_name)
         self._operator_edit.setText(metadata.operator)
-        self._instrument_label.setText(metadata.instrument)
+        self._instrument_edit.setText(metadata.instrument)
         self._date_label.setText("")
         if metadata.acquired_at:
             self._date_label.setText(metadata.acquired_at.strftime("%Y-%m-%d %H:%M"))
@@ -89,7 +91,7 @@ class MetadataPanel(QWidget):
             title=self._title_edit.text().strip(),
             sample_name=self._sample_edit.text().strip(),
             operator=self._operator_edit.text().strip(),
-            instrument=self._metadata.instrument,
+            instrument=self._instrument_edit.text().strip(),
             acquired_at=self._metadata.acquired_at,
             resolution=self._metadata.resolution,
             scans=self._metadata.scans,

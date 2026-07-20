@@ -305,3 +305,57 @@ def test_suggested_save_path_uses_project_directory(qtbot, tmp_path):
     assert window._current_project_path == str(proj_path)
     suggested = window._suggested_save_path(".csv")
     assert suggested == str(tmp_path / "MySample.csv")
+
+
+# ── Default instrument metadata ───────────────────────────────────────────────
+
+
+def test_loaded_spectrum_defaults_instrument_to_nicolet(qtbot, tmp_path):
+    import os
+
+    window = _make_window(qtbot)
+    fixture = "tests/fixtures/reference library_1/FER58-SE.SPA"
+    if not os.path.exists(fixture):
+        pytest.skip("fixture not available")
+    window._load_spectrum(fixture)
+
+    assert window._metadata_panel._instrument_edit.text() == "Nicolet iS 50"
+    assert window._project.metadata.instrument == "Nicolet iS 50"
+
+
+def test_build_metadata_uses_default_instrument():
+    from core.spectrum import Spectrum
+    from ui.main_window import MainWindow
+
+    spectrum = Spectrum(
+        wavenumbers=np.array([4000.0, 400.0]),
+        intensities=np.array([1.0, 2.0]),
+        extra_metadata={"instrument_serial": "AUP2411034;"},
+    )
+    metadata = MainWindow._build_metadata_from_spectrum(spectrum, sample_name="S")
+    assert metadata.instrument == "Nicolet iS 50"
+
+
+def test_instrument_field_is_editable_and_flows_to_metadata(qtbot):
+    from ui.metadata_panel import MetadataPanel
+
+    panel = MetadataPanel()
+    qtbot.addWidget(panel)
+    panel._instrument_edit.setText("Bruker Alpha II")
+    assert panel.current_metadata().instrument == "Bruker Alpha II"
+
+
+def test_instrument_default_appears_in_pdf(qtbot, tmp_path):
+    from core.peak import Peak
+    from core.project import Project
+    from reporting.pdf_generator import PDFGenerator
+
+    project = Project(name="P", spectrum=_make_spectrum())
+    project.metadata.sample_name = "S"
+    project.metadata.instrument = "Nicolet iS 50"
+    project.peaks.append(Peak(position=1700.0, intensity=0.5, vibration_labels=["ν(C=O)"]))
+
+    out = tmp_path / "r.pdf"
+    PDFGenerator().generate(project, out)
+    assert out.exists()
+    assert out.read_bytes().startswith(b"%PDF")

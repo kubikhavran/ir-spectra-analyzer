@@ -381,6 +381,7 @@ class MainWindow(QMainWindow):
     def _build_metadata_from_spectrum(spectrum, *, sample_name: str = ""):
         from pathlib import Path  # noqa: PLC0415
 
+        from app.config import DEFAULT_INSTRUMENT  # noqa: PLC0415
         from core.metadata import SpectrumMetadata  # noqa: PLC0415
 
         resolved_sample = sample_name
@@ -391,7 +392,7 @@ class MainWindow(QMainWindow):
             title=spectrum.title,
             sample_name=resolved_sample,
             operator="",
-            instrument=str(spectrum.extra_metadata.get("instrument_serial", "")),
+            instrument=DEFAULT_INSTRUMENT,
             acquired_at=spectrum.acquired_at,
             resolution=spectrum.extra_metadata.get("resolution_cm"),
             scans=spectrum.extra_metadata.get("scans"),
