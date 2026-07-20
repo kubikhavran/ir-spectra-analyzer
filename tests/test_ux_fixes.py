@@ -223,3 +223,85 @@ def test_repeated_search_skips_feature_reload(tmp_path):
     assert second.results
     assert calls["n"] == 1  # second search reused the loaded matrix
     assert [r.ref_id for r in first.results] == [r.ref_id for r in second.results]
+
+
+# ── Zoom preserved on add-peak / undo-redo ────────────────────────────────────
+
+
+def test_add_peak_preserves_zoom(qtbot):
+    """Regression: adding a peak while zoomed in must not reset the view."""
+    from core.project import Project
+
+    window = _make_window(qtbot)
+    window._project = Project(name="Z", spectrum=_make_spectrum())
+    window._spectrum_widget.set_spectrum(window._project.spectrum)
+    vb = window._spectrum_widget._plot_widget.getPlotItem().vb
+    window._spectrum_widget._plot_widget.setXRange(1400.0, 1700.0, padding=0.0)
+    before = [round(v, 1) for v in vb.viewRange()[0]]
+
+    window._on_peak_clicked(1550.0, 1.2, 1.2)
+
+    after = [round(v, 1) for v in vb.viewRange()[0]]
+    assert after == before == [1400.0, 1700.0]
+
+
+def test_set_spectrum_preserve_view_keeps_range(qtbot):
+    from ui.spectrum_widget import SpectrumWidget
+
+    widget = SpectrumWidget()
+    qtbot.addWidget(widget)
+    spectrum = _make_spectrum()
+    widget.set_spectrum(spectrum)
+    widget._plot_widget.setXRange(1400.0, 1700.0, padding=0.0)
+
+    widget.set_spectrum(spectrum, preserve_view=True)
+
+    vb = widget._plot_widget.getPlotItem().vb
+    assert [round(v, 1) for v in vb.viewRange()[0]] == [1400.0, 1700.0]
+
+
+# ── Export/save filename defaults from Sample metadata ────────────────────────
+
+
+def test_default_export_basename_uses_sample_metadata(qtbot):
+    from core.project import Project
+
+    window = _make_window(qtbot)
+    window._project = Project(name="proj-name", spectrum=_make_spectrum())
+    window._project.metadata.sample_name = "Sample-42"
+    assert window._default_export_basename() == "Sample-42"
+
+
+def test_default_export_basename_sanitizes_illegal_chars(qtbot):
+    from core.project import Project
+
+    window = _make_window(qtbot)
+    window._project = Project(name="p", spectrum=_make_spectrum())
+    window._project.metadata.sample_name = "A/B:C*?"
+    assert "/" not in window._default_export_basename()
+    assert ":" not in window._default_export_basename()
+
+
+def test_default_export_basename_falls_back_to_project_name(qtbot):
+    from core.project import Project
+
+    window = _make_window(qtbot)
+    window._project = Project(name="ProjectX", spectrum=_make_spectrum())
+    assert window._default_export_basename() == "ProjectX"
+
+
+def test_suggested_save_path_uses_project_directory(qtbot, tmp_path):
+    from core.project import Project
+    from storage.project_serializer import ProjectSerializer
+
+    window = _make_window(qtbot)
+    window._project = Project(name="P", spectrum=_make_spectrum())
+    window._project.metadata.sample_name = "MySample"
+    proj_path = tmp_path / "saved.irproj"
+    ProjectSerializer().save(window._project, str(proj_path))
+
+    window._load_project_from_path(str(proj_path))
+
+    assert window._current_project_path == str(proj_path)
+    suggested = window._suggested_save_path(".csv")
+    assert suggested == str(tmp_path / "MySample.csv")

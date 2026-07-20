@@ -61,6 +61,7 @@ class MainWindow(QMainWindow):
 
         self._reference_library_service = ReferenceLibraryService(db, settings=settings)
         self._project = None
+        self._current_project_path: str | None = None  # last saved/opened .irproj path
         self._recent_menu: QMenu | None = None
         self._undo_stack = QUndoStack(self)
         self._last_search_refs: list = []  # cached from last _on_match_spectrum call
@@ -324,7 +325,9 @@ class MainWindow(QMainWindow):
             if self._project.corrected_spectrum is not None
             else self._project.spectrum
         )
-        self._spectrum_widget.set_spectrum(spectrum)
+        # Keep the user's current zoom/pan — adding a peak while zoomed in must
+        # not snap the graph back to the full view.
+        self._spectrum_widget.set_spectrum(spectrum, preserve_view=True)
         self._refresh_peak_views(preferred_peak)
         self._refresh_functional_group_analysis(preferred_group_id=preferred_group_id)
 
@@ -412,6 +415,9 @@ class MainWindow(QMainWindow):
         from pathlib import Path  # noqa: PLC0415
 
         self._project = project
+        # Loading a fresh spectrum/project resets the tracked save path; the
+        # project-load path re-sets it afterwards.
+        self._current_project_path = None
         self._undo_stack.clear()
         if recent_path:
             self._add_to_recent(recent_path)
@@ -460,6 +466,7 @@ class MainWindow(QMainWindow):
 
         project = ProjectSerializer().load(path)
         self._apply_project_to_ui(project, recent_path=path)
+        self._current_project_path = path
         self.statusBar().showMessage(f"Project loaded: {Path(path).name}")
 
     def _on_metadata_changed(self, metadata) -> None:
@@ -489,6 +496,38 @@ class MainWindow(QMainWindow):
         if path:
             self._load_spectrum(path)
 
+    def _default_export_basename(self) -> str:
+        """Return the filename stem to pre-fill in save/export dialogs.
+
+        Prefers the editable "Sample" metadata so exported files are named
+        after the sample; falls back to the project name.
+        """
+        sample = ""
+        metadata = getattr(self._project, "metadata", None)
+        if metadata is not None:
+            sample = (metadata.sample_name or "").strip()
+        if not sample and self._project is not None:
+            sample = (self._project.name or "").strip()
+        # Strip characters that are illegal in filenames on Windows/macOS.
+        invalid = '<>:"/\\|?*'
+        cleaned = "".join("_" if ch in invalid else ch for ch in sample).strip()
+        return cleaned or "spectrum"
+
+    def _suggested_save_path(self, extension: str) -> str:
+        """Build a default path for a save/export dialog based on the Sample name.
+
+        Reuses the directory of the currently open project when known, so
+        re-saving lands next to the original file with the sample-based name.
+        """
+        from pathlib import Path  # noqa: PLC0415
+
+        basename = self._default_export_basename()
+        if self._current_project_path:
+            directory = Path(self._current_project_path).parent
+        else:
+            directory = Path.home()
+        return str(directory / f"{basename}{extension}")
+
     def _on_save_project(self) -> None:
         """Handle File → Save Project action."""
         if self._project is None:
@@ -498,7 +537,7 @@ class MainWindow(QMainWindow):
         path, _ = QFileDialog.getSaveFileName(
             self,
             "Save IR Project",
-            "",
+            self._current_project_path or self._suggested_save_path(".irproj"),
             "IR Project Files (*.irproj);;JSON files (*.json)",
         )
         if not path:
@@ -511,6 +550,7 @@ class MainWindow(QMainWindow):
 
             self._sync_project_metadata_from_panel()
             ProjectSerializer().save(self._project, path)
+            self._current_project_path = path
             self.statusBar().showMessage(f"Project saved: {Path(path).name}")
             self._add_to_recent(path)
         except Exception as e:  # noqa: BLE001
@@ -684,7 +724,7 @@ class MainWindow(QMainWindow):
         path, _ = QFileDialog.getSaveFileName(
             self,
             "Export PDF Report",
-            "",
+            self._suggested_save_path(".pdf"),
             "PDF Files (*.pdf)",
         )
         if not path:
@@ -719,7 +759,7 @@ class MainWindow(QMainWindow):
         path, _ = QFileDialog.getSaveFileName(
             self,
             "Export CSV",
-            "",
+            self._suggested_save_path(".csv"),
             "CSV Files (*.csv);;Text Files (*.txt)",
         )
         if not path:
@@ -747,7 +787,7 @@ class MainWindow(QMainWindow):
         path, _ = QFileDialog.getSaveFileName(
             self,
             "Export Excel",
-            "",
+            self._suggested_save_path(".xlsx"),
             "Excel Files (*.xlsx)",
         )
         if not path:

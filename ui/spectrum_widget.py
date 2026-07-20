@@ -453,11 +453,14 @@ class SpectrumWidget(QWidget):
         else:  # "select", "pan", "add_peak" — all use PanMode
             vb.setMouseMode(pg.ViewBox.PanMode)
 
-    def set_spectrum(self, spectrum: Spectrum) -> None:
+    def set_spectrum(self, spectrum: Spectrum, *, preserve_view: bool = False) -> None:
         """Display a spectrum in the viewer.
 
         Args:
             spectrum: Spectrum to display.
+            preserve_view: When True, keep the current zoom/pan instead of
+                resetting to the full view. Used on undo/redo so adding a peak
+                while zoomed in does not snap the graph back to the full range.
         """
         self._spectrum = spectrum
         self._spectrum_curve.setData(x=spectrum.wavenumbers, y=spectrum.intensities)
@@ -469,7 +472,8 @@ class SpectrumWidget(QWidget):
         if self._split_mode and self._spectrum_curve_fp is not None:
             self._spectrum_curve_fp.setData(x=spectrum.wavenumbers, y=spectrum.intensities)
 
-        self.reset_view()
+        if not preserve_view:
+            self.reset_view()
 
     def _default_x_range(self) -> tuple[float, float]:
         """Return the full-view x range: the standard IR window widened to the data.
