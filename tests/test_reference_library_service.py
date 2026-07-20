@@ -112,9 +112,10 @@ def test_ensure_project_library_imported_syncs_missing_fixture_files_even_when_d
     query = FormatRegistry().read(fixture_folder / "FER58-SE.SPA")
     outcome = service.search_spectrum(query, top_n=3, auto_import_project_library=True)
 
-    assert outcome.imported_summary is not None
-    assert outcome.imported_summary.imported == 0
-    assert outcome.imported_summary.skipped == len(list(fixture_folder.glob("*.SPA")))
+    # Once the library is populated, a search no longer re-scans the folder
+    # (that folder walk is the main per-match cost on large libraries); the
+    # user refreshes it explicitly via "Sync Folder". The search still works.
+    assert outcome.imported_summary is None
     assert outcome.results[0].name == "FER58-SE"
 
 
@@ -277,10 +278,13 @@ def test_search_spectrum_backfills_missing_feature_rows(db, tmp_path):
     service = ReferenceLibraryService(db)
     service.set_selected_library_folder(folder)
 
-    assert db.get_reference_search_rows(
-        source_prefix=normalize_source_path(folder),
-        feature_version=MATCH_FEATURE_VERSION,
-    ) == []
+    assert (
+        db.get_reference_search_rows(
+            source_prefix=normalize_source_path(folder),
+            feature_version=MATCH_FEATURE_VERSION,
+        )
+        == []
+    )
 
     from core.spectrum import Spectrum
 

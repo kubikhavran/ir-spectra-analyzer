@@ -15,6 +15,7 @@ Architektonické pravidlo:
 from __future__ import annotations
 
 from datetime import datetime
+from pathlib import Path
 
 from PySide6.QtCore import QMetaObject, Qt, QThread
 from PySide6.QtGui import QKeySequence, QShortcut, QUndoStack
@@ -514,19 +515,35 @@ class MainWindow(QMainWindow):
         cleaned = "".join("_" if ch in invalid else ch for ch in sample).strip()
         return cleaned or "spectrum"
 
+    def _last_save_dir(self) -> Path:
+        """Return the last folder a project/export was saved into (persisted)."""
+        stored = self._settings.get("last_save_dir")
+        if stored:
+            candidate = Path(stored)
+            if candidate.is_dir():
+                return candidate
+        return Path.home()
+
+    def _remember_save_dir(self, path: str) -> None:
+        """Persist the folder of a just-saved file for the next save/export dialog."""
+        try:
+            self._settings.set("last_save_dir", str(Path(path).parent))
+            self._settings.save()
+        except Exception:  # noqa: BLE001 — remembering the folder is best-effort
+            pass
+
     def _suggested_save_path(self, extension: str) -> str:
         """Build a default path for a save/export dialog based on the Sample name.
 
-        Reuses the directory of the currently open project when known, so
-        re-saving lands next to the original file with the sample-based name.
+        Prefers the directory of the currently open project; otherwise falls
+        back to the last folder anything was saved into, so the next save lands
+        in the same place the user chose last time.
         """
-        from pathlib import Path  # noqa: PLC0415
-
         basename = self._default_export_basename()
         if self._current_project_path:
             directory = Path(self._current_project_path).parent
         else:
-            directory = Path.home()
+            directory = self._last_save_dir()
         return str(directory / f"{basename}{extension}")
 
     def _on_save_project(self) -> None:
@@ -552,6 +569,7 @@ class MainWindow(QMainWindow):
             self._sync_project_metadata_from_panel()
             ProjectSerializer().save(self._project, path)
             self._current_project_path = path
+            self._remember_save_dir(path)
             self.statusBar().showMessage(f"Project saved: {Path(path).name}")
             self._add_to_recent(path)
         except Exception as e:  # noqa: BLE001
@@ -749,6 +767,7 @@ class MainWindow(QMainWindow):
         try:
             builder = ReportBuilder()
             builder.build_with_options(self._project, Path(path), report_options)
+            self._remember_save_dir(path)
             self.statusBar().showMessage(f"PDF exported: {Path(path).name}")
             return True
         except Exception as e:  # noqa: BLE001
@@ -779,6 +798,7 @@ class MainWindow(QMainWindow):
                 include_unassigned=include_unassigned,
                 project=self._project,
             )
+            self._remember_save_dir(path)
             self.statusBar().showMessage(f"CSV exported: {Path(path).name}")
         except Exception as e:  # noqa: BLE001
             QMessageBox.critical(self, "Export Error", f"Failed to export CSV:\n{e}")
@@ -807,6 +827,7 @@ class MainWindow(QMainWindow):
                 include_unassigned=include_unassigned,
                 project=self._project,
             )
+            self._remember_save_dir(path)
             self.statusBar().showMessage(f"Excel exported: {Path(path).name}")
         except Exception as e:  # noqa: BLE001
             QMessageBox.critical(self, "Export Error", f"Failed to export Excel:\n{e}")
@@ -816,6 +837,7 @@ class MainWindow(QMainWindow):
         self.statusBar().showMessage(
             f"Peak: {peak.position:.2f} cm\u207b\u00b9  |  {peak.intensity:.4f}"
         )
+        self._spectrum_widget.set_selected_peak(peak)
         self._vibration_panel.highlight_for_peak(peak.position)
         self._vibration_panel.set_active_peak(peak)
         self._set_functional_group_active_peak(peak)
@@ -940,6 +962,7 @@ class MainWindow(QMainWindow):
 
     def _on_peak_selected_in_viewer(self, peak) -> None:
         """Select peak in table and highlight presets when user clicks a peak in the chart."""
+        self._spectrum_widget.set_selected_peak(peak)
         self._peak_table.select_peak(peak)
         self._vibration_panel.highlight_for_peak(peak.position)
         self._vibration_panel.set_active_peak(peak)
@@ -1301,17 +1324,21 @@ class MainWindow(QMainWindow):
         if self._project is None:
             return
 
-        self._peak_table.set_peaks(self._project.peaks)
-        self._spectrum_widget.set_peaks(self._project.peaks)
-
-        active_peak = None
+        # Decide the active peak up front so the viewer renders its selected
+        # marker in a single pass (avoids a second re-render).
         if preferred_peak is not None and any(
             existing_peak is preferred_peak for existing_peak in self._project.peaks
         ):
-            self._peak_table.select_peak(preferred_peak)
             active_peak = preferred_peak
         else:
             active_peak = self._peak_table.selected_peak()
+        self._spectrum_widget.set_selected_peak(active_peak, refresh=False)
+
+        self._peak_table.set_peaks(self._project.peaks)
+        self._spectrum_widget.set_peaks(self._project.peaks)
+
+        if active_peak is not None:
+            self._peak_table.select_peak(active_peak)
 
         if active_peak is not None:
             self._vibration_panel.highlight_for_peak(active_peak.position)

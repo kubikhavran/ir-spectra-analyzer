@@ -184,6 +184,7 @@ class SpectrumWidget(QWidget):
         self._spectrum: Spectrum | None = None
         self._peaks: list[Peak] = []
         self._peak_items: list = []
+        self._selected_peak: Peak | None = None  # viewer-only: marks the active peak
         self._add_peak_mode: bool = False
         self._tool_mode: str = "select"
         self._overlay_alpha: int = 60  # 0–100 percent opacity for reference curves
@@ -399,6 +400,7 @@ class SpectrumWidget(QWidget):
                 lx = peak.position
                 ly = peak.intensity + label_offset
 
+            label_text, label_color = self._label_text_and_color(peak)
             label = _DraggableLabel(
                 peak=peak,
                 peak_x=peak.position,
@@ -408,8 +410,8 @@ class SpectrumWidget(QWidget):
                 label_y=ly,
                 click_callback=self._on_label_clicked,
                 shift_click_callback=self._on_label_shift_clicked,
-                text=str(int(round(peak.position))),
-                color=(0, 0, 0),
+                text=label_text,
+                color=label_color,
                 angle=90,
                 anchor=anchor,
             )
@@ -422,6 +424,41 @@ class SpectrumWidget(QWidget):
             label.set_leader(leader)
 
     # ── End split-view helpers ────────────────────────────────────────────────
+
+    # Viewer-only peak-label markers. These decorate the live labels and are
+    # NOT used by the PDF/PNG export (the renderer builds its own labels from
+    # peak.position), so exported spectra stay clean.
+    _MARK_SELECTED = "▶"  # currently selected peak
+    _MARK_ASSIGNED = "•"  # peak that already has a vibration assignment
+    _COLOR_SELECTED = (21, 101, 192)  # blue
+    _COLOR_DEFAULT = (0, 0, 0)
+
+    def _label_text_and_color(self, peak: Peak) -> tuple[str, tuple[int, int, int]]:
+        """Return the on-screen label text (with markers) and color for a peak."""
+        from core.peak_assignments import peak_has_assignment  # noqa: PLC0415
+
+        number = str(int(round(peak.position)))
+        is_selected = self._selected_peak is not None and peak is self._selected_peak
+        prefix = ""
+        if is_selected:
+            prefix += self._MARK_SELECTED
+        if peak_has_assignment(peak):
+            prefix += self._MARK_ASSIGNED
+        color = self._COLOR_SELECTED if is_selected else self._COLOR_DEFAULT
+        return (f"{prefix}{number}" if prefix else number), color
+
+    def set_selected_peak(self, peak: Peak | None, *, refresh: bool = True) -> None:
+        """Mark one peak as selected in the viewer and refresh label markers.
+
+        Only re-renders when the selection actually changes. Pass
+        ``refresh=False`` when a ``set_peaks`` call will follow anyway, to avoid
+        rendering the labels twice.
+        """
+        if peak is self._selected_peak:
+            return
+        self._selected_peak = peak
+        if refresh and self._peaks:
+            self.set_peaks(self._peaks)
 
     def set_add_peak_mode(self, enabled: bool) -> None:
         """Enable or disable peak-adding mode.

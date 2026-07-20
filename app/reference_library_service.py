@@ -163,12 +163,31 @@ class ReferenceLibraryService:
         """Search the reference library for spectra similar to the given query spectrum."""
         imported_summary = None
         library_folder = self.discover_project_library_folder()
+        source_prefix = (
+            normalize_source_path(library_folder) if library_folder is not None else None
+        )
+        include_web_refs = library_folder is not None
 
-        if auto_import_project_library and library_folder is not None:
+        library_state = self._db.get_reference_library_state(
+            source_prefix=source_prefix,
+            include_web_refs=include_web_refs,
+            feature_version=MATCH_FEATURE_VERSION,
+        )
+
+        # Auto-import walks the whole library folder (recursive scan + stat of
+        # every file), which is very slow for large libraries. Only do it when
+        # the scope is still empty (first-time population) — once the library is
+        # filled, matching skips the folder walk and the user refreshes it
+        # explicitly via "Sync Folder".
+        if auto_import_project_library and library_folder is not None and library_state[0] == 0:
             imported_summary = self.ensure_project_library_imported()
+            library_state = self._db.get_reference_library_state(
+                source_prefix=source_prefix,
+                include_web_refs=include_web_refs,
+                feature_version=MATCH_FEATURE_VERSION,
+            )
 
-        references = tuple(self.get_library_references())
-        if not references:
+        if library_state[0] == 0 and not self._db.get_reference_identity_rows():
             return ReferenceSearchOutcome(
                 results=(),
                 references=(),
@@ -176,10 +195,6 @@ class ReferenceLibraryService:
                 library_folder=library_folder,
             )
 
-        source_prefix = (
-            normalize_source_path(library_folder) if library_folder is not None else None
-        )
-        include_web_refs = library_folder is not None
         self._refresh_missing_features(
             source_prefix=source_prefix,
             include_web_refs=include_web_refs,
@@ -213,7 +228,7 @@ class ReferenceLibraryService:
         results = tuple(self._rerank_results(spectrum, coarse_results=coarse_results, top_n=top_n))
         return ReferenceSearchOutcome(
             results=results,
-            references=references,
+            references=tuple(self.get_library_references()),
             imported_summary=imported_summary,
             library_folder=library_folder,
         )

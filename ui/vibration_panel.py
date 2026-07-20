@@ -31,6 +31,9 @@ from PySide6.QtWidgets import (
 from core.vibration_presets import VibrationPreset
 from ui.vibration_text_edit import VibrationTextEdit
 
+# Preset categories grouped into the panel's "Protecting groups" section.
+_PG_CATEGORIES = {"silyl"}
+
 
 class VibrationPanel(QWidget):
     """Panel displaying vibration presets for assignment to peaks."""
@@ -133,7 +136,9 @@ class VibrationPanel(QWidget):
         for i in range(self._list.count()):
             item = self._list.item(i)
             preset = item.data(256)
-            if preset is not None and preset.covers_wavenumber(wavenumber):
+            if preset is None:
+                continue  # section header — leave its styling untouched
+            if preset.covers_wavenumber(wavenumber):
                 item.setBackground(QColor("#C8E6C9"))
                 item.setForeground(QColor("#000000"))
             else:
@@ -155,22 +160,39 @@ class VibrationPanel(QWidget):
         self._list.clear()
         needle = filter_text.strip().lower()
         tag_names = self._active_tag_preset_names()
-        for preset in self._presets:
+
+        def _passes(preset) -> bool:
             if tag_names is not None and preset.name not in tag_names:
-                continue
+                return False
+            label = f"{preset.name} ({preset.typical_range_min:.0f}{preset.typical_range_max:.0f})"
+            return not needle or needle in label.lower()
+
+        general = [p for p in self._presets if _passes(p) and p.category not in _PG_CATEGORIES]
+        protecting = [p for p in self._presets if _passes(p) and p.category in _PG_CATEGORIES]
+
+        def _add_preset(preset) -> None:
             label = (
                 f"{preset.name}  "
                 f"({preset.typical_range_min:.0f}\u2013{preset.typical_range_max:.0f} cm\u207b\u00b9)"
             )
             if not preset.is_builtin:
                 label = f"\u2605 {label}"
-            if needle and needle not in label.lower():
-                continue
             item = QListWidgetItem(label)
             item.setData(256, preset)
             if not preset.is_builtin:
                 item.setForeground(QColor("#1A5276"))  # dark blue for custom
             self._list.addItem(item)
+
+        for preset in general:
+            _add_preset(preset)
+
+        if protecting:
+            header = QListWidgetItem("\u2500\u2500 Protecting groups \u2500\u2500")
+            header.setFlags(Qt.ItemFlag.NoItemFlags)  # non-selectable, no preset data
+            header.setForeground(QColor("#7F8C8D"))
+            self._list.addItem(header)
+            for preset in protecting:
+                _add_preset(preset)
 
         if current_preset is not None:
             for i in range(self._list.count()):

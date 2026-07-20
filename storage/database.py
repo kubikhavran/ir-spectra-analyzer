@@ -217,12 +217,12 @@ class Database:
         count_builtin = cursor.execute(
             "SELECT COUNT(*) FROM vibration_presets WHERE is_builtin = 1"
         ).fetchone()[0]
-        has_third_wave = cursor.execute(
+        has_silyl_wave = cursor.execute(
             "SELECT 1 FROM vibration_presets WHERE is_builtin = 1 AND name = ? LIMIT 1",
-            ("ν(P=O) phosphoryl",),
+            ("δs(Si–CH₃) TMS/TBS",),
         ).fetchone()
         # Re-seed if the builtin library does not contain the current sourced expansion.
-        if count_builtin == 153 and has_third_wave:
+        if count_builtin == 168 and has_silyl_wave:
             return
         cursor.execute("DELETE FROM vibration_presets WHERE is_builtin = 1")
 
@@ -407,6 +407,24 @@ class Database:
             ("ν(Si–C)+ρ(CH₃) silicone", 780.0, 840.0, "stretch", "", "#7D6608"),
             ("ν(P=O) phosphoryl", 1150.0, 1280.0, "stretch", "", "#6C3483"),
             ("ν(P–O–C) aliph. phosphate", 970.0, 1060.0, "stretch", "", "#6C3483"),
+            # Protecting-group wave 1 — silyl groups (category "silyl" -> own
+            # section in the vibration panel). Values corroborated against
+            # institute notes (TMS/TIPS/TBDMS) and silyl-ether IR literature.
+            ("δs(Si–CH₃) TMS/TBS", 1245.0, 1265.0, "silyl", "", "#6D4C41"),
+            ("δa(Si–CH₃)", 1400.0, 1420.0, "silyl", "", "#6D4C41"),
+            ("ρ(CH₃) Si(CH₃)₃ TMS", 835.0, 865.0, "silyl", "", "#6D4C41"),
+            ("νas(Si–C₃) TMS", 685.0, 715.0, "silyl", "", "#6D4C41"),
+            ("νs(Si–C₃) TMS", 615.0, 640.0, "silyl", "", "#6D4C41"),
+            ("ν(Si–O–C) silyl ether", 1050.0, 1110.0, "silyl", "", "#6D4C41"),
+            ("ρ(Si–CH₃) TBS", 830.0, 845.0, "silyl", "", "#6D4C41"),
+            ("ω(t-Bu) TBS", 930.0, 945.0, "silyl", "", "#6D4C41"),
+            ("νas(Si–C) TBS", 670.0, 690.0, "silyl", "", "#6D4C41"),
+            ("δ(CH₃) t-Bu dublet (silyl)", 1360.0, 1395.0, "silyl", "", "#6D4C41"),
+            ("ρ(CH₃) iPr TIPS", 908.0, 926.0, "silyl", "", "#6D4C41"),
+            ("ν(CCC) TIPS", 876.0, 894.0, "silyl", "", "#6D4C41"),
+            ("νas(CCC) TIPS", 1060.0, 1085.0, "silyl", "", "#6D4C41"),
+            ("δ(CH₃) iPr TIPS", 1458.0, 1472.0, "silyl", "", "#6D4C41"),
+            ("ν(Si–Ph) TBDPS", 1100.0, 1120.0, "silyl", "", "#6D4C41"),
         ]
 
         cursor.executemany(

@@ -359,3 +359,106 @@ def test_instrument_default_appears_in_pdf(qtbot, tmp_path):
     PDFGenerator().generate(project, out)
     assert out.exists()
     assert out.read_bytes().startswith(b"%PDF")
+
+
+# ── Peak-label markers (viewer only) ──────────────────────────────────────────
+
+
+def _labels(widget):
+    from ui.spectrum_widget import _DraggableLabel
+
+    return {i.textItem.toPlainText() for i in widget._peak_items if isinstance(i, _DraggableLabel)}
+
+
+def test_peak_label_marks_assigned_and_selected(qtbot):
+    from ui.spectrum_widget import SpectrumWidget
+
+    widget = SpectrumWidget()
+    qtbot.addWidget(widget)
+    widget.set_spectrum(_make_spectrum())
+    assigned = Peak(position=1700.0, intensity=1.0, vibration_labels=["ν(C=O)"])
+    plain = Peak(position=1000.0, intensity=1.0)
+    widget.set_peaks([assigned, plain])
+
+    labels = _labels(widget)
+    assert "•1700" in labels  # assigned marker
+    assert "1000" in labels  # unassigned plain
+
+    widget.set_selected_peak(plain)
+    labels = _labels(widget)
+    assert "▶1000" in labels  # selected marker
+    assert "•1700" in labels
+
+
+def test_peak_label_markers_absent_from_export(qtbot):
+    """Export placements/renderer use plain positions, never the viewer markers."""
+    from ui.spectrum_widget import SpectrumWidget
+
+    widget = SpectrumWidget()
+    qtbot.addWidget(widget)
+    widget.set_spectrum(_make_spectrum())
+    peak = Peak(position=1500.0, intensity=1.0, vibration_labels=["x"])
+    widget.set_peaks([peak])
+    widget.set_selected_peak(peak)
+
+    placements = widget.get_peak_label_placements()
+    # placement x-coords are raw positions; the renderer derives text from them
+    assert placements[0][0] is peak
+    assert round(placements[0][1]) == 1500
+
+
+def test_vibration_panel_groups_protecting_group_section(qtbot):
+    from core.vibration_presets import VibrationPreset
+    from ui.vibration_panel import VibrationPanel
+
+    panel = VibrationPanel()
+    qtbot.addWidget(panel)
+    panel.set_presets(
+        [
+            VibrationPreset(
+                name="ν(C=O)",
+                typical_range_min=1700,
+                typical_range_max=1750,
+                category="stretch",
+                db_id=1,
+            ),
+            VibrationPreset(
+                name="δs(Si–CH₃) TMS/TBS",
+                typical_range_min=1245,
+                typical_range_max=1265,
+                category="silyl",
+                db_id=2,
+            ),
+        ]
+    )
+    texts = [panel._list.item(i).text() for i in range(panel._list.count())]
+    assert any("Protecting groups" in t for t in texts)
+    # header must precede the silyl preset
+    header_idx = next(i for i, t in enumerate(texts) if "Protecting groups" in t)
+    silyl_idx = next(i for i, t in enumerate(texts) if "Si–CH₃" in t)
+    assert header_idx < silyl_idx
+
+
+def test_last_save_dir_persists_across_projects(qtbot, tmp_path):
+    from core.project import Project
+    from storage.settings import Settings
+    from ui.main_window import MainWindow
+
+    db = MagicMock()
+    db.get_vibration_presets.return_value = []
+    window = MainWindow(db=db, settings=Settings(tmp_path / "settings.json"))
+    qtbot.addWidget(window)
+    window._project = Project(name="A", spectrum=_make_spectrum())
+    window._project.metadata.sample_name = "SampleA"
+    target = tmp_path / "chosen"
+    target.mkdir()
+
+    window._remember_save_dir(str(target / "SampleA.irproj"))
+    # a fresh project (no tracked path) should still suggest the remembered folder
+    window._current_project_path = None
+    window._project = Project(name="B", spectrum=_make_spectrum())
+    window._project.metadata.sample_name = "SampleB"
+
+    suggested = window._suggested_save_path(".irproj")
+    assert str(target) in suggested
+    assert suggested.endswith("SampleB.irproj")

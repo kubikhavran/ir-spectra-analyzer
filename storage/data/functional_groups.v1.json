@@ -4745,6 +4745,124 @@
           "source_refs": ["sigma"]
         }
       ]
+    },
+    {
+      "id": "tms_group",
+      "name": "TMS (trimethylsilyl)",
+      "color": "#6D4C41",
+      "summary": "Sharp δs(Si-CH3) near 1250 with the strong ~845 cm-1 Si(CH3)3 rock.",
+      "source_refs": ["sigma", "niu"],
+      "bands": [
+        {
+          "id": "tms_sich3_def",
+          "label": "δs(Si-CH₃) TMS",
+          "range_min": 1245.0,
+          "range_max": 1265.0,
+          "expected_intensity": "s",
+          "shape": "sharp",
+          "role": "required",
+          "weight": 1.2,
+          "reliability": 1.1,
+          "channel": "sharp_corrected",
+          "suggested_preset_names": ["δs(Si–CH₃) TMS/TBS"],
+          "source_refs": ["sigma", "niu"]
+        },
+        {
+          "id": "tms_rock",
+          "label": "ρ(CH₃) Si(CH₃)₃ rock",
+          "range_min": 835.0,
+          "range_max": 865.0,
+          "expected_intensity": "vs",
+          "shape": "sharp",
+          "role": "required",
+          "weight": 1.1,
+          "reliability": 1.0,
+          "channel": "sharp_corrected",
+          "suggested_preset_names": ["ρ(CH₃) Si(CH₃)₃ TMS"],
+          "source_refs": ["niu"]
+        },
+        {
+          "id": "tms_sic3",
+          "label": "νas(Si-C₃)",
+          "range_min": 685.0,
+          "range_max": 715.0,
+          "expected_intensity": "m",
+          "shape": "sharp",
+          "role": "supporting",
+          "weight": 0.6,
+          "reliability": 0.85,
+          "channel": "sharp_corrected",
+          "suggested_preset_names": ["νas(Si–C₃) TMS"],
+          "source_refs": ["niu"]
+        }
+      ],
+      "coherence_rules": [
+        {
+          "band_ids": ["tms_sich3_def", "tms_rock"],
+          "bonus": 0.5,
+          "threshold": 0.5,
+          "label": "TMS δs(Si-CH₃) + rock pair"
+        }
+      ]
+    },
+    {
+      "id": "tbs_group",
+      "name": "TBS / TBDMS (tert-butyldimethylsilyl)",
+      "color": "#6D4C41",
+      "summary": "δs(Si-CH3) ~1255 with a strong sharp Si-CH3 rock ~838 and broad Si-O-C.",
+      "source_refs": ["sigma", "niu"],
+      "bands": [
+        {
+          "id": "tbs_sich3_def",
+          "label": "δs(Si-CH₃) TBS",
+          "range_min": 1248.0,
+          "range_max": 1262.0,
+          "expected_intensity": "s",
+          "shape": "sharp",
+          "role": "required",
+          "weight": 1.2,
+          "reliability": 1.1,
+          "channel": "sharp_corrected",
+          "suggested_preset_names": ["δs(Si–CH₃) TMS/TBS"],
+          "source_refs": ["sigma", "niu"]
+        },
+        {
+          "id": "tbs_rock",
+          "label": "ρ(Si-CH₃) TBS",
+          "range_min": 828.0,
+          "range_max": 845.0,
+          "expected_intensity": "vs",
+          "shape": "sharp",
+          "role": "required",
+          "weight": 1.1,
+          "reliability": 1.0,
+          "channel": "sharp_corrected",
+          "suggested_preset_names": ["ρ(Si–CH₃) TBS"],
+          "source_refs": ["niu"]
+        },
+        {
+          "id": "tbs_sioc",
+          "label": "ν(Si-O-C) silyl ether",
+          "range_min": 1050.0,
+          "range_max": 1110.0,
+          "expected_intensity": "s",
+          "shape": "broad",
+          "role": "supporting",
+          "weight": 0.7,
+          "reliability": 0.9,
+          "channel": "broad_raw",
+          "suggested_preset_names": ["ν(Si–O–C) silyl ether"],
+          "source_refs": ["sigma", "niu"]
+        }
+      ],
+      "coherence_rules": [
+        {
+          "band_ids": ["tbs_sich3_def", "tbs_rock"],
+          "bonus": 0.5,
+          "threshold": 0.5,
+          "label": "TBS δs(Si-CH₃) + Si-CH₃ rock pair"
+        }
+      ]
     }
   ]
 }

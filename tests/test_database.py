@@ -10,7 +10,7 @@ def test_database_seeds_expanded_builtin_vibration_presets():
     presets = database.get_vibration_presets()
     builtin_names = {preset["name"] for preset in presets if preset["is_builtin"] == 1}
 
-    assert len(builtin_names) == 153
+    assert len(builtin_names) == 168
     assert "ν(C=O) –COCl acid halide" in builtin_names
     assert "ν(C=O) anhydride asym." in builtin_names
     assert "ν(N₃) –N₃ azide" in builtin_names
@@ -28,6 +28,11 @@ def test_database_seeds_expanded_builtin_vibration_presets():
     assert "νas(Si–O–Si) siloxane" in builtin_names
     assert "ν(P=O) phosphoryl" in builtin_names
     assert "ν(P–O–C) aliph. phosphate" in builtin_names
+    assert "δs(Si–CH₃) TMS/TBS" in builtin_names
+    assert "ν(Si–O–C) silyl ether" in builtin_names
+    assert "ν(Si–Ph) TBDPS" in builtin_names
+    silyl = {p["name"] for p in presets if p.get("category") == "silyl"}
+    assert len(silyl) == 15
     assert "νas(SO₂) sulfone" in builtin_names
     assert "νas(SO₃) sulfate" in builtin_names
     assert "νas(SO₃) sulfonate" in builtin_names

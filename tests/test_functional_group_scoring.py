@@ -153,6 +153,8 @@ def test_functional_group_repository_contains_common_backbone_groups():
     assert "siloxane_silicone" in group_ids
     assert "organophosphate" in group_ids
     assert "internal_alkyne" in group_ids
+    assert "tms_group" in group_ids
+    assert "tbs_group" in group_ids
 
 
 @pytest.mark.parametrize(
