@@ -203,12 +203,19 @@ class ReferenceLibraryDialog(QDialog):
         self._delete_btn.setEnabled(False)
         self._delete_btn.clicked.connect(self._on_delete)
 
+        self._clear_library_btn = QPushButton("Clear Library")
+        self._clear_library_btn.setToolTip(
+            "Remove every reference spectrum, so you can re-import a folder from scratch"
+        )
+        self._clear_library_btn.clicked.connect(self._on_clear_library)
+
         row1.addWidget(self._choose_library_folder_btn)
         row1.addWidget(self._sync_project_library_btn)
         row1.addWidget(self._import_file_btn)
         row1.addWidget(self._import_web_btn)
         row1.addWidget(self._rename_btn)
         row1.addWidget(self._delete_btn)
+        row1.addWidget(self._clear_library_btn)
         row1.addStretch()
 
         # Row 2: workflow actions
@@ -832,6 +839,32 @@ class ReferenceLibraryDialog(QDialog):
             self._similarity_by_ref_id.pop(ref["id"], None)
         self._preview_label.setText("Select a row to preview")
         self._load_data()
+
+    def _on_clear_library(self) -> None:
+        """Remove every reference spectrum after confirmation, for a clean re-import."""
+        total = len(self._refs_all)
+        if total == 0:
+            QMessageBox.information(
+                self, "Clear Library", "The reference library is already empty."
+            )
+            return
+        answer = QMessageBox.question(
+            self,
+            "Clear Library",
+            f"Remove all {total} reference spectra from the library?\n\n"
+            "This cannot be undone. The source files on disk are not affected — "
+            "you can re-import the folder afterwards.",
+            QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.No,
+            QMessageBox.StandardButton.No,
+        )
+        if answer != QMessageBox.StandardButton.Yes:
+            return
+        removed = self._db.clear_reference_spectra()
+        self._library_service.clear_search_cache()
+        self._similarity_by_ref_id.clear()
+        self._preview_label.setText("Select a row to preview")
+        self._load_data()
+        QMessageBox.information(self, "Clear Library", f"Removed {removed} reference spectra.")
 
     def _on_description_edited(
         self,

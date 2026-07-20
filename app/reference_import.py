@@ -98,6 +98,22 @@ class ReferenceImportService:
             if path.is_file() and path.suffix.lower() in extensions
         )
 
+    @staticmethod
+    def _unique_name(base: str, used: set[str]) -> str:
+        """Return a name not already present in ``used`` (case-insensitive).
+
+        Distinct files that happen to share a filename (common in large
+        libraries organised into subfolders) must all be imported, so a
+        colliding name is disambiguated as ``name (2)``, ``name (3)``, … rather
+        than dropping the file.
+        """
+        if base.casefold() not in used:
+            return base
+        index = 2
+        while f"{base} ({index})".casefold() in used:
+            index += 1
+        return f"{base} ({index})"
+
     def import_reference_file(
         self,
         path: Path,
@@ -106,6 +122,7 @@ class ReferenceImportService:
         detect_peaks: bool = False,
         prefer_filename: bool = False,
         commit: bool = True,
+        used_names: set[str] | None = None,
     ) -> ImportedReference:
         """Import a single spectral file into the reference library."""
         spectrum = self._read_spectrum(path)
@@ -114,6 +131,9 @@ class ReferenceImportService:
             spectrum,
             prefer_filename=prefer_filename,
         )
+        if used_names is not None:
+            reference_name = self._unique_name(reference_name, used_names)
+            used_names.add(reference_name.casefold())
         detected_peaks = detect_peaks_for_spectrum(spectrum) if detect_peaks else ()
         description = spectrum.comments.strip()
         stat = path.stat()
@@ -165,35 +185,29 @@ class ReferenceImportService:
 
         results: list[BatchImportResult] = []
         wrote_changes = False
+        # Every distinct file must be imported. Deduplication is therefore keyed
+        # on the SOURCE PATH (the same file already stored), never on the display
+        # name — many spectra legitimately share a name (identical filename in
+        # different subfolders, or a shared embedded title), and those used to be
+        # silently skipped, so a large library only partially imported.
+        used_names = existing_names if skip_duplicates_by_filename else None
         for path in files:
-            normalized_name = path.stem.casefold()
             normalized_source = normalize_source_path(path)
             stat = path.stat()
             existing_source_row = existing_sources.get(normalized_source)
 
-            if skip_duplicates_by_filename:
-                if existing_source_row is not None:
-                    stored_mtime_ns = int(existing_source_row.get("source_mtime_ns") or 0)
-                    stored_size = int(existing_source_row.get("source_size") or 0)
-                    if (stored_mtime_ns == 0 and stored_size == 0) or (
-                        stored_mtime_ns == stat.st_mtime_ns and stored_size == stat.st_size
-                    ):
-                        results.append(
-                            BatchImportResult(
-                                path=path,
-                                status=BatchImportStatus.SKIPPED,
-                                reference_name=path.stem,
-                                reason="source path already imported",
-                            )
-                        )
-                        continue
-                if normalized_name in existing_names:
+            if skip_duplicates_by_filename and existing_source_row is not None:
+                stored_mtime_ns = int(existing_source_row.get("source_mtime_ns") or 0)
+                stored_size = int(existing_source_row.get("source_size") or 0)
+                if (stored_mtime_ns == 0 and stored_size == 0) or (
+                    stored_mtime_ns == stat.st_mtime_ns and stored_size == stat.st_size
+                ):
                     results.append(
                         BatchImportResult(
                             path=path,
                             status=BatchImportStatus.SKIPPED,
                             reference_name=path.stem,
-                            reason="reference name already exists",
+                            reason="source path already imported",
                         )
                     )
                     continue
@@ -212,6 +226,7 @@ class ReferenceImportService:
                         detect_peaks=detect_peaks,
                         prefer_filename=prefer_filename,
                         commit=False,
+                        used_names=used_names,
                     )
             except Exception as exc:  # noqa: BLE001
                 results.append(
@@ -234,8 +249,8 @@ class ReferenceImportService:
                     detected_peaks=imported.detected_peaks,
                 )
             )
-            existing_names.add(normalized_name)
-            existing_names.add(imported.name.casefold())
+            # import_reference_file already registered the final (possibly
+            # disambiguated) name in used_names; just track the source path.
             existing_sources[normalized_source] = {
                 "id": imported.ref_id,
                 "source_mtime_ns": stat.st_mtime_ns,

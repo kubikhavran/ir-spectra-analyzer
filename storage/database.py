@@ -770,6 +770,15 @@ class Database:
         self._conn.execute("DELETE FROM reference_spectra WHERE id = ?", (ref_id,))
         self._conn.commit()
 
+    def clear_reference_spectra(self) -> int:
+        """Delete every reference spectrum and its cached feature. Returns count removed."""
+        assert self._conn is not None
+        count = self._conn.execute("SELECT COUNT(*) FROM reference_spectra").fetchone()[0]
+        self._conn.execute("DELETE FROM reference_features")
+        self._conn.execute("DELETE FROM reference_spectra")
+        self._conn.commit()
+        return int(count)
+
     def rename_reference_spectrum(self, ref_id: int, new_name: str) -> None:
         """Rename a reference spectrum by id."""
         assert self._conn is not None
