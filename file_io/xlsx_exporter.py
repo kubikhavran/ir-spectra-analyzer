@@ -21,10 +21,6 @@ from core.spectrum import Spectrum
 if TYPE_CHECKING:
     from core.project import Project
 
-# Above this many points, embedding a live chart makes Excel sluggish, so the
-# chart is skipped (the raw X/Y data is always written regardless).
-_MAX_CHART_POINTS = 20000
-
 
 class XLSXExporter:
     """Exports the full analysis to a formatted Excel (.xlsx) workbook."""
@@ -36,7 +32,6 @@ class XLSXExporter:
         spectrum: Spectrum | None = None,
         include_unassigned: bool = False,
         project: Project | None = None,
-        include_chart: bool = True,
     ) -> None:
         """Export the analysis to an xlsx workbook.
 
@@ -46,7 +41,6 @@ class XLSXExporter:
             spectrum: Spectrum providing X/Y data and dip/absorption polarity.
             include_unassigned: Whether to include peaks without vibration assignments.
             project: Optional project for editable metadata (sample, operator…).
-            include_chart: Whether to embed a spectrum line chart (if not too large).
         """
         import openpyxl  # noqa: PLC0415
         from openpyxl.styles import Alignment, Font, PatternFill  # noqa: PLC0415
@@ -88,13 +82,12 @@ class XLSXExporter:
             meta_ws.cell(row=offset, column=2, value=value)
         _autosize(meta_ws)
 
-        # ── Peaks sheet ─────────────────────────────────────────────────────
+        # ── Peaks sheet (assigned peaks unless explicitly asked otherwise) ──
         peaks_ws = wb.create_sheet("Peaks")
         peaks_headers = [
             "Position (cm⁻¹)",
             f"Intensity ({y_unit_label})",
             "Rel. intensity",
-            "Assignments",
             "Assignment",
         ]
         for col, header in enumerate(peaks_headers, start=1):
@@ -107,28 +100,21 @@ class XLSXExporter:
             include_unassigned=include_unassigned,
         )
         for row, assignment_row in enumerate(assignment_rows, start=2):
-            assignment_count = len(assignment_row.peak.vibration_labels) or (
-                1 if assignment_row.assignment else 0
-            )
             peaks_ws.cell(row=row, column=1, value=assignment_row.position)
             peaks_ws.cell(row=row, column=2, value=round(assignment_row.intensity, 4))
             peaks_ws.cell(row=row, column=3, value=assignment_row.intensity_label)
-            peaks_ws.cell(row=row, column=4, value=assignment_count)
-            peaks_ws.cell(row=row, column=5, value=assignment_row.assignment)
+            peaks_ws.cell(row=row, column=4, value=assignment_row.assignment)
         peaks_ws.freeze_panes = "A2"
         _autosize(peaks_ws)
 
         # ── Spectrum sheet (full X/Y data, plottable) ───────────────────────
         if spectrum is not None:
-            self._write_spectrum_sheet(wb, spectrum, y_unit_label, include_chart=include_chart)
+            self._write_spectrum_sheet(wb, spectrum, y_unit_label)
 
         wb.save(output_path)
 
     @staticmethod
-    def _write_spectrum_sheet(
-        wb, spectrum: Spectrum, y_unit_label: str, *, include_chart: bool
-    ) -> None:
-        from openpyxl.chart import LineChart, Reference  # noqa: PLC0415
+    def _write_spectrum_sheet(wb, spectrum: Spectrum, y_unit_label: str) -> None:
         from openpyxl.styles import Alignment, Font, PatternFill  # noqa: PLC0415
 
         ws = wb.create_sheet("Spectrum")
@@ -149,26 +135,3 @@ class XLSXExporter:
         ws.freeze_panes = "A2"
         ws.column_dimensions["A"].width = 20
         ws.column_dimensions["B"].width = 22
-
-        n_points = spectrum.n_points
-        if not include_chart or n_points < 2 or n_points > _MAX_CHART_POINTS:
-            return
-
-        chart = LineChart()
-        chart.title = "IR spectrum"
-        chart.x_axis.title = "Wavenumber (cm⁻¹)"
-        chart.y_axis.title = y_unit_label
-        chart.legend = None
-        chart.height = 10
-        chart.width = 24
-        data = Reference(ws, min_col=2, min_row=1, max_row=n_points + 1)
-        categories = Reference(ws, min_col=1, min_row=2, max_row=n_points + 1)
-        chart.add_data(data, titles_from_data=True)
-        chart.set_categories(categories)
-        for series in chart.series:
-            series.graphicalProperties.line.width = 9525  # ~0.75 pt, thin IR trace
-        # IR convention: wavenumber decreases left→right.
-        chart.x_axis.scaling.orientation = "maxMin"
-        chart.x_axis.delete = False
-        chart.y_axis.delete = False
-        ws.add_chart(chart, "D2")

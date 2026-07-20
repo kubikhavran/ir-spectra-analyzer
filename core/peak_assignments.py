@@ -70,9 +70,9 @@ def collect_export_metadata(
 ) -> list[tuple[str, str]]:
     """Build ordered (label, value) metadata rows shared by CSV and XLSX exports.
 
-    Values are pulled from the editable project metadata first, then from the
-    source-spectrum header, so the export matches what the PDF report shows.
-    Empty fields are omitted.
+    Mirrors exactly the header block shown on the PDF report's second page:
+    sample/title, operator, instrument, client, order, acquisition time,
+    resolution, comment, Y unit and X range. Empty fields are omitted.
     """
     rows: list[tuple[str, str]] = []
 
@@ -113,10 +113,6 @@ def collect_export_metadata(
         except (TypeError, ValueError):
             _add("Resolution (cm⁻¹)", resolution)
 
-    scans = getattr(metadata, "scans", None)
-    if scans is not None:
-        _add("Scans", scans)
-
     _add("Comment", getattr(metadata, "comments", "") or extra.get("omnic_comment"))
 
     if spectrum is not None:
@@ -126,7 +122,6 @@ def collect_export_metadata(
             if wavenumbers:
                 x_lo, x_hi = float(min(wavenumbers)), float(max(wavenumbers))
                 _add("X range (cm⁻¹)", f"{max(x_lo, x_hi):.0f} – {min(x_lo, x_hi):.0f}")
-                _add("Data points", len(wavenumbers))
         except (TypeError, ValueError):
             pass
 

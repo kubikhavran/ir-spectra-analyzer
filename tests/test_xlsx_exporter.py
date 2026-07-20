@@ -19,7 +19,7 @@ class TestXLSXExporter:
     """Test XLSX export functionality."""
 
     def test_export_peaks_only(self) -> None:
-        """Export without a spectrum still produces a Peaks sheet with rich columns."""
+        """Export without a spectrum still produces a Peaks sheet with lean columns."""
         peaks = [
             Peak(
                 position=1650.5, intensity=0.85, vibration_ids=[1], vibration_labels=["C=O stretch"]
@@ -43,19 +43,18 @@ class TestXLSXExporter:
             peaks_ws = wb["Peaks"]
             assert peaks_ws.cell(1, 1).value == "Position (cm⁻¹)"
             assert peaks_ws.cell(1, 3).value == "Rel. intensity"
-            assert peaks_ws.cell(1, 4).value == "Assignments"
-            assert peaks_ws.cell(1, 5).value == "Assignment"
+            assert peaks_ws.cell(1, 4).value == "Assignment"
+            assert peaks_ws.cell(1, 5).value is None  # no extra "Assignments" count column
 
             assert peaks_ws.cell(2, 1).value == 2950
             assert peaks_ws.cell(2, 2).value == 0.92
             assert peaks_ws.cell(2, 3).value == "vs"
-            assert peaks_ws.cell(2, 4).value == 1
-            assert peaks_ws.cell(2, 5).value == "C-H stretch"
+            assert peaks_ws.cell(2, 4).value == "C-H stretch"
         finally:
             tmp_path.unlink(missing_ok=True)
 
-    def test_export_with_spectrum_has_three_sheets_and_chart(self) -> None:
-        """Export with a spectrum produces Metadata + Peaks + Spectrum sheets and a chart."""
+    def test_export_with_spectrum_has_three_sheets_and_no_chart(self) -> None:
+        """Export with a spectrum produces Metadata + Peaks + Spectrum sheets, no chart."""
         wavenumbers = np.linspace(4000, 400, 100)
         intensities = np.random.random(100)
         spectrum = Spectrum(wavenumbers=wavenumbers, intensities=intensities, title="Test Spectrum")
@@ -81,12 +80,13 @@ class TestXLSXExporter:
                 for r in range(1, meta_ws.max_row + 1)
             }
             assert meta_values.get("Operator") == "Analyst"
+            assert "Data points" not in meta_values  # trimmed to PDF-header fields
 
             spectrum_ws = wb["Spectrum"]
             assert spectrum_ws.cell(1, 1).value == "Wavenumber (cm⁻¹)"
             assert spectrum_ws.cell(2, 1).value == 4000.0
             assert isinstance(spectrum_ws.cell(2, 2).value, float)
-            assert len(spectrum_ws._charts) == 1
+            assert len(spectrum_ws._charts) == 0
         finally:
             tmp_path.unlink(missing_ok=True)
 
@@ -107,7 +107,7 @@ class TestXLSXExporter:
         finally:
             tmp_path.unlink(missing_ok=True)
 
-    def test_export_peak_table_content(self) -> None:
+    def test_export_peak_table_omits_unassigned_by_default(self) -> None:
         """Peaks sheet keeps PDF-consistent ordering and only assigned peaks by default."""
         peaks = [
             Peak(position=1712.6, intensity=11.2, label="1713"),
@@ -130,9 +130,9 @@ class TestXLSXExporter:
             peaks_ws = wb["Peaks"]
 
             assert peaks_ws.cell(2, 1).value == 2955
-            assert peaks_ws.cell(2, 5).value == "ν(C-H)"
+            assert peaks_ws.cell(2, 4).value == "ν(C-H)"
             assert peaks_ws.cell(3, 1).value == 1456
-            assert peaks_ws.cell(3, 5).value == "δ(CH₂)"
+            assert peaks_ws.cell(3, 4).value == "δ(CH₂)"
             assert peaks_ws.cell(4, 1).value is None  # unassigned peak omitted
         finally:
             tmp_path.unlink(missing_ok=True)

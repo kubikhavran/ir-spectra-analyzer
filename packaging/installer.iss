@@ -17,7 +17,7 @@
 ; automatically whenever a vX.Y.Z tag is pushed.
 
 #define MyAppName "IR Spectra Analyzer"
-#define MyAppVersion "0.8.0"
+#define MyAppVersion "0.9.0"
 #define MyAppPublisher "IRSpectra"
 #define MyAppURL "https://github.com/kubikhavran/ir-spectra-analyzer"
 #define MyAppExeName "IR Spectra Analyzer.exe"
@@ -62,24 +62,27 @@ Name: "associateIrproj"; Description: "Associate .irproj files with {#MyAppName}
 
 [Files]
 Source: "{#MySourceDir}\*"; DestDir: "{app}"; Flags: ignoreversion recursesubdirs createallsubdirs
+; Copy the icon to a stable {app}-root path. PyInstaller 6 places bundled data
+; under {app}\_internal\, so shortcuts/associations cannot rely on {app}\assets.
+Source: "..\assets\icon.ico"; DestDir: "{app}"; Flags: ignoreversion
 
 [Icons]
-Name: "{group}\{#MyAppName}"; Filename: "{app}\{#MyAppExeName}"; IconFilename: "{app}\assets\icon.ico"
+Name: "{group}\{#MyAppName}"; Filename: "{app}\{#MyAppExeName}"; IconFilename: "{app}\icon.ico"
 Name: "{group}\{cm:ProgramOnTheWeb,{#MyAppName}}"; Filename: "{#MyAppURL}"
 Name: "{group}\{cm:UninstallProgram,{#MyAppName}}"; Filename: "{uninstallexe}"
-Name: "{autodesktop}\{#MyAppName}"; Filename: "{app}\{#MyAppExeName}"; IconFilename: "{app}\assets\icon.ico"; Tasks: desktopicon
+Name: "{autodesktop}\{#MyAppName}"; Filename: "{app}\{#MyAppExeName}"; IconFilename: "{app}\icon.ico"; Tasks: desktopicon
 
 [Registry]
 ; .spa file association (scoped under IRSpectraAnalyzer.spa to avoid clobbering OMNIC)
 Root: HKCR; Subkey: ".spa"; ValueType: string; ValueName: ""; ValueData: "IRSpectraAnalyzer.spa"; Flags: uninsdeletevalue; Tasks: associateSpa
 Root: HKCR; Subkey: "IRSpectraAnalyzer.spa"; ValueType: string; ValueName: ""; ValueData: "IR Spectrum (.spa)"; Flags: uninsdeletekey; Tasks: associateSpa
-Root: HKCR; Subkey: "IRSpectraAnalyzer.spa\DefaultIcon"; ValueType: string; ValueName: ""; ValueData: "{app}\assets\icon.ico"; Tasks: associateSpa
+Root: HKCR; Subkey: "IRSpectraAnalyzer.spa\DefaultIcon"; ValueType: string; ValueName: ""; ValueData: "{app}\icon.ico"; Tasks: associateSpa
 Root: HKCR; Subkey: "IRSpectraAnalyzer.spa\shell\open\command"; ValueType: string; ValueName: ""; ValueData: """{app}\{#MyAppExeName}"" ""%1"""; Tasks: associateSpa
 
 ; .irproj file association (native project format)
 Root: HKCR; Subkey: ".irproj"; ValueType: string; ValueName: ""; ValueData: "IRSpectraAnalyzer.Project"; Flags: uninsdeletevalue; Tasks: associateIrproj
 Root: HKCR; Subkey: "IRSpectraAnalyzer.Project"; ValueType: string; ValueName: ""; ValueData: "IR Spectra Analyzer Project"; Flags: uninsdeletekey; Tasks: associateIrproj
-Root: HKCR; Subkey: "IRSpectraAnalyzer.Project\DefaultIcon"; ValueType: string; ValueName: ""; ValueData: "{app}\assets\icon.ico"; Tasks: associateIrproj
+Root: HKCR; Subkey: "IRSpectraAnalyzer.Project\DefaultIcon"; ValueType: string; ValueName: ""; ValueData: "{app}\icon.ico"; Tasks: associateIrproj
 Root: HKCR; Subkey: "IRSpectraAnalyzer.Project\shell\open\command"; ValueType: string; ValueName: ""; ValueData: """{app}\{#MyAppExeName}"" ""%1"""; Tasks: associateIrproj
 
 [Run]
