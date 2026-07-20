@@ -479,8 +479,6 @@ class PDFGenerator:
         is_dip_spectrum: bool = False,
     ) -> None:
         """Append the peak assignments table."""
-        story.append(Paragraph("Peak assignments", section_style))
-
         intensity_labels = classify_peak_intensities(
             sorted_peaks,
             is_dip_spectrum=is_dip_spectrum,
@@ -529,25 +527,41 @@ class PDFGenerator:
             table.setStyle(ts)
             return table
 
-        # A short list fits inline under the metadata section. Longer lists
-        # move to their own page and switch to a two-column layout so twice as
-        # many assignments still fit on a single page.
+        # A short list fits inline under the metadata section. Longer lists move
+        # onto their own page(s) with a two-column layout.
         max_rows_inline = 24
         if len(data_rows) <= max_rows_inline:
+            story.append(Paragraph("Peak assignments", section_style))
             story.append(_make_table(data_rows, _PORT_TEXT_W - col_pos_w - col_cls_w))
             return
 
         gap_w = 0.5 * cm
         half_w = (_PORT_TEXT_W - gap_w) / 2.0
         half_assign_w = half_w - col_pos_w - col_cls_w
-        # Half-width assignment cells can wrap to two lines (~30 pt per row),
-        # so 22 rows per column is the safe capacity of one portrait frame.
-        rows_per_column = 22
-        rows_per_page = rows_per_column * 2
-        for start in range(0, len(data_rows), rows_per_page):
-            chunk = data_rows[start : start + rows_per_page]
-            left_rows = chunk[:rows_per_column]
-            right_rows = chunk[rows_per_column:]
+        # Assignments are usually one line, so a column comfortably holds ~26
+        # rows; the KeepInFrame(shrink) below rescues the rare page where
+        # two-line assignments would otherwise overflow.
+        rows_per_column = 26
+        rows_per_page_cap = rows_per_column * 2
+
+        # Spread rows evenly across the needed number of pages (and across the
+        # two columns of each page) so the last page never ends up with a single
+        # orphan row. Each page is emitted as its own flowable with an explicit
+        # page break, otherwise ReportLab would pack several short chunks onto
+        # one physical page and the balancing would be lost.
+        total = len(data_rows)
+        n_pages = max(1, -(-total // rows_per_page_cap))  # ceil division
+        per_page = -(-total // n_pages)  # ceil → balanced rows per page
+
+        story.append(PageBreak())
+        first_page = True
+        start = 0
+        while start < total:
+            page_rows = data_rows[start : start + per_page]
+            start += per_page
+            left_count = -(-len(page_rows) // 2)  # ceil → left column gets the extra
+            left_rows = page_rows[:left_count]
+            right_rows = page_rows[left_count:]
             left_table = _make_table(left_rows, half_assign_w)
             cells = [left_table, ""]
             if right_rows:
@@ -565,6 +579,9 @@ class PDFGenerator:
                     ]
                 )
             )
+            if not first_page:
+                story.append(PageBreak())
+            story.append(Paragraph("Peak assignments", section_style))
             # Safety net: if unusually tall wrapped rows exceed the frame,
             # shrink the chunk slightly instead of failing the whole export.
             story.append(
@@ -575,6 +592,7 @@ class PDFGenerator:
                     mode="shrink",
                 )
             )
+            first_page = False
 
     def _append_metadata_and_structure_section(
         self,
