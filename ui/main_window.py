@@ -48,6 +48,7 @@ class MainWindow(QMainWindow):
     """Main application window with dockable analysis panels."""
 
     _MATCH_RESULTS_LIMIT = 20
+    _ASSIGNMENT_TRANSFER_TOLERANCE = 8.0  # cm⁻¹ window for copying assignments
 
     def __init__(
         self,
@@ -121,6 +122,11 @@ class MainWindow(QMainWindow):
         database_menu = menu_bar.addMenu("&Database")
         ref_library_action = database_menu.addAction("Reference Library...")
         ref_library_action.triggered.connect(self._on_open_reference_library)
+        annotated_folder_action = database_menu.addAction("Set Annotated Projects Folder...")
+        annotated_folder_action.setToolTip(
+            "Folder of previously analysed .irproj files used by 'Apply assignments from match'"
+        )
+        annotated_folder_action.triggered.connect(self._on_set_annotated_projects_folder)
         batch_import_action = database_menu.addAction("Batch Import References...")
         batch_import_action.triggered.connect(self._on_batch_import_references)
         batch_export_action = database_menu.addAction("Batch Export PDF Reports...")
@@ -349,6 +355,9 @@ class MainWindow(QMainWindow):
         self._match_results_panel.candidate_selected.connect(self._on_match_candidate_selected)
         self._match_results_panel.import_reference.connect(self._on_import_reference)
         self._match_results_panel.match_requested.connect(self._on_match_spectrum)
+        self._match_results_panel.apply_assignments_requested.connect(
+            self._on_apply_assignments_from_match
+        )
         self._functional_group_panel.group_selected.connect(self._on_functional_group_selected)
         self._functional_group_panel.diagnostic_visibility_changed.connect(
             self._on_functional_group_region_visibility_changed
@@ -1170,6 +1179,118 @@ class MainWindow(QMainWindow):
             )
         else:
             self.statusBar().showMessage(f"Matched against {outcome.reference_count} references")
+
+    def _annotated_projects_dir(self) -> Path | None:
+        """Return the configured folder of previously analysed .irproj projects."""
+        stored = self._settings.get("annotated_projects_folder")
+        if stored:
+            candidate = Path(stored)
+            if candidate.is_dir():
+                return candidate
+        return None
+
+    def _on_set_annotated_projects_folder(self) -> None:
+        """Let the user pick the folder that holds previously analysed .irproj files."""
+        start = self._annotated_projects_dir()
+        chosen = QFileDialog.getExistingDirectory(
+            self,
+            "Choose Annotated Projects Folder (.irproj)",
+            str(start) if start else "",
+        )
+        if not chosen:
+            return
+        self._settings.set("annotated_projects_folder", chosen)
+        self._settings.save()
+        self.statusBar().showMessage(f"Annotated projects folder: {Path(chosen).name}")
+
+    def _on_apply_assignments_from_match(self, result) -> None:
+        """Copy assignments + structure from the matched spectrum's saved .irproj.
+
+        Looks up ``<match name>.irproj`` in the annotated-projects folder, maps
+        its assigned peaks onto the current spectrum's nearest peaks (within a
+        tolerance window), fills only unassigned peaks, and copies the structure
+        only when the current project has none.
+        """
+        if self._project is None or self._project.spectrum is None:
+            return
+        folder = self._annotated_projects_dir()
+        if folder is None:
+            QMessageBox.information(
+                self,
+                "Annotated Projects Folder",
+                "First choose the folder with your analysed .irproj files:\n"
+                "Database → Set Annotated Projects Folder…",
+            )
+            return
+
+        candidates = [folder / f"{result.name}.irproj", folder / f"{result.name}.IRPROJ"]
+        project_path = next((p for p in candidates if p.is_file()), None)
+        if project_path is None:
+            QMessageBox.information(
+                self,
+                "No Saved Project",
+                f'No "{result.name}.irproj" found in the annotated projects folder.\n'
+                "Assignments can only be copied from a spectrum you have already "
+                "analysed and saved there.",
+            )
+            return
+
+        from processing.assignment_transfer import plan_assignment_transfer  # noqa: PLC0415
+        from storage.project_serializer import ProjectSerializer  # noqa: PLC0415
+
+        try:
+            reference_project = ProjectSerializer().load(str(project_path))
+        except Exception as exc:  # noqa: BLE001
+            QMessageBox.critical(self, "Apply Error", f"Failed to read {project_path.name}:\n{exc}")
+            return
+
+        transfers = plan_assignment_transfer(
+            self._project.peaks,
+            reference_project.peaks,
+            tolerance=self._ASSIGNMENT_TRANSFER_TOLERANCE,
+        )
+        copy_structure = not (
+            self._project.smiles or getattr(self._project, "mol_block", "")
+        ) and bool(reference_project.smiles or getattr(reference_project, "mol_block", ""))
+        if not transfers and not copy_structure:
+            self.statusBar().showMessage(
+                f"Nothing to copy from {result.name} — peaks already assigned or none matched"
+            )
+            return
+
+        from core.commands import SetPeakVibrationsCommand, SetProjectSMILESCommand  # noqa: PLC0415
+
+        self._undo_stack.beginMacro(f"Apply assignments from {result.name}")
+        for transfer in transfers:
+            self._undo_stack.push(
+                SetPeakVibrationsCommand(
+                    transfer.peak,
+                    transfer.vibration_labels,
+                    transfer.vibration_ids,
+                )
+            )
+        if copy_structure:
+            self._undo_stack.push(
+                SetProjectSMILESCommand(
+                    self._project,
+                    reference_project.smiles,
+                    getattr(reference_project, "mol_block", ""),
+                )
+            )
+        self._undo_stack.endMacro()
+
+        if copy_structure:
+            self._molecule_widget.set_structure(
+                self._project.smiles,
+                mol_block=getattr(self._project, "mol_block", ""),
+            )
+        self._refresh_peak_views()
+
+        n_ref = sum(1 for p in reference_project.peaks if p.vibration_labels)
+        struct_note = " and structure" if copy_structure else ""
+        self.statusBar().showMessage(
+            f"Copied {len(transfers)}/{n_ref} assignments{struct_note} from {result.name}"
+        )
 
     def _set_match_search_busy(self, busy: bool) -> None:
         """Toggle the match action while a background reference search is running."""

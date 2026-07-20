@@ -31,6 +31,7 @@ class MatchResultsPanel(QWidget):
     candidate_selected = Signal(object)  # emits MatchResult on selection change
     import_reference = Signal()  # user clicked "Import Reference..."
     match_requested = Signal()  # user pressed Enter in the name filter
+    apply_assignments_requested = Signal(object)  # emits MatchResult to copy assignments from
 
     def __init__(self, parent=None) -> None:
         super().__init__(parent)
@@ -40,6 +41,13 @@ class MatchResultsPanel(QWidget):
     def name_filter(self) -> str:
         """Return the current name-substring filter for scoping the library search."""
         return self._name_filter_edit.text().strip()
+
+    def selected_result(self):
+        """Return the currently selected MatchResult, or None."""
+        row = self._list.currentRow()
+        if 0 <= row < len(self._results):
+            return self._results[row]
+        return None
 
     def _setup_ui(self) -> None:
         layout = QVBoxLayout(self)
@@ -76,6 +84,17 @@ class MatchResultsPanel(QWidget):
         self._list.currentRowChanged.connect(self._on_row_changed)
         layout.addWidget(self._list)
 
+        # Copy peak assignments + structure from the selected match's saved
+        # .irproj (looked up by name in the annotated-projects folder).
+        self._apply_btn = QPushButton("Apply assignments from match")
+        self._apply_btn.setToolTip(
+            "Copy vibration assignments and structure from the selected match's "
+            "saved project onto the current spectrum (nearest peaks, blanks only)"
+        )
+        self._apply_btn.setEnabled(False)
+        self._apply_btn.clicked.connect(self._on_apply_clicked)
+        layout.addWidget(self._apply_btn)
+
     def set_results(self, results: list) -> None:
         """Populate the panel with MatchResult objects.
 
@@ -86,8 +105,10 @@ class MatchResultsPanel(QWidget):
         self._list.clear()
         if not results:
             self._status_label.setText("No results")
+            self._apply_btn.setEnabled(False)
             return
         self._status_label.setText(f"{len(results)} candidates")
+        self._apply_btn.setEnabled(True)
         for result in results:
             score_pct = result.score * 100
             quality = match_quality_label(result.score)
@@ -114,5 +135,12 @@ class MatchResultsPanel(QWidget):
         return False
 
     def _on_row_changed(self, row: int) -> None:
-        if 0 <= row < len(self._results):
+        has_selection = 0 <= row < len(self._results)
+        self._apply_btn.setEnabled(has_selection)
+        if has_selection:
             self.candidate_selected.emit(self._results[row])
+
+    def _on_apply_clicked(self) -> None:
+        result = self.selected_result()
+        if result is not None:
+            self.apply_assignments_requested.emit(result)

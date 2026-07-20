@@ -586,3 +586,74 @@ def test_name_filter_state_reflects_subset(tmp_path):
         db.get_reference_library_state(feature_version=MATCH_FEATURE_VERSION, name_filter="NIT")[0]
         == 4
     )
+
+
+# ── Apply assignments from a matched saved project ────────────────────────────
+
+
+def test_apply_assignments_from_match_transfers_and_copies_structure(qtbot, tmp_path):
+    from types import SimpleNamespace
+
+    from core.peak import Peak
+    from core.project import Project
+    from storage.project_serializer import ProjectSerializer
+    from storage.settings import Settings
+    from ui.main_window import MainWindow
+
+    # Old analysed project saved as "SampleX.irproj" with assignments + structure.
+    annot = tmp_path / "annotated"
+    annot.mkdir()
+    old = Project(name="SampleX", spectrum=_make_spectrum())
+    old.peaks = [
+        Peak(position=1712.0, intensity=0.5, vibration_labels=["ν(C=O)"], vibration_ids=[None]),
+        Peak(position=700.0, intensity=0.4, vibration_labels=["γ(C-H)"], vibration_ids=[None]),
+    ]
+    old.smiles = "CCO"
+    ProjectSerializer().save(old, str(annot / "SampleX.irproj"))
+
+    db = MagicMock()
+    db.get_vibration_presets.return_value = []
+    window = MainWindow(db=db, settings=Settings(tmp_path / "s.json"))
+    qtbot.addWidget(window)
+    window._settings.set("annotated_projects_folder", str(annot))
+    window._project = Project(name="new", spectrum=_make_spectrum())
+    # current peaks shifted a few cm from the old ones
+    window._project.peaks = [
+        Peak(position=1715.0, intensity=0.5),
+        Peak(position=704.0, intensity=0.4),
+    ]
+    window._peak_table.set_peaks(window._project.peaks)
+
+    window._on_apply_assignments_from_match(SimpleNamespace(name="SampleX", ref_id=1))
+
+    assigned = {round(p.position): p.vibration_labels for p in window._project.peaks}
+    assert assigned[1715] == ["ν(C=O)"]
+    assert assigned[704] == ["γ(C-H)"]
+    assert window._project.smiles == "CCO"
+
+    # single undo reverts the whole transfer
+    window._undo_stack.undo()
+    assert all(not p.vibration_labels for p in window._project.peaks)
+    assert not window._project.smiles
+
+
+def test_apply_assignments_no_saved_project_is_graceful(qtbot, tmp_path, monkeypatch):
+    from types import SimpleNamespace
+
+    from core.project import Project
+    from storage.settings import Settings
+    from ui.main_window import MainWindow
+
+    (tmp_path / "annotated").mkdir()
+    db = MagicMock()
+    db.get_vibration_presets.return_value = []
+    window = MainWindow(db=db, settings=Settings(tmp_path / "s.json"))
+    qtbot.addWidget(window)
+    window._settings.set("annotated_projects_folder", str(tmp_path / "annotated"))
+    window._project = Project(name="new", spectrum=_make_spectrum())
+    window._project.peaks = [Peak(position=1715.0, intensity=0.5)]
+
+    monkeypatch.setattr("ui.main_window.QMessageBox.information", lambda *a, **k: None)
+    # no matching .irproj → must not raise, must not assign
+    window._on_apply_assignments_from_match(SimpleNamespace(name="Missing", ref_id=1))
+    assert not window._project.peaks[0].vibration_labels
