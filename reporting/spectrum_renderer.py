@@ -14,7 +14,7 @@ OMNIC visual conventions implemented here:
 - White background, full 4-sided box frame, no background grid
 - X-axis inverted (high→low wavenumber), major ticks every 500 cm⁻¹, minor every 100 cm⁻¹
 - %Transmittance Y-axis fixed 0–110; Absorbance Y-axis starts at 0, auto top
-- Thin black spectrum line (0.8 pt)
+- Thin black spectrum line (see `_SPECTRUM_LINEWIDTH`)
 - Peak labels: short vertical line from apex + rotated wavenumber text above
 - Sans-serif font throughout
 """
@@ -37,6 +37,10 @@ _WN_MINOR_STEP = 100.0  # cm⁻¹
 # Split-axis width ratios (hi-wavenumber : fingerprint)
 _HI_RATIO = 35
 _LO_RATIO = 65
+
+# Spectrum curve stroke width in points. Deliberately finer than the 0.8 pt
+# axis frame so printed narrow bands stay resolvable.
+_SPECTRUM_LINEWIDTH = 0.55
 
 
 class SpectrumRenderer:
@@ -148,7 +152,12 @@ class SpectrumRenderer:
 
         # --- Plot spectrum ---
         ax.plot(
-            wavenumbers, intensities, color="black", linewidth=0.8, antialiased=True, zorder=1.0
+            wavenumbers,
+            intensities,
+            color="black",
+            linewidth=_SPECTRUM_LINEWIDTH,
+            antialiased=True,
+            zorder=1.0,
         )
 
         # --- X-axis: inverted, OMNIC-style ticks ---
@@ -313,7 +322,7 @@ class SpectrumRenderer:
                 wavenumbers,
                 intensities,
                 color="black",
-                linewidth=0.8,
+                linewidth=_SPECTRUM_LINEWIDTH,
                 antialiased=True,
                 zorder=1.0,
             )

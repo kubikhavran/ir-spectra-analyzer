@@ -377,7 +377,7 @@ class MainWindow(QMainWindow):
         return any(
             (
                 metadata.title,
-                metadata.sample_name,
+                metadata.file_name,
                 metadata.operator,
                 metadata.instrument,
                 metadata.acquired_at,
@@ -389,19 +389,19 @@ class MainWindow(QMainWindow):
         )
 
     @staticmethod
-    def _build_metadata_from_spectrum(spectrum, *, sample_name: str = ""):
+    def _build_metadata_from_spectrum(spectrum, *, file_name: str = ""):
         from pathlib import Path  # noqa: PLC0415
 
         from app.config import DEFAULT_INSTRUMENT  # noqa: PLC0415
         from core.metadata import SpectrumMetadata  # noqa: PLC0415
 
-        resolved_sample = sample_name
-        if not resolved_sample and spectrum.source_path:
-            resolved_sample = Path(spectrum.source_path).stem
+        resolved_file = file_name
+        if not resolved_file and spectrum.source_path:
+            resolved_file = Path(spectrum.source_path).stem
 
         return SpectrumMetadata(
             title=spectrum.title,
-            sample_name=resolved_sample,
+            file_name=resolved_file,
             operator="",
             instrument=DEFAULT_INSTRUMENT,
             acquired_at=spectrum.acquired_at,
@@ -414,14 +414,14 @@ class MainWindow(QMainWindow):
             },
         )
 
-    def _resolved_project_metadata(self, project, *, sample_name: str = ""):
+    def _resolved_project_metadata(self, project, *, file_name: str = ""):
         if self._metadata_is_meaningful(getattr(project, "metadata", None)):
             return project.metadata
         if project.spectrum is None:
             from core.metadata import SpectrumMetadata  # noqa: PLC0415
 
-            return SpectrumMetadata(sample_name=sample_name)
-        return self._build_metadata_from_spectrum(project.spectrum, sample_name=sample_name)
+            return SpectrumMetadata(file_name=file_name)
+        return self._build_metadata_from_spectrum(project.spectrum, file_name=file_name)
 
     def _apply_project_to_ui(self, project, *, recent_path: str | None = None) -> None:
         from pathlib import Path  # noqa: PLC0415
@@ -443,14 +443,14 @@ class MainWindow(QMainWindow):
         self._reload_vibration_presets()
         self._refresh_peak_views()
 
-        sample_name = ""
+        file_name = ""
         if project.spectrum is not None:
             if project.spectrum.source_path is not None:
-                sample_name = Path(project.spectrum.source_path).stem
+                file_name = Path(project.spectrum.source_path).stem
             elif recent_path and not recent_path.lower().endswith(".irproj"):
-                sample_name = Path(recent_path).stem
+                file_name = Path(recent_path).stem
 
-        project.metadata = self._resolved_project_metadata(project, sample_name=sample_name)
+        project.metadata = self._resolved_project_metadata(project, file_name=file_name)
         self._metadata_panel.set_metadata(project.metadata)
 
         self._molecule_widget.set_structure(
@@ -511,18 +511,18 @@ class MainWindow(QMainWindow):
     def _default_export_basename(self) -> str:
         """Return the filename stem to pre-fill in save/export dialogs.
 
-        Prefers the editable "Sample" metadata so exported files are named
-        after the sample; falls back to the project name.
+        Prefers the editable "File" metadata so exported files keep the
+        measurement's file identifier; falls back to the project name.
         """
-        sample = ""
+        basename = ""
         metadata = getattr(self._project, "metadata", None)
         if metadata is not None:
-            sample = (metadata.sample_name or "").strip()
-        if not sample and self._project is not None:
-            sample = (self._project.name or "").strip()
+            basename = (metadata.file_name or "").strip()
+        if not basename and self._project is not None:
+            basename = (self._project.name or "").strip()
         # Strip characters that are illegal in filenames on Windows/macOS.
         invalid = '<>:"/\\|?*'
-        cleaned = "".join("_" if ch in invalid else ch for ch in sample).strip()
+        cleaned = "".join("_" if ch in invalid else ch for ch in basename).strip()
         return cleaned or "spectrum"
 
     def _last_save_dir(self) -> Path:
@@ -623,7 +623,7 @@ class MainWindow(QMainWindow):
             self._project = Project(name=Path(path).stem, spectrum=spectrum, peaks=loaded_peaks)
             self._project.metadata = self._build_metadata_from_spectrum(
                 spectrum,
-                sample_name=Path(path).stem,
+                file_name=Path(path).stem,
             )
             self._apply_project_to_ui(self._project, recent_path=path)
 

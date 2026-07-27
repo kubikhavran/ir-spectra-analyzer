@@ -28,13 +28,18 @@ class MetadataPanel(QWidget):
 
     def _setup_ui(self) -> None:
         layout = QFormLayout(self)
+        # "Sample" is the OMNIC spectrum title (the sample designation printed
+        # top-right in the report); "File" is the measurement file identifier
+        # printed top-left.
         self._title_edit = QLineEdit()
-        self._sample_edit = QLineEdit()
+        self._title_edit.setPlaceholderText("sample designation, e.g. LF_647")
+        self._file_edit = QLineEdit()
+        self._file_edit.setPlaceholderText("file identifier, defaults to the file name")
         self._operator_edit = QLineEdit()
         self._instrument_edit = QLineEdit()
         self._instrument_edit.setPlaceholderText("e.g. Nicolet iS 50")
         self._title_edit.textChanged.connect(self._on_editable_fields_changed)
-        self._sample_edit.textChanged.connect(self._on_editable_fields_changed)
+        self._file_edit.textChanged.connect(self._on_editable_fields_changed)
         self._operator_edit.textChanged.connect(self._on_editable_fields_changed)
         self._instrument_edit.textChanged.connect(self._on_editable_fields_changed)
         self._date_label = QLabel()
@@ -46,8 +51,8 @@ class MetadataPanel(QWidget):
         self._comment_label.setWordWrap(True)
         self._comment_label.setTextInteractionFlags(Qt.TextInteractionFlag.TextSelectableByMouse)
 
-        layout.addRow("Title:", self._title_edit)
-        layout.addRow("Sample:", self._sample_edit)
+        layout.addRow("Sample:", self._title_edit)
+        layout.addRow("File:", self._file_edit)
         layout.addRow("Operator:", self._operator_edit)
         layout.addRow("Instrument:", self._instrument_edit)
         layout.addRow("Acquired:", self._date_label)
@@ -63,7 +68,7 @@ class MetadataPanel(QWidget):
         """
         self._metadata = SpectrumMetadata(
             title=metadata.title,
-            sample_name=metadata.sample_name,
+            file_name=metadata.file_name,
             operator=metadata.operator,
             instrument=metadata.instrument,
             acquired_at=metadata.acquired_at,
@@ -74,7 +79,7 @@ class MetadataPanel(QWidget):
         )
         self._setting_metadata = True
         self._title_edit.setText(metadata.title)
-        self._sample_edit.setText(metadata.sample_name)
+        self._file_edit.setText(metadata.file_name)
         self._operator_edit.setText(metadata.operator)
         self._instrument_edit.setText(metadata.instrument)
         self._date_label.setText("")
@@ -89,7 +94,7 @@ class MetadataPanel(QWidget):
         """Return the current metadata, including editable user fields."""
         return SpectrumMetadata(
             title=self._title_edit.text().strip(),
-            sample_name=self._sample_edit.text().strip(),
+            file_name=self._file_edit.text().strip(),
             operator=self._operator_edit.text().strip(),
             instrument=self._instrument_edit.text().strip(),
             acquired_at=self._metadata.acquired_at,

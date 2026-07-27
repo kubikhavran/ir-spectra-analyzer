@@ -27,7 +27,10 @@ Funguje spolehlivě pro data ze spektrometrů Thermo Nicolet/Nexus.
       +16 wn_max (float32 LE)
       +20 wn_min (float32 LE)
   - type 3: float32 intensity array
-  - type 27: acquisition history text (latin-1)
+  - type 27: acquisition history text (Windows ANSI code page, see decode_omnic_text)
+  - type 104: on-plot peak-label annotations — the labels visible in OMNIC
+  - type 130: named report blocks (PEAKTABLE = "Find Peaks" report, plain + RTF)
+  - type 146: Custom Info fields (order identifier, client name)
 - Fallback fixed offsets (if type-2 not found):
     Byte 564: n_points (u32 LE)
     Bytes 576-579: wn_max (f32 LE)
@@ -61,6 +64,7 @@ from core.spectrum import SpectralUnit, Spectrum, XAxisUnit
 
 logger = logging.getLogger(__name__)
 
+
 # ---------------------------------------------------------------------------
 # OMNIC real-file constants (Variant 1)
 # ---------------------------------------------------------------------------
@@ -76,8 +80,19 @@ _OMNIC_DIR_TYPE_COMMENT = 4  # OMNIC user comment/notes (e.g. "CHCl3, film", "KB
 _OMNIC_DIR_TYPE_HISTORY = 27  # acquisition history text
 _OMNIC_DIR_TYPE_CUSTOM_INFO = 146  # OMNIC Custom Info fields (client name, order ID, etc.)
 _OMNIC_DIR_TYPE_NAMED_BLOCK = 130  # named metadata/report blocks (e.g. PEAKTABLE)
+_OMNIC_DIR_TYPE_PEAK_LABELS = 104  # on-plot annotation objects (the peak labels OMNIC draws)
 # Type-146 Custom Info block: 64-byte null-padded string fields
 _OMNIC_CUSTOM_INFO_FIELD_SIZE = 64  # each field occupies 64 bytes
+# Type-104 peak-label block: u32 record count, then per label
+# [u16 flags][f32 peak x][f32 label anchor x][f32 label anchor y][NUL-terminated text]
+_OMNIC_LABEL_HEADER_SIZE = 4
+_OMNIC_LABEL_FIXED_SIZE = 14  # u16 flags + 3 × f32, before the text
+_OMNIC_LABEL_MAX_RECORDS = 2000  # sanity cap on a corrupt count field
+# OMNIC writes annotation text in the Windows ANSI code page of the machine that
+# saved the file. Central-European installs (Czech client names such as "Havránek",
+# "Šťastný") use cp1250, whose 0x80–0x9F letters are undefined in latin-1 and
+# render as replacement boxes. cp1250 is tried first and latin-1 is the fallback.
+_OMNIC_TEXT_ENCODINGS = ("cp1250", "latin-1")
 # Fallback fixed offsets (used when type-2 block is absent)
 _OMNIC_N_POINTS_OFFSET = 564  # u32 LE: number of spectral points
 _OMNIC_WN_MAX_OFFSET = 576  # f32 LE: wavenumber maximum (cm⁻¹)
@@ -108,6 +123,22 @@ _MAX_SECTIONS = 200  # reject obviously corrupt section counts (compact format)
 _MIN_FILE_BYTES = 68  # title(30) + n_sections(2) + 2 entries(24) + min blocks(12)
 _WN_MIN = 200.0  # minimum plausible wavenumber (cm⁻¹)
 _WN_MAX = 20_000.0  # maximum plausible wavenumber (cm⁻¹)
+
+
+def decode_omnic_text(raw: bytes) -> str:
+    """Decode an OMNIC text field, preserving Central-European diacritics.
+
+    OMNIC stores text in a single-byte Windows code page. Decoding cp1250 bytes
+    as latin-1 turns "š", "ž", "ť" into C1 control characters that show up as
+    empty boxes, so cp1250 is attempted first and latin-1 only as a fallback for
+    byte values cp1250 leaves undefined.
+    """
+    for encoding in _OMNIC_TEXT_ENCODINGS:
+        try:
+            return raw.decode(encoding)
+        except UnicodeDecodeError:
+            continue
+    return raw.decode(_OMNIC_TEXT_ENCODINGS[-1], errors="replace")
 
 
 class SPABinaryReader:
@@ -199,51 +230,19 @@ class SPABinaryReader:
             ValueError: If required data cannot be found or is out of bounds.
         """
         # --- Walk section directory ---
-        params_offset: int | None = None
-        params_size: int | None = None
-        intensity_offset: int | None = None
-        intensity_size: int | None = None
-        history_offset: int | None = None
-        history_size: int | None = None
-        comment_offset: int | None = None
-        comment_size: int | None = None
-        custom_info_offset: int | None = None
-        custom_info_size: int | None = None
-        named_blocks: list[tuple[int, int]] = []
+        directory = self._omnic_directory(data)
 
-        pos = _OMNIC_DIR_START
-        for entry_idx in range(_OMNIC_DIR_MAX_ENTRIES):
-            if pos + _OMNIC_DIR_ENTRY_SIZE > len(data):
-                break
-            sec_type = struct.unpack_from("<H", data, pos)[0]
-            sec_data_offset = struct.unpack_from("<I", data, pos + 2)[0]
-            sec_size = struct.unpack_from("<I", data, pos + 6)[0]
-            pos += _OMNIC_DIR_ENTRY_SIZE
+        def _first(block_type: int) -> tuple[int | None, int | None]:
+            entries = directory.get(block_type, [])
+            return entries[0] if entries else (None, None)
 
-            if sec_type == 0:
-                # End-of-directory sentinel
-                break
-            if entry_idx == 0:
-                # Entry 0 (type=1) is always a header stub with invalid offset/size — skip
-                continue
-
-            if sec_type == _OMNIC_DIR_TYPE_PARAMS and params_offset is None:
-                params_offset = sec_data_offset
-                params_size = sec_size
-            elif sec_type == _OMNIC_DIR_TYPE_INTENSITIES and intensity_offset is None:
-                intensity_offset = sec_data_offset
-                intensity_size = sec_size
-            elif sec_type == _OMNIC_DIR_TYPE_COMMENT and comment_offset is None:
-                comment_offset = sec_data_offset
-                comment_size = sec_size
-            elif sec_type == _OMNIC_DIR_TYPE_CUSTOM_INFO and custom_info_offset is None:
-                custom_info_offset = sec_data_offset
-                custom_info_size = sec_size
-            elif sec_type == _OMNIC_DIR_TYPE_HISTORY and history_offset is None:
-                history_offset = sec_data_offset
-                history_size = sec_size
-            elif sec_type == _OMNIC_DIR_TYPE_NAMED_BLOCK and sec_size > 0:
-                named_blocks.append((sec_data_offset, sec_size))
+        params_offset, params_size = _first(_OMNIC_DIR_TYPE_PARAMS)
+        intensity_offset, intensity_size = _first(_OMNIC_DIR_TYPE_INTENSITIES)
+        comment_offset, comment_size = _first(_OMNIC_DIR_TYPE_COMMENT)
+        custom_info_offset, custom_info_size = _first(_OMNIC_DIR_TYPE_CUSTOM_INFO)
+        history_offset, history_size = _first(_OMNIC_DIR_TYPE_HISTORY)
+        named_blocks = directory.get(_OMNIC_DIR_TYPE_NAMED_BLOCK, [])
+        label_blocks = directory.get(_OMNIC_DIR_TYPE_PEAK_LABELS, [])
 
         # --- Parse spectral parameters (type-2 block) ---
         # Type-2 layout: +0 unknown(4), +4 n_points(u32), +8 unknown(8),
@@ -368,7 +367,7 @@ class SPABinaryReader:
             and history_offset + history_size <= len(data)
         ):
             hist_bytes = data[history_offset : history_offset + history_size]
-            hist_text = hist_bytes.decode("latin-1", errors="replace")
+            hist_text = decode_omnic_text(hist_bytes)
             parsed = self._parse_omnic_history(hist_text)
             y_unit = parsed.get("y_unit", SpectralUnit.ABSORBANCE) or SpectralUnit.ABSORBANCE
             acquired_at = parsed.get("acquired_at")
@@ -387,7 +386,7 @@ class SPABinaryReader:
             and comment_offset + comment_size <= len(data)
         ):
             comment_bytes = data[comment_offset : comment_offset + comment_size]
-            comment_text = comment_bytes.decode("latin-1", errors="replace")
+            comment_text = decode_omnic_text(comment_bytes)
             # Multi-line OMNIC comments use embedded NUL bytes as line separators
             comment_text = comment_text.replace("\x00", "\n").strip()
             if comment_text:
@@ -408,7 +407,7 @@ class SPABinaryReader:
                 end = start + _OMNIC_CUSTOM_INFO_FIELD_SIZE
                 if end > len(buf):
                     return ""
-                return buf[start:end].rstrip(b"\x00").decode("latin-1", errors="replace").strip()
+                return decode_omnic_text(buf[start:end].rstrip(b"\x00")).strip()
 
             ci_1 = _read_ci_field(ci_block, 0)  # Custom Info 1: lab/order identifier
             ci_2 = _read_ci_field(ci_block, 1)  # Custom Info 2: client name
@@ -417,7 +416,13 @@ class SPABinaryReader:
             if ci_2:
                 extra["omnic_custom_info_2"] = ci_2
 
-        annotated_peaks = self._parse_omnic_peak_tables(data, named_blocks)
+        # Prefer the on-plot labels: they are exactly what the analyst sees in
+        # OMNIC, including labels added by hand after "Find Peaks" ran (which the
+        # PEAKTABLE report never learns about). The report is the fallback for
+        # files that carry a peak table but no annotations.
+        annotated_peaks = self._parse_omnic_peak_labels(
+            data, label_blocks, wavenumbers, intensities
+        ) or self._parse_omnic_peak_tables(data, named_blocks)
         if annotated_peaks:
             extra["annotated_peaks"] = annotated_peaks
 
@@ -425,6 +430,95 @@ class SPABinaryReader:
         extra["_parsed_acquired_at"] = acquired_at
 
         return wavenumbers, intensities, extra
+
+    @staticmethod
+    def _omnic_directory(data: bytes) -> dict[int, list[tuple[int, int]]]:
+        """Map each OMNIC block type to its ``(offset, size)`` entries, in file order.
+
+        The 16-byte directory starts at byte 288 and ends at a type-0 sentinel.
+        Entry 0 (type=1) is a header stub with an invalid offset/size and is skipped.
+        """
+        directory: dict[int, list[tuple[int, int]]] = {}
+        pos = _OMNIC_DIR_START
+        for entry_idx in range(_OMNIC_DIR_MAX_ENTRIES):
+            if pos + _OMNIC_DIR_ENTRY_SIZE > len(data):
+                break
+            sec_type, sec_offset, sec_size = struct.unpack_from("<HII", data, pos)
+            pos += _OMNIC_DIR_ENTRY_SIZE
+            if sec_type == 0:
+                break
+            if entry_idx == 0 or sec_size <= 0:
+                continue
+            directory.setdefault(sec_type, []).append((sec_offset, sec_size))
+        return directory
+
+    def _omnic_block_offsets(self, data: bytes, block_type: int) -> list[tuple[int, int]]:
+        """Return the ``(offset, size)`` entries of one OMNIC block type."""
+        return self._omnic_directory(data).get(block_type, [])
+
+    def _parse_omnic_peak_labels(
+        self,
+        data: bytes,
+        label_blocks: list[tuple[int, int]],
+        wavenumbers: np.ndarray,
+        intensities: np.ndarray,
+    ) -> list[dict[str, float | str]]:
+        """Extract the peak labels OMNIC draws on the spectrum (type-104 blocks).
+
+        Each label record carries the peak wavenumber plus the anchor of the text
+        box; the anchor is ignored because this application lays labels out on
+        its own. The label's intensity is read off the spectrum instead of the
+        stored anchor y, which is offset away from the curve.
+        """
+        if not label_blocks or wavenumbers.size == 0:
+            return []
+
+        wn_lo = float(np.min(wavenumbers))
+        wn_hi = float(np.max(wavenumbers))
+        order = np.argsort(wavenumbers)
+        wn_sorted = wavenumbers[order]
+        y_sorted = intensities[order]
+
+        labels: list[dict[str, float | str]] = []
+        seen: set[float] = set()
+        for offset, size in label_blocks:
+            if offset < 0 or size <= _OMNIC_LABEL_HEADER_SIZE or offset + size > len(data):
+                continue
+            block = data[offset : offset + size]
+            (count,) = struct.unpack_from("<I", block, 0)
+            if count <= 0 or count > _OMNIC_LABEL_MAX_RECORDS:
+                logger.debug("OMNIC type-104: implausible label count %d, skipping block", count)
+                continue
+
+            pos = _OMNIC_LABEL_HEADER_SIZE
+            for _ in range(count):
+                if pos + _OMNIC_LABEL_FIXED_SIZE > len(block):
+                    break
+                peak_x = struct.unpack_from("<f", block, pos + 2)[0]
+                text_start = pos + _OMNIC_LABEL_FIXED_SIZE
+                text_end = block.find(b"\x00", text_start)
+                if text_end < 0:
+                    break
+                text = decode_omnic_text(block[text_start:text_end]).strip()
+                pos = text_end + 1
+
+                if not np.isfinite(peak_x) or not (wn_lo <= peak_x <= wn_hi):
+                    logger.debug("OMNIC type-104: label at %r outside spectrum range", peak_x)
+                    continue
+                key = round(float(peak_x), 4)
+                if key in seen:
+                    continue
+                seen.add(key)
+                labels.append(
+                    {
+                        "position": float(peak_x),
+                        "intensity": float(np.interp(peak_x, wn_sorted, y_sorted)),
+                        "label": text,
+                    }
+                )
+
+        labels.sort(key=lambda label: float(label["position"]), reverse=True)
+        return labels
 
     def _parse_omnic_peak_tables(
         self, data: bytes, named_blocks: list[tuple[int, int]]
@@ -446,7 +540,7 @@ class SPABinaryReader:
             block = data[offset : offset + size]
             if b"PEAKTABLE" not in block:
                 continue
-            text = block.decode("latin-1", errors="replace")
+            text = decode_omnic_text(block)
             # Tolerant pairing: RTF variants may inject control words (\par,
             # \tab, ...) between the two fields, and some locales emit comma
             # decimals. Allow limited non-numeric junk between the pair.
@@ -621,7 +715,10 @@ class SPABinaryReader:
             raw = data[_OMNIC_TITLE_OFFSET : _OMNIC_TITLE_OFFSET + _OMNIC_TITLE_LENGTH]
         else:
             raw = data[:_TITLE_LENGTH]
-        return raw.rstrip(b"\x00").decode("latin-1", errors="replace").strip()
+        title = decode_omnic_text(raw.rstrip(b"\x00")).strip()
+        # OMNIC pads the header field with NULs; some writers leave trailing
+        # garbage after the terminator, so cut at the first NUL.
+        return title.split("\x00")[0].strip()
 
     # ------------------------------------------------------------------
     # Wavenumber parameter parsing (compact format only)

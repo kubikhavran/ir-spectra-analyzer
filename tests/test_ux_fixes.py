@@ -263,12 +263,12 @@ def test_set_spectrum_preserve_view_keeps_range(qtbot):
 # ── Export/save filename defaults from Sample metadata ────────────────────────
 
 
-def test_default_export_basename_uses_sample_metadata(qtbot):
+def test_default_export_basename_uses_file_metadata(qtbot):
     from core.project import Project
 
     window = _make_window(qtbot)
     window._project = Project(name="proj-name", spectrum=_make_spectrum())
-    window._project.metadata.sample_name = "Sample-42"
+    window._project.metadata.file_name = "Sample-42"
     assert window._default_export_basename() == "Sample-42"
 
 
@@ -277,7 +277,7 @@ def test_default_export_basename_sanitizes_illegal_chars(qtbot):
 
     window = _make_window(qtbot)
     window._project = Project(name="p", spectrum=_make_spectrum())
-    window._project.metadata.sample_name = "A/B:C*?"
+    window._project.metadata.file_name = "A/B:C*?"
     assert "/" not in window._default_export_basename()
     assert ":" not in window._default_export_basename()
 
@@ -296,7 +296,7 @@ def test_suggested_save_path_uses_project_directory(qtbot, tmp_path):
 
     window = _make_window(qtbot)
     window._project = Project(name="P", spectrum=_make_spectrum())
-    window._project.metadata.sample_name = "MySample"
+    window._project.metadata.file_name = "MySample"
     proj_path = tmp_path / "saved.irproj"
     ProjectSerializer().save(window._project, str(proj_path))
 
@@ -332,7 +332,7 @@ def test_build_metadata_uses_default_instrument():
         intensities=np.array([1.0, 2.0]),
         extra_metadata={"instrument_serial": "AUP2411034;"},
     )
-    metadata = MainWindow._build_metadata_from_spectrum(spectrum, sample_name="S")
+    metadata = MainWindow._build_metadata_from_spectrum(spectrum, file_name="S")
     assert metadata.instrument == "Nicolet iS 50"
 
 
@@ -351,7 +351,7 @@ def test_instrument_default_appears_in_pdf(qtbot, tmp_path):
     from reporting.pdf_generator import PDFGenerator
 
     project = Project(name="P", spectrum=_make_spectrum())
-    project.metadata.sample_name = "S"
+    project.metadata.file_name = "S"
     project.metadata.instrument = "Nicolet iS 50"
     project.peaks.append(Peak(position=1700.0, intensity=0.5, vibration_labels=["ν(C=O)"]))
 
@@ -449,7 +449,7 @@ def test_last_save_dir_persists_across_projects(qtbot, tmp_path):
     window = MainWindow(db=db, settings=Settings(tmp_path / "settings.json"))
     qtbot.addWidget(window)
     window._project = Project(name="A", spectrum=_make_spectrum())
-    window._project.metadata.sample_name = "SampleA"
+    window._project.metadata.file_name = "SampleA"
     target = tmp_path / "chosen"
     target.mkdir()
 
@@ -457,7 +457,7 @@ def test_last_save_dir_persists_across_projects(qtbot, tmp_path):
     # a fresh project (no tracked path) should still suggest the remembered folder
     window._current_project_path = None
     window._project = Project(name="B", spectrum=_make_spectrum())
-    window._project.metadata.sample_name = "SampleB"
+    window._project.metadata.file_name = "SampleB"
 
     suggested = window._suggested_save_path(".irproj")
     assert str(target) in suggested
@@ -695,3 +695,104 @@ def test_match_results_flag_candidates_with_saved_projects(qtbot, tmp_path):
     # name casing must not matter — the folder is searched case-insensitively
     panel._saved_only_check.setChecked(True)
     assert [r.name for r in panel._visible_results] == ["samplex"]
+
+
+# ── Sample / File metadata split ──────────────────────────────────────────────
+
+
+def _metadata_table_rows(project, spectrum) -> list[tuple[str, str]]:
+    """Read back the (key, value) pairs the PDF metadata table would print."""
+    from reportlab.lib.styles import getSampleStyleSheet
+
+    from reporting.pdf_generator import PDFGenerator, ReportOptions
+
+    story: list = []
+    style = getSampleStyleSheet()["Normal"]
+    PDFGenerator()._append_metadata_and_structure_section(
+        story, project, spectrum, style, style, ReportOptions()
+    )
+    rows: list[tuple[str, str]] = []
+
+    def _walk(flowable) -> None:
+        cellvalues = getattr(flowable, "_cellvalues", None)
+        if not cellvalues:
+            return
+        for row in cellvalues:
+            if len(row) == 2 and all(hasattr(cell, "text") for cell in row):
+                rows.append((row[0].text, row[1].text))
+                continue
+            for cell in row:
+                _walk(cell)
+
+    for flowable in story:
+        _walk(flowable)
+    return rows
+
+
+def test_pdf_metadata_names_the_title_as_sample_and_keeps_file_separate(qtbot):
+    """ "Sample" must carry the spectrum title (header top-right), "File" the file id."""
+    from core.project import Project
+
+    spectrum = _make_spectrum()
+    project = Project(name="proj", spectrum=spectrum)
+    project.metadata.title = "LF_647"
+    project.metadata.file_name = "FER60-SE"
+
+    rows = dict(_metadata_table_rows(project, spectrum))
+    assert rows["Sample"] == "LF_647"
+    assert rows["File"] == "FER60-SE"
+
+
+def test_export_metadata_rows_match_the_pdf_sample_and_file(qtbot):
+    """CSV/XLSX metadata rows use the same Sample/File split as the report."""
+    from core.peak_assignments import collect_export_metadata
+    from core.project import Project
+
+    spectrum = _make_spectrum()
+    project = Project(name="proj", spectrum=spectrum)
+    project.metadata.title = "LF_647"
+    project.metadata.file_name = "FER60-SE"
+
+    rows = dict(collect_export_metadata(project, spectrum))
+    assert rows["Sample"] == "LF_647"
+    assert rows["File"] == "FER60-SE"
+
+
+def test_metadata_panel_labels_title_as_sample_and_stem_as_file(qtbot):
+    """The panel must label the fields the way the report prints them."""
+    from PySide6.QtWidgets import QFormLayout
+
+    from ui.metadata_panel import MetadataPanel
+
+    panel = MetadataPanel()
+    qtbot.addWidget(panel)
+    layout = panel.layout()
+    assert isinstance(layout, QFormLayout)
+    labels = [
+        layout.itemAt(row, QFormLayout.ItemRole.LabelRole).widget().text() for row in range(2)
+    ]
+    assert labels == ["Sample:", "File:"]
+
+    panel._title_edit.setText("LF_647")
+    panel._file_edit.setText("FER60-SE")
+    metadata = panel.current_metadata()
+    assert metadata.title == "LF_647"
+    assert metadata.file_name == "FER60-SE"
+
+
+# ── Overlay control bar readability ───────────────────────────────────────────
+
+
+def test_overlay_bar_style_does_not_repaint_its_controls(qtbot):
+    """An unscoped `QWidget` rule flattens the Clear button into the bar."""
+    from ui.spectrum_widget import SpectrumWidget
+
+    widget = SpectrumWidget()
+    qtbot.addWidget(widget)
+    for bar in (widget._overlay_bar, widget._toolbar_bar):
+        style = bar.styleSheet()
+        assert style.strip(), "control bar must carry a stylesheet"
+        assert "QWidget {" not in style, (
+            "unscoped QWidget rule also paints the child buttons and slider"
+        )
+        assert f"#{bar.objectName()}" in style

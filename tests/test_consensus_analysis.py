@@ -78,8 +78,7 @@ def test_build_consensus_analysis_combines_groups_matches_and_assignments():
     assert "Nitrile" in analysis.headline
     assert "Nitrile standard" in analysis.headline
     assert any(
-        evidence.kind == "assigned_peak"
-        for evidence in analysis.hypotheses[0].supporting_evidence
+        evidence.kind == "assigned_peak" for evidence in analysis.hypotheses[0].supporting_evidence
     )
     assert analysis.top_matches[0].label == "Nitrile standard"
 
@@ -115,4 +114,6 @@ def test_build_consensus_analysis_flags_close_library_matches_as_conflict():
     )
 
     assert any("split" in evidence.label.lower() for evidence in analysis.conflicts)
-    assert any("library matches are close" in evidence.label.lower() for evidence in analysis.conflicts)
+    assert any(
+        "library matches are close" in evidence.label.lower() for evidence in analysis.conflicts
+    )

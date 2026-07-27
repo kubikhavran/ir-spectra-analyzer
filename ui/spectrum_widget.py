@@ -46,6 +46,79 @@ _OVERLAY_COLORS = [
 
 _PEAK_LABEL_FONT_SIZE_PT = 8.0
 
+# Control bars above the plot. Every rule is scoped to the bar's object name or
+# to a concrete control class, so the bar background never bleeds into the
+# buttons and slider sitting on it (which is what made them unreadable).
+_OVERLAY_BAR_STYLE = """
+QWidget#overlayBar {
+    background: #D6E4F0;
+    border-bottom: 1px solid #7F9DB9;
+}
+QWidget#overlayBar QLabel {
+    color: #1B2B38;
+    background: transparent;
+}
+QWidget#overlayBar QLabel#overlayName {
+    color: #14507A;
+    font-weight: bold;
+}
+QWidget#overlayBar QPushButton {
+    background: #FFFFFF;
+    color: #1B2B38;
+    border: 1px solid #7F9DB9;
+    border-radius: 3px;
+    padding: 2px 8px;
+}
+QWidget#overlayBar QPushButton:hover {
+    background: #F0F7FF;
+    border-color: #14507A;
+}
+QWidget#overlayBar QPushButton:pressed {
+    background: #C9DCEF;
+}
+QWidget#overlayBar QSlider::groove:horizontal {
+    height: 4px;
+    background: #FFFFFF;
+    border: 1px solid #7F9DB9;
+    border-radius: 2px;
+}
+QWidget#overlayBar QSlider::sub-page:horizontal {
+    background: #2980B9;
+    border: 1px solid #14507A;
+    border-radius: 2px;
+}
+QWidget#overlayBar QSlider::handle:horizontal {
+    width: 10px;
+    margin: -5px 0;
+    background: #14507A;
+    border: 1px solid #0D3A57;
+    border-radius: 5px;
+}
+"""
+
+_PLOT_TOOLBAR_STYLE = """
+QWidget#plotToolbarBar {
+    background: #ECECEC;
+    border-bottom: 1px solid #B8B8B8;
+}
+QWidget#plotToolbarBar QPushButton {
+    background: #FFFFFF;
+    color: #1B1B1B;
+    border: 1px solid #A0A0A0;
+    border-radius: 3px;
+    padding: 1px 10px;
+}
+QWidget#plotToolbarBar QPushButton:hover {
+    background: #F4F8FC;
+    border-color: #14507A;
+}
+QWidget#plotToolbarBar QPushButton:checked {
+    background: #2980B9;
+    color: #FFFFFF;
+    border-color: #14507A;
+}
+"""
+
 # Split-view constants
 _SPLIT_WN = 2000.0  # cm⁻¹ split boundary
 _SPLIT_HI_FRAC = 35  # width fraction for hi-wavenumber panel (2000–3800)
@@ -207,10 +280,12 @@ class SpectrumWidget(QWidget):
         layout.setSpacing(0)
 
         # ── Overlay controls bar (hidden until an overlay is active) ────────
+        # The stylesheet is scoped by object name: an unscoped `QWidget` rule
+        # also repaints every child, which flattens the button and slider into
+        # the bar background and makes them nearly invisible.
         self._overlay_bar = QWidget()
-        self._overlay_bar.setStyleSheet(
-            "QWidget { background: #F0F4F8; border-bottom: 1px solid #CCC; }"
-        )
+        self._overlay_bar.setObjectName("overlayBar")
+        self._overlay_bar.setStyleSheet(_OVERLAY_BAR_STYLE)
         overlay_row = QHBoxLayout(self._overlay_bar)
         overlay_row.setContentsMargins(8, 4, 8, 4)
         overlay_row.setSpacing(8)
@@ -218,7 +293,7 @@ class SpectrumWidget(QWidget):
         overlay_row.addWidget(QLabel("Reference overlay:"))
 
         self._overlay_name_label = QLabel("")
-        self._overlay_name_label.setStyleSheet("color: #2980B9; font-weight: bold;")
+        self._overlay_name_label.setObjectName("overlayName")
         overlay_row.addWidget(self._overlay_name_label)
 
         overlay_row.addWidget(QLabel("Opacity:"))
@@ -236,7 +311,8 @@ class SpectrumWidget(QWidget):
         overlay_row.addWidget(self._opacity_label)
 
         clear_overlay_btn = QPushButton("Clear")
-        clear_overlay_btn.setFixedWidth(52)
+        clear_overlay_btn.setFixedWidth(56)
+        clear_overlay_btn.setToolTip("Remove the reference overlay from the plot")
         clear_overlay_btn.clicked.connect(lambda: self.set_overlay_spectra([]))
         overlay_row.addWidget(clear_overlay_btn)
 
@@ -246,9 +322,8 @@ class SpectrumWidget(QWidget):
 
         # ── Toolbar bar (always visible) — split-view toggle ─────────────────
         self._toolbar_bar = QWidget()
-        self._toolbar_bar.setStyleSheet(
-            "QWidget { background: #F8F8F8; border-bottom: 1px solid #DDD; }"
-        )
+        self._toolbar_bar.setObjectName("plotToolbarBar")
+        self._toolbar_bar.setStyleSheet(_PLOT_TOOLBAR_STYLE)
         toolbar_row = QHBoxLayout(self._toolbar_bar)
         toolbar_row.setContentsMargins(8, 2, 8, 2)
         toolbar_row.setSpacing(8)

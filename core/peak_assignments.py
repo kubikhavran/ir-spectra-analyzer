@@ -71,7 +71,7 @@ def collect_export_metadata(
     """Build ordered (label, value) metadata rows shared by CSV and XLSX exports.
 
     Mirrors exactly the header block shown on the PDF report's second page:
-    sample/title, operator, instrument, client, order, acquisition time,
+    sample, file, operator, instrument, client, order, acquisition time,
     resolution, comment, Y unit and X range. Empty fields are omitted.
     """
     rows: list[tuple[str, str]] = []
@@ -87,11 +87,12 @@ def collect_export_metadata(
     extra = getattr(spectrum, "extra_metadata", {}) or {}
     meta_extra = getattr(metadata, "extra", {}) or {}
 
-    sample_name = getattr(metadata, "sample_name", "") or ""
-    title = getattr(metadata, "title", "") or getattr(spectrum, "title", "") or ""
+    file_name = getattr(metadata, "file_name", "") or ""
+    # "Sample" is the spectrum title; "File" is the measurement file identifier.
+    sample_name = getattr(metadata, "title", "") or getattr(spectrum, "title", "") or ""
     project_name = getattr(project, "name", "") or ""
-    _add("Sample", sample_name or project_name)
-    _add("Title", title)
+    _add("Sample", sample_name)
+    _add("File", file_name or project_name)
     _add("Operator", getattr(metadata, "operator", ""))
     _add(
         "Instrument",

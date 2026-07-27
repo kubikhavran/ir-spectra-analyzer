@@ -42,6 +42,7 @@ def test_size_parameter_respected():
 
 def test_render_to_svg_valid_smiles():
     from chemistry.structure_renderer import render_to_svg
+
     result = render_to_svg(smiles="CCO")
     assert result is not None
     assert "<svg" in result
@@ -49,11 +50,13 @@ def test_render_to_svg_valid_smiles():
 
 def test_render_to_svg_empty_returns_none():
     from chemistry.structure_renderer import render_to_svg
+
     assert render_to_svg(smiles="") is None
 
 
 def test_render_to_svg_invalid_smiles_returns_none():
     from chemistry.structure_renderer import render_to_svg
+
     assert render_to_svg(smiles="not_a_smiles_xyz") is None
 
 
@@ -62,6 +65,7 @@ def test_render_to_svg_with_mol_block():
     from rdkit.Chem import AllChem, MolToMolBlock
 
     from chemistry.structure_renderer import _load_mol, render_to_svg
+
     mol = _load_mol(smiles="c1ccccc1")
     AllChem.Compute2DCoords(mol)
     mol_block = MolToMolBlock(mol)

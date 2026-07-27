@@ -181,7 +181,7 @@ def test_project_serializer_metadata_roundtrip(tmp_path):
     project = _make_project()
     project.metadata = SpectrumMetadata(
         title="Edited title",
-        sample_name="Sample A",
+        file_name="File A",
         operator="Analyst X",
         instrument="iS10",
         acquired_at=project.spectrum.acquired_at,
@@ -195,7 +195,7 @@ def test_project_serializer_metadata_roundtrip(tmp_path):
     serializer.save(project, file_path)
     loaded = serializer.load(file_path)
     assert loaded.metadata.title == "Edited title"
-    assert loaded.metadata.sample_name == "Sample A"
+    assert loaded.metadata.file_name == "File A"
     assert loaded.metadata.operator == "Analyst X"
     assert loaded.metadata.instrument == "iS10"
     assert loaded.metadata.resolution == pytest.approx(4.0)

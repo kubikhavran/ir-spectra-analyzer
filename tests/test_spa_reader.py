@@ -612,3 +612,74 @@ def test_reference_library_spa_reads_stored_peak_annotations() -> None:
     assert positions == sorted(positions, reverse=True)
     assert any(abs(position - 1639.0) < 2.0 for position in positions)
     assert any(abs(position - 555.0) < 2.0 for position in positions)
+
+
+@pytest.mark.skipif(not _peaktable_fixture.exists(), reason="Reference-library SPA fixture missing")
+def test_on_plot_peak_labels_beat_the_peaktable_report() -> None:
+    """Every label drawn in OMNIC must load, not just the ones Find Peaks reported.
+
+    The type-104 annotation block holds the labels visible on the plot, including
+    ones the analyst added by hand afterwards; the PEAKTABLE report only lists
+    the last Find Peaks run and is therefore a subset.
+    """
+    from file_io.spa_binary import SPABinaryReader
+
+    reader = SPABinaryReader()
+    spec = reader.read(_peaktable_fixture)
+    annotated_peaks = spec.extra_metadata["annotated_peaks"]
+
+    data = _peaktable_fixture.read_bytes()
+    report_only = reader._parse_omnic_peak_tables(data, reader._omnic_block_offsets(data, 130))
+
+    assert len(annotated_peaks) > len(report_only), (
+        "hand-placed OMNIC labels are missing from the loaded peak set"
+    )
+    assert all("label" in peak for peak in annotated_peaks)
+    # Label text is OMNIC's rounded wavenumber, so it must track the position.
+    for peak in annotated_peaks:
+        assert abs(float(peak["label"]) - peak["position"]) < 1.0
+    # Intensities come off the curve, so they must sit inside the spectrum range.
+    y_lo, y_hi = float(np.min(spec.intensities)), float(np.max(spec.intensities))
+    assert all(y_lo <= peak["intensity"] <= y_hi for peak in annotated_peaks)
+
+
+def test_peak_labels_fall_back_to_peaktable_without_annotations() -> None:
+    """A file with a PEAKTABLE but no type-104 block still yields its peaks."""
+    from file_io.spa_binary import SPABinaryReader
+
+    fixture = FIXTURES_DIR / "reference library_1" / "PAR1629-31-SE.SPA"
+    if not fixture.exists():
+        pytest.skip("Reference-library SPA fixture missing")
+
+    reader = SPABinaryReader()
+    data = fixture.read_bytes()
+    assert reader._omnic_block_offsets(data, 104) == []
+    annotated_peaks = reader.read(fixture).extra_metadata["annotated_peaks"]
+    assert len(annotated_peaks) > 10
+
+
+def test_real_fixture_client_name_keeps_czech_letters() -> None:
+    """A real lab file whose Custom Info holds "SMOLÍČEK" must not be mangled.
+
+    Decoded as latin-1 the cp1250 caron bytes turn into other letters ("SMOLÍÈEK")
+    or into boxes, which is what analysts saw in the metadata panel and reports.
+    """
+    from file_io.spa_binary import SPABinaryReader
+
+    fixture = FIXTURES_DIR / "reference library_1" / "SMC113-Ot.SPA"
+    if not fixture.exists():
+        pytest.skip("Reference-library SPA fixture missing")
+
+    spec = SPABinaryReader().read(fixture)
+    assert spec.extra_metadata["omnic_custom_info_2"] == "SMOLÍČEK"
+
+
+def test_omnic_text_decodes_central_european_diacritics() -> None:
+    """cp1250 client names must not degrade into replacement boxes."""
+    from file_io.spa_binary import decode_omnic_text
+
+    assert decode_omnic_text("Havránek".encode("cp1250")) == "Havránek"
+    assert decode_omnic_text("Šťastný".encode("cp1250")) == "Šťastný"
+    # Plain ASCII and latin-1-only bytes must keep working.
+    assert decode_omnic_text(b"Smith") == "Smith"
+    assert decode_omnic_text(b"\x81") == "\x81"

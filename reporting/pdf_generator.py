@@ -358,8 +358,8 @@ class PDFGenerator:
     ) -> None:
         """Append the report header section.
 
-        Left column: project/sample name (bold, large).
-        Right column: spectrum title / internal lab code (bold, right-aligned).
+        Left column: file identifier (bold, large).
+        Right column: sample designation from the spectrum title (bold, right-aligned).
         """
         title_right_style = ParagraphStyle(
             "ReportTitleRight",
@@ -368,17 +368,15 @@ class PDFGenerator:
             spaceAfter=0,
         )
         project_metadata = getattr(project, "metadata", None)
-        sample_name = (
-            project_metadata.sample_name
-            if project_metadata and project_metadata.sample_name
-            else ""
+        file_name = (
+            project_metadata.file_name if project_metadata and project_metadata.file_name else ""
         )
         spectrum_title = (
             project_metadata.title
             if project_metadata and project_metadata.title
             else spectrum.title
         )
-        left_para = Paragraph(sample_name or project.name, title_style)
+        left_para = Paragraph(file_name or project.name, title_style)
         right_para = Paragraph(spectrum_title or "", title_right_style)
         header_row = Table(
             [[left_para, right_para]],
@@ -603,10 +601,15 @@ class PDFGenerator:
             if value:
                 meta_rows.append([Paragraph(key, key_style), Paragraph(value, val_style)])
 
+        file_name = (
+            project_metadata.file_name if project_metadata and project_metadata.file_name else ""
+        )
+        # The sample designation is the spectrum title — the same value the
+        # header prints top-right.
         sample_name = (
-            project_metadata.sample_name
-            if project_metadata and project_metadata.sample_name
-            else ""
+            project_metadata.title
+            if project_metadata and project_metadata.title
+            else (spectrum.title or "")
         )
         client = (
             project_metadata.extra.get("omnic_client")
@@ -631,7 +634,8 @@ class PDFGenerator:
             project_metadata.comments if project_metadata and project_metadata.comments else ""
         )
 
-        _add_row("Sample", sample_name or project.name)
+        _add_row("Sample", sample_name)
+        _add_row("File", file_name or project.name)
         _add_row("Operator", project_metadata.operator if project_metadata else None)
         _add_row(
             "Instrument", instrument or str(spectrum.extra_metadata.get("instrument_serial", ""))

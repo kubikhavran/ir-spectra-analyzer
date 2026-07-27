@@ -12,10 +12,10 @@ class MetadataEditorDialog(QDialog):
         super().__init__(parent)
         self.setWindowTitle("Edit Metadata")
         layout = QFormLayout(self)
-        self._sample_edit = QLineEdit()
+        self._file_edit = QLineEdit()
         self._operator_edit = QLineEdit()
         self._comments_edit = QTextEdit()
-        layout.addRow("Sample:", self._sample_edit)
+        layout.addRow("File:", self._file_edit)
         layout.addRow("Operator:", self._operator_edit)
         layout.addRow("Comments:", self._comments_edit)
         buttons = QDialogButtonBox(

@@ -34,6 +34,8 @@ def test_csv_export_is_columnar_with_three_side_by_side_blocks(tmp_path: Path) -
         Peak(position=1456.4, intensity=3.7, vibration_ids=[2], vibration_labels=["δ(CH₂)"]),
     ]
     project = Project(name="Sample-1", spectrum=_make_spectrum(SpectralUnit.ABSORBANCE))
+    project.metadata.title = "LF_647"
+    project.metadata.file_name = "Sample-1"
     project.metadata.operator = "J. Doe"
 
     output_path = tmp_path / "analysis.csv"
@@ -55,7 +57,8 @@ def test_csv_export_is_columnar_with_three_side_by_side_blocks(tmp_path: Path) -
 
     # First data row combines first metadata, first (assigned) peak, first spectrum point
     first = rows[1]
-    assert first[0] == "Sample"
+    assert first[0:2] == ["Sample", "LF_647"]  # sample designation = spectrum title
+    assert rows[2][0:2] == ["File", "Sample-1"]
     assert first[3] == "2955"  # highest-wavenumber assigned peak
     assert first[8] == "4000.00"
 

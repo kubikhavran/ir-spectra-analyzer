@@ -146,7 +146,10 @@ class ProjectSerializer:
     def _metadata_to_dict(metadata: SpectrumMetadata) -> dict[str, Any]:
         return {
             "title": metadata.title,
-            "sample_name": metadata.sample_name,
+            "file_name": metadata.file_name,
+            # Legacy alias kept so a project saved here still opens in builds
+            # before 0.20.0, where this field was called "sample_name".
+            "sample_name": metadata.file_name,
             "operator": metadata.operator,
             "instrument": metadata.instrument,
             "acquired_at": ProjectSerializer._datetime_to_iso(metadata.acquired_at),
@@ -162,7 +165,7 @@ class ProjectSerializer:
             return SpectrumMetadata()
         return SpectrumMetadata(
             title=data.get("title", ""),
-            sample_name=data.get("sample_name", ""),
+            file_name=data.get("file_name") or data.get("sample_name", ""),
             operator=data.get("operator", ""),
             instrument=data.get("instrument", ""),
             acquired_at=ProjectSerializer._iso_to_datetime(data.get("acquired_at")),

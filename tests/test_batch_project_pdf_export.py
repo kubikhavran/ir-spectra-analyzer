@@ -406,7 +406,9 @@ def test_batch_project_pdf_export_worker_emits_summary(monkeypatch, tmp_path):
         return summary
 
     monkeypatch.setattr(BatchProjectPDFExporter, "export_folder", _fake_export_folder)
-    options = ReportOptions(include_structures=True, include_peak_table=False, include_metadata=True)
+    options = ReportOptions(
+        include_structures=True, include_peak_table=False, include_metadata=True
+    )
     worker = BatchProjectPDFExportWorker(
         input_folder=tmp_path / "input",
         output_folder=tmp_path / "output",

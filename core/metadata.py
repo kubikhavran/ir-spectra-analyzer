@@ -18,8 +18,10 @@ class SpectrumMetadata:
     """Metadata associated with an IR spectrum.
 
     Attributes:
-        title: Spectrum title from file header.
-        sample_name: Sample identifier (user-editable).
+        title: Sample designation from the file header — the OMNIC spectrum
+            title, shown as "Sample" in the UI and in reports.
+        file_name: Measurement/file identifier, defaults to the source file
+            stem (user-editable). Shown as "File".
         operator: Analyst name (user-editable).
         instrument: Spectrometer model/identifier.
         acquired_at: Acquisition timestamp.
@@ -30,7 +32,7 @@ class SpectrumMetadata:
     """
 
     title: str = ""
-    sample_name: str = ""
+    file_name: str = ""
     operator: str = ""
     instrument: str = ""
     acquired_at: datetime | None = None

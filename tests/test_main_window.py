@@ -110,9 +110,7 @@ def test_spectrum_widget_auto_arrange_labels_avoids_overlap_and_curve(qtbot):
     centers = [1702.0, 1694.0, 1686.0, 1678.0, 1669.0, 1661.0, 1653.0, 917.0, 902.0, 889.0, 874.0]
     intensities = np.full_like(wavenumbers, 0.08, dtype=float)
     for idx, center in enumerate(centers):
-        intensities += (0.42 - idx * 0.015) * np.exp(
-            -0.5 * ((wavenumbers - center) / 10.5) ** 2
-        )
+        intensities += (0.42 - idx * 0.015) * np.exp(-0.5 * ((wavenumbers - center) / 10.5) ** 2)
     spectrum = Spectrum(wavenumbers=wavenumbers, intensities=intensities, title="Crowded")
     peaks = [
         Peak(
@@ -889,7 +887,7 @@ def test_main_window_save_and_open_project_restores_metadata_and_vibrations(qtbo
     window._project = project
     window._peak_table.set_peaks(project.peaks)
     window._metadata_panel._title_edit.setText("Edited Title")
-    window._metadata_panel._sample_edit.setText("Sample A")
+    window._metadata_panel._file_edit.setText("File A")
     window._metadata_panel._operator_edit.setText("Analyst X")
 
     project_path = tmp_path / "restored_project.irproj"
@@ -919,10 +917,10 @@ def test_main_window_save_and_open_project_restores_metadata_and_vibrations(qtbo
     assert loaded_peak.label_offset_y == pytest.approx(-0.2)
     assert window._peak_table._table.item(0, 3).text() == "ν(C=O) / custom note"
     assert window._metadata_panel._title_edit.text() == "Edited Title"
-    assert window._metadata_panel._sample_edit.text() == "Sample A"
+    assert window._metadata_panel._file_edit.text() == "File A"
     assert window._metadata_panel._operator_edit.text() == "Analyst X"
     assert window._project.metadata.title == "Edited Title"
-    assert window._project.metadata.sample_name == "Sample A"
+    assert window._project.metadata.file_name == "File A"
     assert window._project.metadata.operator == "Analyst X"
 
 
@@ -1046,9 +1044,7 @@ def test_main_window_export_pdf_uses_selected_report_options(qtbot, tmp_path):
     builder.build_with_options.assert_called_once_with(window._project, output_path, options)
 
 
-def test_main_window_export_pdf_passes_view_ranges_but_not_diagnostic_regions(
-    qtbot, tmp_path
-):
+def test_main_window_export_pdf_passes_view_ranges_but_not_diagnostic_regions(qtbot, tmp_path):
     """PDF export should use the current viewer ranges but omit functional-group overlays."""
     from unittest.mock import MagicMock, patch
 
@@ -1061,7 +1057,9 @@ def test_main_window_export_pdf_passes_view_ranges_but_not_diagnostic_regions(
     window = MainWindow(db=_make_mock_db(), settings=_make_mock_settings())
     qtbot.addWidget(window)
     spectrum = _make_spectrum()
-    window._project = Project(name="Test", spectrum=spectrum, peaks=[Peak(position=1200.0, intensity=0.5)])
+    window._project = Project(
+        name="Test", spectrum=spectrum, peaks=[Peak(position=1200.0, intensity=0.5)]
+    )
     window._spectrum_widget.set_spectrum(spectrum)
     window._spectrum_widget.set_peaks(window._project.peaks)
     window._spectrum_widget._plot_widget.setXRange(900.0, 1800.0, padding=0.0)
