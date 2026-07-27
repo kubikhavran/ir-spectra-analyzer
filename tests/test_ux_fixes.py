@@ -657,3 +657,41 @@ def test_apply_assignments_no_saved_project_is_graceful(qtbot, tmp_path, monkeyp
     # no matching .irproj → must not raise, must not assign
     window._on_apply_assignments_from_match(SimpleNamespace(name="Missing", ref_id=1))
     assert not window._project.peaks[0].vibration_labels
+
+
+def test_match_results_flag_candidates_with_saved_projects(qtbot, tmp_path):
+    from app.reference_library_service import ReferenceSearchOutcome
+    from core.project import Project
+    from matching.search_engine import MatchResult
+    from storage.project_serializer import ProjectSerializer
+    from storage.settings import Settings
+    from ui.main_window import MainWindow
+
+    annot = tmp_path / "annotated"
+    annot.mkdir()
+    ProjectSerializer().save(
+        Project(name="SampleX", spectrum=_make_spectrum()), str(annot / "SampleX.irproj")
+    )
+
+    db = MagicMock()
+    db.get_vibration_presets.return_value = []
+    window = MainWindow(db=db, settings=Settings(tmp_path / "s.json"))
+    qtbot.addWidget(window)
+    window._settings.set("annotated_projects_folder", str(annot))
+    window._reference_library_service.get_reference_spectrum = lambda _ref_id: None
+
+    window._apply_match_spectrum_outcome(
+        ReferenceSearchOutcome(
+            results=(
+                MatchResult(ref_id=1, name="Unsaved", score=0.91),
+                MatchResult(ref_id=2, name="samplex", score=0.80),
+            ),
+            references=({"id": 1, "name": "Unsaved"}, {"id": 2, "name": "samplex"}),
+        )
+    )
+
+    panel = window._match_results_panel
+    assert panel._list.count() == 2
+    # name casing must not matter — the folder is searched case-insensitively
+    panel._saved_only_check.setChecked(True)
+    assert [r.name for r in panel._visible_results] == ["samplex"]

@@ -5,13 +5,17 @@ Zodpovědnost:
 - Zobrazení seřazených výsledků matching (name, score)
 - Signal pro výběr kandidáta (pro overlay v SpectrumWidget)
 - Signal pro import referenčního spektra z SPA souboru
+- Volitelné omezení seznamu na shody s uloženým .irproj projektem
 """
 
 from __future__ import annotations
 
+from collections.abc import Iterable
+
 from PySide6.QtCore import QSignalBlocker, Signal
 from PySide6.QtGui import QColor
 from PySide6.QtWidgets import (
+    QCheckBox,
     QHBoxLayout,
     QLabel,
     QLineEdit,
@@ -24,6 +28,8 @@ from PySide6.QtWidgets import (
 
 from matching.quality import match_quality_color, match_quality_label
 
+SAVED_PROJECT_MARKER = "\U0001f4be"  # floppy disk — match has a saved .irproj
+
 
 class MatchResultsPanel(QWidget):
     """Panel showing ranked spectral match results."""
@@ -35,7 +41,9 @@ class MatchResultsPanel(QWidget):
 
     def __init__(self, parent=None) -> None:
         super().__init__(parent)
-        self._results: list = []
+        self._results: list = []  # every result from the last search
+        self._visible_results: list = []  # results currently shown in the list
+        self._saved_project_names: set[str] = set()  # lowercased .irproj stems
         self._setup_ui()
 
     def name_filter(self) -> str:
@@ -45,9 +53,25 @@ class MatchResultsPanel(QWidget):
     def selected_result(self):
         """Return the currently selected MatchResult, or None."""
         row = self._list.currentRow()
-        if 0 <= row < len(self._results):
-            return self._results[row]
+        if 0 <= row < len(self._visible_results):
+            return self._visible_results[row]
         return None
+
+    def set_saved_project_names(self, names: Iterable[str]) -> None:
+        """Tell the panel which match names have a saved .irproj project.
+
+        Names are compared case-insensitively, the same way the annotated
+        projects folder is searched when assignments are applied.
+        """
+        new_names = {str(name).strip().lower() for name in names if str(name).strip()}
+        if new_names == self._saved_project_names:
+            return
+        self._saved_project_names = new_names
+        self._rebuild_list()
+
+    def has_saved_project(self, result) -> bool:
+        """Return True when a saved .irproj exists for this match's name."""
+        return str(getattr(result, "name", "")).strip().lower() in self._saved_project_names
 
     def _setup_ui(self) -> None:
         layout = QVBoxLayout(self)
@@ -80,6 +104,17 @@ class MatchResultsPanel(QWidget):
         filter_row.addWidget(self._name_filter_edit)
         layout.addLayout(filter_row)
 
+        # Assignments can only be copied from a match that also exists as a saved
+        # .irproj, so allow hiding everything else instead of hunting through the
+        # full ranked list.
+        self._saved_only_check = QCheckBox("Only matches with a saved project (.irproj)")
+        self._saved_only_check.setToolTip(
+            "Show only matches that have a saved .irproj in the annotated projects "
+            "folder — those are the ones you can apply assignments from"
+        )
+        self._saved_only_check.toggled.connect(self._on_saved_only_toggled)
+        layout.addWidget(self._saved_only_check)
+
         self._list = QListWidget()
         self._list.currentRowChanged.connect(self._on_row_changed)
         layout.addWidget(self._list)
@@ -102,29 +137,17 @@ class MatchResultsPanel(QWidget):
             results: List of MatchResult objects sorted by score descending.
         """
         self._results = results
-        self._list.clear()
-        if not results:
-            self._status_label.setText("No results")
-            self._apply_btn.setEnabled(False)
-            return
-        self._status_label.setText(f"{len(results)} candidates")
-        self._apply_btn.setEnabled(True)
-        for result in results:
-            score_pct = result.score * 100
-            quality = match_quality_label(result.score)
-            text = f"{result.name}  —  {score_pct:.1f}%  ({quality})"
-            item = QListWidgetItem(text)
-            item.setData(256, result)  # store in UserRole
-            item.setForeground(QColor(match_quality_color(result.score)))
-            self._list.addItem(item)
-        blocker = QSignalBlocker(self._list)
-        self._list.setCurrentRow(0)
-        del blocker
-        self.candidate_selected.emit(results[0])
+        self._rebuild_list()
 
     def select_result_by_ref_id(self, ref_id: int) -> bool:
         """Select one result by database ID and emit it for overlay refresh."""
-        for row, result in enumerate(self._results):
+        if not any(int(result.ref_id) == int(ref_id) for result in self._results):
+            return False
+        if not any(int(result.ref_id) == int(ref_id) for result in self._visible_results):
+            # The target is hidden by the saved-project filter; drop the filter
+            # rather than silently ignoring the request.
+            self._saved_only_check.setChecked(False)
+        for row, result in enumerate(self._visible_results):
             if int(result.ref_id) != int(ref_id):
                 continue
             if self._list.currentRow() == row:
@@ -134,11 +157,73 @@ class MatchResultsPanel(QWidget):
             return True
         return False
 
+    def _rebuild_list(self) -> None:
+        """Repopulate the list from the cached results and the current filter."""
+        previous = self.selected_result()
+        saved_only = self._saved_only_check.isChecked()
+        self._visible_results = [
+            result for result in self._results if not saved_only or self.has_saved_project(result)
+        ]
+
+        blocker = QSignalBlocker(self._list)
+        self._list.clear()
+        for result in self._visible_results:
+            score_pct = result.score * 100
+            quality = match_quality_label(result.score)
+            saved = self.has_saved_project(result)
+            marker = f"{SAVED_PROJECT_MARKER} " if saved and not saved_only else ""
+            item = QListWidgetItem(f"{marker}{result.name}  —  {score_pct:.1f}%  ({quality})")
+            item.setData(256, result)  # store in UserRole
+            item.setForeground(QColor(match_quality_color(result.score)))
+            if saved:
+                item.setToolTip("Saved .irproj found — assignments can be applied from this match")
+            self._list.addItem(item)
+
+        row = self._row_for_result(previous)
+        self._list.setCurrentRow(row)
+        del blocker
+
+        self._update_status_label()
+        self._on_row_changed(row)
+
+    def _row_for_result(self, result) -> int:
+        """Return the row of a previously selected result, else the first row."""
+        if result is not None:
+            for row, candidate in enumerate(self._visible_results):
+                if int(candidate.ref_id) == int(result.ref_id):
+                    return row
+        return 0 if self._visible_results else -1
+
+    def _update_status_label(self) -> None:
+        """Describe how many candidates are shown and how many are applicable."""
+        if not self._results:
+            self._status_label.setText("No results")
+            return
+        n_saved = sum(1 for result in self._results if self.has_saved_project(result))
+        if not self._saved_only_check.isChecked():
+            self._status_label.setText(f"{len(self._results)} candidates ({n_saved} saved)")
+        elif n_saved:
+            self._status_label.setText(f"{n_saved} of {len(self._results)} candidates saved")
+        elif self._saved_project_names:
+            self._status_label.setText(f"No saved project among {len(self._results)} candidates")
+        else:
+            self._status_label.setText("No annotated projects folder set")
+
+    def _on_saved_only_toggled(self, _checked: bool) -> None:
+        self._rebuild_list()
+
     def _on_row_changed(self, row: int) -> None:
-        has_selection = 0 <= row < len(self._results)
-        self._apply_btn.setEnabled(has_selection)
+        has_selection = 0 <= row < len(self._visible_results)
+        # With no folder configured nothing is known to be saved; keep the button
+        # live so clicking it still explains how to point at the folder.
+        self._apply_btn.setEnabled(
+            has_selection
+            and (
+                not self._saved_project_names or self.has_saved_project(self._visible_results[row])
+            )
+        )
         if has_selection:
-            self.candidate_selected.emit(self._results[row])
+            self.candidate_selected.emit(self._visible_results[row])
 
     def _on_apply_clicked(self) -> None:
         result = self.selected_result()

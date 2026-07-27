@@ -582,6 +582,9 @@ class MainWindow(QMainWindow):
             self._remember_save_dir(path)
             self.statusBar().showMessage(f"Project saved: {Path(path).name}")
             self._add_to_recent(path)
+            # A project saved into the annotated folder becomes applicable to
+            # future matches straight away.
+            self._refresh_saved_project_names()
         except Exception as e:  # noqa: BLE001
             QMessageBox.critical(self, "Save Error", f"Failed to save project:\n{e}")
 
@@ -1169,6 +1172,7 @@ class MainWindow(QMainWindow):
 
         self._last_search_refs = list(outcome.references)
         self._current_match_results = list(outcome.results)
+        self._refresh_saved_project_names()
         self._match_results_panel.set_results(list(outcome.results))
         self._refresh_consensus_analysis()
         if outcome.imported_summary is not None and outcome.imported_summary.imported > 0:
@@ -1189,6 +1193,25 @@ class MainWindow(QMainWindow):
                 return candidate
         return None
 
+    def _saved_project_paths(self) -> dict[str, Path]:
+        """Map lowercased project name to its .irproj in the annotated projects folder."""
+        folder = self._annotated_projects_dir()
+        if folder is None:
+            return {}
+        try:
+            entries = sorted(folder.iterdir())
+        except OSError:
+            return {}
+        return {
+            entry.stem.lower(): entry
+            for entry in entries
+            if entry.is_file() and entry.suffix.lower() == ".irproj"
+        }
+
+    def _refresh_saved_project_names(self) -> None:
+        """Tell the match panel which candidates have a saved project on disk."""
+        self._match_results_panel.set_saved_project_names(self._saved_project_paths().keys())
+
     def _on_set_annotated_projects_folder(self) -> None:
         """Let the user pick the folder that holds previously analysed .irproj files."""
         start = self._annotated_projects_dir()
@@ -1201,6 +1224,7 @@ class MainWindow(QMainWindow):
             return
         self._settings.set("annotated_projects_folder", chosen)
         self._settings.save()
+        self._refresh_saved_project_names()
         self.statusBar().showMessage(f"Annotated projects folder: {Path(chosen).name}")
 
     def _on_apply_assignments_from_match(self, result) -> None:
@@ -1223,8 +1247,9 @@ class MainWindow(QMainWindow):
             )
             return
 
-        candidates = [folder / f"{result.name}.irproj", folder / f"{result.name}.IRPROJ"]
-        project_path = next((p for p in candidates if p.is_file()), None)
+        saved_projects = self._saved_project_paths()
+        self._match_results_panel.set_saved_project_names(saved_projects.keys())
+        project_path = saved_projects.get(str(result.name).strip().lower())
         if project_path is None:
             QMessageBox.information(
                 self,

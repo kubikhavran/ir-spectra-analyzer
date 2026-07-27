@@ -65,6 +65,82 @@ def test_match_results_panel_candidate_selected_signal(qtbot):
     assert received[0].name == "Benzene"
 
 
+def test_match_results_panel_saved_only_filter(qtbot):
+    from ui.match_results_panel import MatchResultsPanel
+
+    panel = MatchResultsPanel()
+    qtbot.addWidget(panel)
+
+    results = [
+        MatchResult(ref_id=1, name="Ethanol", score=0.95),
+        MatchResult(ref_id=2, name="Acetone", score=0.72),
+        MatchResult(ref_id=3, name="Benzene", score=0.61),
+    ]
+    panel.set_saved_project_names(["ethanol", "benzene"])
+    panel.set_results(results)
+
+    # unfiltered: everything is listed, saved ones carry a marker
+    assert panel._list.count() == 3
+    assert panel._list.item(0).text().startswith("\U0001f4be Ethanol")
+    assert panel._list.item(1).text().startswith("Acetone")
+    assert "3 candidates (2 saved)" in panel._status_label.text()
+
+    panel._saved_only_check.setChecked(True)
+    assert panel._list.count() == 2
+    assert [r.name for r in panel._visible_results] == ["Ethanol", "Benzene"]
+    assert panel.selected_result().name == "Ethanol"
+    assert "2 of 3 candidates saved" in panel._status_label.text()
+
+    panel._list.setCurrentRow(1)
+    assert panel.selected_result().name == "Benzene"
+
+    panel._saved_only_check.setChecked(False)
+    assert panel._list.count() == 3
+    # selection survives the filter toggle
+    assert panel.selected_result().name == "Benzene"
+
+
+def test_match_results_panel_apply_button_requires_saved_project(qtbot):
+    from ui.match_results_panel import MatchResultsPanel
+
+    panel = MatchResultsPanel()
+    qtbot.addWidget(panel)
+    results = [
+        MatchResult(ref_id=1, name="Ethanol", score=0.95),
+        MatchResult(ref_id=2, name="Acetone", score=0.72),
+    ]
+
+    # no folder configured yet — button stays live so the hint can be shown
+    panel.set_results(results)
+    assert panel._apply_btn.isEnabled()
+
+    panel.set_saved_project_names(["acetone"])
+    assert not panel._apply_btn.isEnabled()
+    panel._list.setCurrentRow(1)
+    assert panel._apply_btn.isEnabled()
+
+
+def test_match_results_panel_select_by_ref_id_drops_saved_filter(qtbot):
+    from ui.match_results_panel import MatchResultsPanel
+
+    panel = MatchResultsPanel()
+    qtbot.addWidget(panel)
+    panel.set_saved_project_names(["ethanol"])
+    panel.set_results(
+        [
+            MatchResult(ref_id=1, name="Ethanol", score=0.95),
+            MatchResult(ref_id=2, name="Acetone", score=0.72),
+        ]
+    )
+    panel._saved_only_check.setChecked(True)
+    assert panel._list.count() == 1
+
+    assert panel.select_result_by_ref_id(2)
+    assert not panel._saved_only_check.isChecked()
+    assert panel.selected_result().name == "Acetone"
+    assert not panel.select_result_by_ref_id(99)
+
+
 def test_match_quality_label_thresholds():
     from matching.quality import match_quality_label
 
