@@ -26,6 +26,9 @@ from core.peak import Peak
 
 _HEADERS = ["Position (cm⁻¹)", "Intensity", "Label", "Vibration"]
 
+# How far a non-identical Peak may sit from a table row to still select it (cm⁻¹).
+_SELECT_MATCH_TOLERANCE = 1.0
+
 
 class _CopyableTable(QTableWidget):
     """QTableWidget that copies selected rows as TSV on Ctrl+C."""
@@ -147,16 +150,31 @@ class PeakTableWidget(QWidget):
         return None
 
     def select_peak(self, peak: Peak) -> None:
-        """Programmatically select the row matching the given peak."""
-        for row in range(self._table.rowCount()):
-            item = self._table.item(row, 0)
-            if item is None:
-                continue
-            try:
-                pos = float(item.text())
-            except ValueError:
-                continue
-            if abs(pos - peak.position) < 0.1:
-                self._table.selectRow(row)
-                self._table.scrollToItem(item)
+        """Programmatically select the row holding the given peak.
+
+        Matching is by identity: the Position column is rounded for display, so
+        comparing it against a real position (3041.5 shown as "3042") missed
+        every peak that does not sit near a whole wavenumber. Callers that pass
+        a different Peak instance — e.g. one reloaded from a saved project —
+        fall back to the closest position.
+        """
+        for row, candidate in enumerate(self._peaks):
+            if candidate is peak:
+                self._select_row(row)
                 return
+
+        nearest_row: int | None = None
+        nearest_distance = float("inf")
+        for row, candidate in enumerate(self._peaks):
+            distance = abs(candidate.position - peak.position)
+            if distance < nearest_distance:
+                nearest_row, nearest_distance = row, distance
+        if nearest_row is not None and nearest_distance <= _SELECT_MATCH_TOLERANCE:
+            self._select_row(nearest_row)
+
+    def _select_row(self, row: int) -> None:
+        """Select one row and scroll it into view."""
+        self._table.selectRow(row)
+        item = self._table.item(row, 0)
+        if item is not None:
+            self._table.scrollToItem(item)

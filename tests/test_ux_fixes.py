@@ -796,3 +796,54 @@ def test_overlay_bar_style_does_not_repaint_its_controls(qtbot):
             "unscoped QWidget rule also paints the child buttons and slider"
         )
         assert f"#{bar.objectName()}" in style
+
+
+# ── Clicking an on-plot peak label selects its table row ──────────────────────
+
+
+def test_clicking_peak_label_selects_fractional_position_peaks(qtbot):
+    """The Position column is rounded, so identity — not its text — must match.
+
+    Regression: OMNIC labels carry true positions like 3041.5, displayed as
+    "3042". Comparing the displayed value against the position missed every peak
+    that does not sit near a whole wavenumber, so clicking a label in the plot
+    left the peak table on its previous row.
+    """
+    from core.project import Project
+
+    window = _make_window(qtbot)
+    spectrum = _make_spectrum()
+    peaks = [
+        Peak(position=3041.519, intensity=0.8),
+        Peak(position=1712.634, intensity=0.6),
+        Peak(position=510.05, intensity=0.4),
+    ]
+    window._project = Project(name="T", spectrum=spectrum, peaks=peaks)
+    window._spectrum_widget.set_spectrum(spectrum)
+    window._refresh_peak_views()
+
+    for peak in peaks:
+        window._peak_table._table.clearSelection()
+        window._peak_table._table.setCurrentCell(-1, -1)
+        window._spectrum_widget._on_label_clicked(peak.position)
+        assert window._peak_table.selected_peak() is peak, (
+            f"clicking the label at {peak.position} cm-1 did not select its row"
+        )
+
+
+def test_select_peak_falls_back_to_nearest_position(qtbot):
+    """A Peak instance from elsewhere (e.g. a reloaded project) still selects."""
+    from ui.peak_table_widget import PeakTableWidget
+
+    table = PeakTableWidget()
+    qtbot.addWidget(table)
+    peaks = [Peak(position=3041.519, intensity=0.8), Peak(position=1712.634, intensity=0.6)]
+    table.set_peaks(peaks)
+
+    table.select_peak(Peak(position=1712.9, intensity=0.6))
+    assert table.selected_peak() is peaks[1]
+
+    table._table.clearSelection()
+    table._table.setCurrentCell(-1, -1)
+    table.select_peak(Peak(position=900.0, intensity=0.6))  # nothing within tolerance
+    assert table.selected_peak() is None
