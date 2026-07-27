@@ -847,3 +847,90 @@ def test_select_peak_falls_back_to_nearest_position(qtbot):
     table._table.setCurrentCell(-1, -1)
     table.select_peak(Peak(position=900.0, intensity=0.6))  # nothing within tolerance
     assert table.selected_peak() is None
+
+
+# ── Saved projects feed the reference library ─────────────────────────────────
+
+
+def _measurement_window(qtbot, tmp_path):
+    """MainWindow whose library folder is separate from where measurements live."""
+    import shutil
+
+    from storage.database import Database
+    from storage.settings import Settings
+    from ui.main_window import MainWindow
+
+    lib = tmp_path / "reference library"
+    lib.mkdir()
+    shutil.copy("tests/fixtures/reference library_1/FER60-SE.SPA", lib)
+    work = tmp_path / "measurements"
+    work.mkdir()
+    for name in ("PAR1636-SE.SPA", "PAR1637-SE.SPA"):
+        shutil.copy(f"tests/fixtures/reference library_1/{name}", work)
+
+    db = Database(":memory:")
+    db.initialize()
+    window = MainWindow(db=db, settings=Settings(tmp_path / "settings.json"))
+    qtbot.addWidget(window)
+    window._reference_library_service.set_selected_library_folder(lib)
+    window._settings.set("annotated_projects_folder", str(work))
+    return window, work
+
+
+def test_saving_a_project_makes_the_next_sample_match_it(qtbot, tmp_path):
+    """The measured series lives outside the library folder, yet must be matchable.
+
+    Saving the first analysed spectrum registers it as a reference, so the second
+    sample of the same series finds it — no copying into the library, no sync.
+    """
+    from unittest.mock import patch
+
+    window, work = _measurement_window(qtbot, tmp_path)
+
+    window._load_spectrum(str(work / "PAR1637-SE.SPA"))
+    window._project.smiles = "CCOC(C)=O"
+    saved = work / "PAR1637-SE.irproj"
+    with patch("ui.main_window.QFileDialog.getSaveFileName", return_value=(str(saved), "")):
+        window._on_save_project()
+    assert "reference library" in window.statusBar().currentMessage()
+
+    window._load_spectrum(str(work / "PAR1636-SE.SPA"))
+    window._on_match_spectrum()
+    assert "PAR1637-SE" in [result.name for result in window._current_match_results]
+
+    # the match also carries its saved project, so assignments can be applied
+    match = next(r for r in window._current_match_results if r.name == "PAR1637-SE")
+    assert window._match_results_panel.has_saved_project(match)
+    window._on_apply_assignments_from_match(match)
+    assert window._project.smiles == "CCOC(C)=O"
+
+
+def test_auto_registration_can_be_turned_off(qtbot, tmp_path):
+    from unittest.mock import patch
+
+    window, work = _measurement_window(qtbot, tmp_path)
+    window._auto_register_action.setChecked(False)
+
+    window._load_spectrum(str(work / "PAR1637-SE.SPA"))
+    with patch(
+        "ui.main_window.QFileDialog.getSaveFileName",
+        return_value=(str(work / "PAR1637-SE.irproj"), ""),
+    ):
+        window._on_save_project()
+
+    window._load_spectrum(str(work / "PAR1636-SE.SPA"))
+    window._on_match_spectrum()
+    assert "PAR1637-SE" not in [r.name for r in window._current_match_results]
+
+
+def test_add_current_spectrum_to_library_action(qtbot, tmp_path):
+    """The manual action covers spectra the analyst does not save as a project."""
+    window, work = _measurement_window(qtbot, tmp_path)
+    window._load_spectrum(str(work / "PAR1637-SE.SPA"))
+
+    window._on_add_current_spectrum_to_library()
+    assert "PAR1637-SE" in window.statusBar().currentMessage()
+
+    window._load_spectrum(str(work / "PAR1636-SE.SPA"))
+    window._on_match_spectrum()
+    assert "PAR1637-SE" in [r.name for r in window._current_match_results]

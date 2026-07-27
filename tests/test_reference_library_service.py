@@ -343,3 +343,112 @@ def test_search_spectrum_uses_fine_rerank_for_close_shortlist_candidates(db, tmp
 
     assert [result.name for result in outcome.results] == ["target", "distractor"]
     assert outcome.results[0].score > outcome.results[1].score
+
+
+# ── Analysed projects as searchable references ────────────────────────────────
+
+
+def _register_fixture(svc, db, name, spa_name, source_path):
+    from pathlib import Path
+
+    from file_io.spa_reader import SPAReader
+
+    spectrum = SPAReader().read(Path("tests/fixtures/reference library_1") / spa_name)
+    return svc.register_project_spectrum(name=name, spectrum=spectrum, source_path=source_path)
+
+
+def _service_with_library(tmp_path):
+    """Service whose library folder holds one file, plus an empty work folder."""
+    import shutil
+
+    from app.reference_library_service import ReferenceLibraryService
+    from storage.database import Database
+
+    lib = tmp_path / "reference library"
+    lib.mkdir()
+    work = tmp_path / "measurements"
+    work.mkdir()
+    shutil.copy("tests/fixtures/reference library_1/FER60-SE.SPA", lib)
+    db = Database(":memory:")
+    db.initialize()
+    svc = ReferenceLibraryService(db, project_root=tmp_path)
+    svc.set_selected_library_folder(lib)
+    svc.import_project_library()
+    return svc, db, lib, work
+
+
+def test_registered_project_is_matchable_without_copying_into_the_library(tmp_path):
+    """An analysed spectrum saved outside the library folder must still match.
+
+    The analyst's measurements live in their own folder, and Match Spectrum scopes
+    the search to the selected library folder — so a project reference is tagged
+    with a non-local provider to stay in scope.
+    """
+    from pathlib import Path
+
+    from file_io.spa_reader import SPAReader
+
+    svc, db, _lib, work = _service_with_library(tmp_path)
+    registration = _register_fixture(
+        svc, db, "PAR1637-SE", "PAR1637-SE.SPA", work / "PAR1637-SE.irproj"
+    )
+    assert registration.status == "added"
+
+    query = SPAReader().read(Path("tests/fixtures/reference library_1/PAR1636-SE.SPA"))
+    names = [result.name for result in svc.search_spectrum(query, top_n=10).results]
+    assert "PAR1637-SE" in names
+    # ...and the name filter used to scope big libraries finds it too
+    filtered = svc.search_spectrum(query, top_n=10, name_filter="PAR1637")
+    assert [r.name for r in filtered.results] == ["PAR1637-SE"]
+
+
+def test_re_saving_a_project_updates_its_reference_instead_of_duplicating(tmp_path):
+    svc, db, _lib, work = _service_with_library(tmp_path)
+    first = _register_fixture(svc, db, "PAR1637-SE", "PAR1637-SE.SPA", work / "PAR1637-SE.irproj")
+    second = _register_fixture(svc, db, "PAR1637-SE", "PAR1637-SE.SPA", work / "PAR1637-SE.irproj")
+
+    assert (first.status, second.status) == ("added", "updated")
+    assert first.ref_id == second.ref_id
+    assert len(db.get_reference_identity_rows()) == 2  # library file + this project
+
+
+def test_registering_a_spectrum_already_in_the_library_is_skipped(tmp_path):
+    """No second hit list entry for something the library already covers."""
+    svc, db, _lib, work = _service_with_library(tmp_path)
+    registration = _register_fixture(svc, db, "FER60-SE", "FER60-SE.SPA", work / "FER60-SE.irproj")
+    assert registration.status == "skipped"
+    assert "library file" in registration.reason
+    assert len(db.get_reference_identity_rows()) == 1
+
+
+def test_project_references_survive_switching_the_library_folder(tmp_path):
+    """Own analysed spectra are not part of one purchased library."""
+    from pathlib import Path
+
+    from file_io.spa_reader import SPAReader
+
+    svc, db, _lib, work = _service_with_library(tmp_path)
+    _register_fixture(svc, db, "PAR1637-SE", "PAR1637-SE.SPA", work / "PAR1637-SE.irproj")
+
+    other = tmp_path / "other library"
+    other.mkdir()
+    svc.set_selected_library_folder(other)
+
+    query = SPAReader().read(Path("tests/fixtures/reference library_1/PAR1636-SE.SPA"))
+    assert [r.name for r in svc.search_spectrum(query, top_n=10).results] == ["PAR1637-SE"]
+
+
+def test_register_project_spectrum_rejects_an_empty_name(tmp_path):
+    """A project saved with no usable name must not create a nameless reference."""
+    import numpy as np
+
+    from core.spectrum import Spectrum
+
+    svc, db, _lib, work = _service_with_library(tmp_path)
+    spectrum = Spectrum(wavenumbers=np.linspace(400, 4000, 10), intensities=np.ones(10))
+
+    registration = svc.register_project_spectrum(
+        name="   ", spectrum=spectrum, source_path=work / "y.irproj"
+    )
+    assert registration.status == "skipped"
+    assert len(db.get_reference_identity_rows()) == 1

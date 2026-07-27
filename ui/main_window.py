@@ -127,6 +127,22 @@ class MainWindow(QMainWindow):
             "Folder of previously analysed .irproj files used by 'Apply assignments from match'"
         )
         annotated_folder_action.triggered.connect(self._on_set_annotated_projects_folder)
+        add_reference_action = database_menu.addAction("Add Current Spectrum to Reference Library")
+        add_reference_action.setToolTip(
+            "Make the loaded spectrum searchable by Match Spectrum without copying "
+            "its file into the reference library folder"
+        )
+        add_reference_action.triggered.connect(self._on_add_current_spectrum_to_library)
+        self._auto_register_action = database_menu.addAction(
+            "Auto-add Saved Projects to Reference Library"
+        )
+        self._auto_register_action.setCheckable(True)
+        self._auto_register_action.setChecked(self._auto_register_saved_projects())
+        self._auto_register_action.setToolTip(
+            "On Save Project, also store the spectrum in the reference library so the "
+            "next similar sample matches it"
+        )
+        self._auto_register_action.toggled.connect(self._on_auto_register_toggled)
         batch_import_action = database_menu.addAction("Batch Import References...")
         batch_import_action.triggered.connect(self._on_batch_import_references)
         batch_export_action = database_menu.addAction("Batch Export PDF Reports...")
@@ -585,6 +601,7 @@ class MainWindow(QMainWindow):
             # A project saved into the annotated folder becomes applicable to
             # future matches straight away.
             self._refresh_saved_project_names()
+            self._register_saved_project_as_reference(path)
         except Exception as e:  # noqa: BLE001
             QMessageBox.critical(self, "Save Error", f"Failed to save project:\n{e}")
 
@@ -1192,6 +1209,88 @@ class MainWindow(QMainWindow):
             if candidate.is_dir():
                 return candidate
         return None
+
+    def _auto_register_saved_projects(self) -> bool:
+        """Whether Save Project also registers the spectrum as a reference."""
+        stored = self._settings.get("auto_register_saved_projects")
+        return True if stored is None else bool(stored)
+
+    def _on_auto_register_toggled(self, enabled: bool) -> None:
+        """Persist the auto-registration preference."""
+        self._settings.set("auto_register_saved_projects", bool(enabled))
+        self._settings.save()
+        self.statusBar().showMessage(
+            "Saved projects are added to the reference library"
+            if enabled
+            else "Saved projects are no longer added to the reference library"
+        )
+
+    def _register_saved_project_as_reference(self, project_path: str) -> None:
+        """Store a just-saved project's spectrum in the searchable reference library.
+
+        The analyst's own measurements usually live outside the reference-library
+        folder, so without this a freshly analysed spectrum never turns up in
+        Match Spectrum for the next sample of the same series.
+        """
+        if not self._auto_register_saved_projects():
+            return
+        if self._project is None or self._project.spectrum is None:
+            return
+        registration = self._register_spectrum_as_reference(
+            name=Path(project_path).stem,
+            source_path=project_path,
+        )
+        if registration is None:
+            return
+        if registration.status == "added":
+            self.statusBar().showMessage(
+                f"Project saved: {Path(project_path).name} — also added to the "
+                f'reference library as "{registration.name}"'
+            )
+        elif registration.status == "updated":
+            self.statusBar().showMessage(
+                f"Project saved: {Path(project_path).name} — reference "
+                f'"{registration.name}" updated'
+            )
+
+    def _register_spectrum_as_reference(self, *, name: str, source_path: str):
+        """Register the current project's raw spectrum as a reference, or None on error."""
+        if self._project is None or self._project.spectrum is None:
+            return None
+        metadata = getattr(self._project, "metadata", None)
+        description = (getattr(metadata, "title", "") or "").strip()
+        try:
+            # The raw spectrum is stored on purpose: library files are raw too,
+            # so a later measurement of the same substance is compared like-to-like.
+            return self._reference_library_service.register_project_spectrum(
+                name=name,
+                spectrum=self._project.spectrum,
+                source_path=source_path,
+                description=description,
+            )
+        except Exception as exc:  # noqa: BLE001 — a failed reference must not lose the project
+            self.statusBar().showMessage(f"Could not add to reference library: {exc}")
+            return None
+
+    def _on_add_current_spectrum_to_library(self) -> None:
+        """Database → Add Current Spectrum to Reference Library."""
+        if self._project is None or self._project.spectrum is None:
+            self.statusBar().showMessage("No spectrum loaded")
+            return
+        name = self._default_export_basename()
+        source = self._current_project_path or (self._project.spectrum.source_path or name)
+        registration = self._register_spectrum_as_reference(name=name, source_path=str(source))
+        if registration is None:
+            return
+        if registration.status == "skipped":
+            QMessageBox.information(
+                self,
+                "Reference Library",
+                f'"{registration.name}" was not added — {registration.reason}.',
+            )
+            return
+        verb = "Added" if registration.status == "added" else "Updated"
+        self.statusBar().showMessage(f'{verb} reference "{registration.name}"')
 
     def _saved_project_paths(self) -> dict[str, Path]:
         """Map lowercased project name to its .irproj in the annotated projects folder."""

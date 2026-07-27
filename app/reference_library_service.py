@@ -18,6 +18,23 @@ from storage.database import Database
 from storage.settings import Settings
 from utils.file_utils import normalize_source_path
 
+# Provider tag for references that come from an analysed project rather than
+# from a file inside the selected library folder. Search scoping treats any
+# non-"local" provider as always in scope (same mechanism as web references),
+# so an analysed spectrum stays matchable no matter which library folder is
+# selected and without copying the source file into it.
+PROJECT_SOURCE_PROVIDER = "project"
+
+
+@dataclass(frozen=True)
+class ProjectReferenceRegistration:
+    """Outcome of registering an analysed project as a searchable reference."""
+
+    name: str
+    status: str  # "added" | "updated" | "skipped"
+    ref_id: int | None = None
+    reason: str = ""
+
 
 @dataclass(frozen=True)
 class ReferenceSearchOutcome:
@@ -239,6 +256,99 @@ class ReferenceLibraryService:
             imported_summary=imported_summary,
             library_folder=library_folder,
         )
+
+    def register_project_spectrum(
+        self,
+        *,
+        name: str,
+        spectrum: Spectrum,
+        source_path: Path | str,
+        description: str = "",
+    ) -> ProjectReferenceRegistration:
+        """Make an analysed project's spectrum searchable by Match Spectrum.
+
+        The spectrum is stored in the reference library under ``name`` — use the
+        saved project's file stem, so "Apply assignments from match" finds the
+        matching ``.irproj`` afterwards. Re-registering the same project updates
+        its row instead of adding a second one.
+
+        A spectrum already present as a plain library file is left alone: it is
+        matchable already, and a second row would only duplicate the hit list.
+        """
+        clean_name = name.strip()
+        if not clean_name:
+            return ProjectReferenceRegistration(
+                name=name, status="skipped", reason="empty reference name"
+            )
+
+        normalized_source = normalize_source_path(str(source_path))
+        rows = self._db.get_reference_identity_rows()
+        same_source = next(
+            (row for row in rows if str(row.get("source_norm", "")) == normalized_source),
+            None,
+        )
+        same_name = next(
+            (
+                row
+                for row in rows
+                if str(row.get("name", "")).strip().casefold() == clean_name.casefold()
+            ),
+            None,
+        )
+        existing = same_source or same_name
+        if (
+            existing is not None
+            and existing is not same_source
+            and str(existing.get("source_provider") or "local") == "local"
+        ):
+            return ProjectReferenceRegistration(
+                name=clean_name,
+                status="skipped",
+                ref_id=int(existing["id"]),
+                reason="already in the reference library as a library file",
+            )
+
+        y_unit = spectrum.y_unit.value
+        if existing is None:
+            ref_id = self._db.add_reference_spectrum(
+                name=clean_name,
+                wavenumbers=spectrum.wavenumbers,
+                intensities=spectrum.intensities,
+                description=description,
+                source=str(source_path),
+                y_unit=y_unit,
+                source_provider=PROJECT_SOURCE_PROVIDER,
+                commit=False,
+            )
+            status = "added"
+        else:
+            ref_id = int(existing["id"])
+            self._db.update_reference_spectrum(
+                ref_id,
+                name=clean_name,
+                wavenumbers=spectrum.wavenumbers,
+                intensities=spectrum.intensities,
+                description=description,
+                source=str(source_path),
+                y_unit=y_unit,
+                source_provider=PROJECT_SOURCE_PROVIDER,
+                commit=False,
+            )
+            status = "updated"
+
+        self._db.upsert_reference_feature(
+            ref_id,
+            feature_version=MATCH_FEATURE_VERSION,
+            feature_vector=compute_search_vector(
+                spectrum.wavenumbers,
+                spectrum.intensities,
+                y_unit=spectrum.y_unit,
+            ),
+            commit=False,
+        )
+        self._db.commit()
+        self.clear_search_cache()
+        return ProjectReferenceRegistration(name=clean_name, status=status, ref_id=ref_id)
 
     def clear_search_cache(self) -> None:
         """Clear cached preprocessed reference vectors."""
