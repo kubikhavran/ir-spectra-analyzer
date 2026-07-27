@@ -169,3 +169,34 @@ def test_spectrum_widget_overlay(qtbot):
 
     widget.set_overlay_spectra([])
     assert len(widget._overlay_curves) == 0
+
+
+def test_panel_shows_the_skeleton_score_and_flags_a_substituent_swap(qtbot):
+    """A modest overall score with a much better skeleton score must stand out."""
+    from ui.match_results_panel import SKELETON_MARKER, MatchResultsPanel
+
+    panel = MatchResultsPanel()
+    qtbot.addWidget(panel)
+    panel.set_results(
+        [
+            MatchResult(ref_id=1, name="Replicate", score=0.93, fingerprint_score=0.86),
+            MatchResult(ref_id=2, name="Swapped group", score=0.72, fingerprint_score=0.92),
+        ]
+    )
+
+    replicate, swapped = panel._list.item(0).text(), panel._list.item(1).text()
+    assert "93.0%" in replicate and "fp 86%" in replicate
+    assert SKELETON_MARKER not in replicate  # skeleton does not lead here
+    assert "72.0%" in swapped and "fp 92%" in swapped
+    assert SKELETON_MARKER in swapped
+
+
+def test_panel_band_difference_text_is_shown_and_cleared(qtbot):
+    from ui.match_results_panel import MatchResultsPanel
+
+    panel = MatchResultsPanel()
+    qtbot.addWidget(panel)
+    panel.set_band_difference("18 shared bands · only in sample: 2114 cm⁻¹")
+    assert "2114" in panel._difference_label.text()
+    panel.set_band_difference("")
+    assert panel._difference_label.text() == ""

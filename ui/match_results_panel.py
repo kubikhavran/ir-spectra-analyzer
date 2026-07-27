@@ -29,6 +29,9 @@ from PySide6.QtWidgets import (
 from matching.quality import match_quality_color, match_quality_label
 
 SAVED_PROJECT_MARKER = "\U0001f4be"  # floppy disk — match has a saved .irproj
+SKELETON_MARKER = "▲"  # ▲ — skeleton agrees markedly better than the whole spectrum
+# How far the skeleton score must exceed the overall score to be worth flagging.
+SKELETON_LEAD_PP = 10.0
 
 
 class MatchResultsPanel(QWidget):
@@ -68,6 +71,10 @@ class MatchResultsPanel(QWidget):
             return
         self._saved_project_names = new_names
         self._rebuild_list()
+
+    def set_band_difference(self, summary: str) -> None:
+        """Show the band-level difference against the selected reference."""
+        self._difference_label.setText(summary)
 
     def has_saved_project(self, result) -> bool:
         """Return True when a saved .irproj exists for this match's name."""
@@ -119,6 +126,16 @@ class MatchResultsPanel(QWidget):
         self._list.currentRowChanged.connect(self._on_row_changed)
         layout.addWidget(self._list)
 
+        # Which bands the sample and the selected reference do not share — the
+        # evidence behind a "same skeleton, different group" reading.
+        self._difference_label = QLabel("")
+        self._difference_label.setWordWrap(True)
+        self._difference_label.setStyleSheet("color: #444; font-size: 9pt;")
+        self._difference_label.setToolTip(
+            "Bands with no counterpart within 8 cm⁻¹ in the other spectrum, strongest first"
+        )
+        layout.addWidget(self._difference_label)
+
         # Copy peak assignments + structure from the selected match's saved
         # .irproj (looked up by name in the annotated-projects folder).
         self._apply_btn = QPushButton("Apply assignments from match")
@@ -169,14 +186,28 @@ class MatchResultsPanel(QWidget):
         self._list.clear()
         for result in self._visible_results:
             score_pct = result.score * 100
+            fingerprint_pct = float(getattr(result, "fingerprint_score", 0.0)) * 100
             quality = match_quality_label(result.score)
             saved = self.has_saved_project(result)
             marker = f"{SAVED_PROJECT_MARKER} " if saved and not saved_only else ""
-            item = QListWidgetItem(f"{marker}{result.name}  —  {score_pct:.1f}%  ({quality})")
+            # A clearly better skeleton score is the substituent-swap signature,
+            # so it is flagged even though the overall score stays modest.
+            leads = fingerprint_pct - score_pct >= SKELETON_LEAD_PP
+            skeleton = f"   {SKELETON_MARKER if leads else ''}fp {fingerprint_pct:.0f}%"
+            item = QListWidgetItem(
+                f"{marker}{result.name}  —  {score_pct:.1f}%  ({quality}){skeleton}"
+            )
             item.setData(256, result)  # store in UserRole
             item.setForeground(QColor(match_quality_color(result.score)))
+            tips = [
+                "fp = skeleton region 400–1600 cm⁻¹ only. "
+                f"{SKELETON_MARKER} marks a skeleton score at least "
+                f"{SKELETON_LEAD_PP:.0f} points above the overall one — typically the "
+                "same skeleton carrying a different substituent."
+            ]
             if saved:
-                item.setToolTip("Saved .irproj found — assignments can be applied from this match")
+                tips.append("Saved .irproj found — assignments can be applied from this match")
+            item.setToolTip("\n".join(tips))
             self._list.addItem(item)
 
         row = self._row_for_result(previous)

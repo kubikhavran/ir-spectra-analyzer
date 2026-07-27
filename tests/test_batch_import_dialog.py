@@ -244,6 +244,7 @@ def test_batch_import_dialog_passes_detect_peaks_option(qtbot, db, monkeypatch, 
     assert captured["detect_peaks"] is True
 
 
+@pytest.mark.lab_fixtures
 def test_reference_batch_import_worker_imports_real_fixture_folder(file_db):
     """The batch-import worker should populate a file-backed DB from real SPA fixtures."""
     folder = Path(__file__).resolve().parent / "fixtures" / "reference library_1"
@@ -267,6 +268,7 @@ def test_reference_batch_import_worker_imports_real_fixture_folder(file_db):
     assert len(file_db.get_reference_spectra()) == completed[0].imported
 
 
+@pytest.mark.lab_fixtures
 def test_batch_import_dialog_runs_background_import_for_file_db(qtbot, file_db):
     """File-backed DB mode should import on a worker thread and update the dialog when done."""
     folder = Path(__file__).resolve().parent / "fixtures" / "reference library_1"

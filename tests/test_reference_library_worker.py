@@ -24,6 +24,7 @@ def file_db(tmp_path):
     database.close()
 
 
+@pytest.mark.lab_fixtures
 def test_reference_library_sync_worker_imports_fixture_folder(file_db):
     fixture_root = Path(__file__).resolve().parent / "fixtures"
     folder = fixture_root / "reference library_1"
@@ -46,6 +47,7 @@ def test_reference_library_sync_worker_imports_fixture_folder(file_db):
     assert completed[0].imported == len(list(folder.glob("*.SPA")))
 
 
+@pytest.mark.lab_fixtures
 def test_reference_library_search_worker_finds_exact_fixture_match(file_db):
     fixture_root = Path(__file__).resolve().parent / "fixtures"
     folder = fixture_root / "reference library_1"

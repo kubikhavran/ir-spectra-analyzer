@@ -1424,7 +1424,7 @@ class MainWindow(QMainWindow):
             self.statusBar().showMessage("Matching spectrum against reference library…")
 
     def _on_match_candidate_selected(self, result) -> None:
-        """Show the selected reference spectrum as overlay."""
+        """Show the selected reference spectrum as overlay and its band differences."""
         from core.spectrum import Spectrum  # noqa: PLC0415
 
         ref = self._reference_library_service.get_reference_spectrum(int(result.ref_id))
@@ -1434,8 +1434,32 @@ class MainWindow(QMainWindow):
             wavenumbers=ref["wavenumbers"],
             intensities=ref["intensities"],
             title=ref["name"],
+            y_unit=self._spectral_unit_or_default(ref.get("y_unit")),
         )
         self._spectrum_widget.set_overlay_spectra([overlay])
+        self._match_results_panel.set_band_difference(self._band_difference_summary(overlay))
+
+    @staticmethod
+    def _spectral_unit_or_default(value):
+        """Return a SpectralUnit for a stored y-unit string, absorbance if unknown."""
+        from core.spectrum import SpectralUnit  # noqa: PLC0415
+
+        try:
+            return SpectralUnit(value)
+        except ValueError:
+            return SpectralUnit.ABSORBANCE
+
+    def _band_difference_summary(self, reference_spectrum) -> str:
+        """Describe which bands the current spectrum and a reference do not share."""
+        if self._project is None or self._project.spectrum is None:
+            return ""
+        from processing.band_difference import compare_bands  # noqa: PLC0415
+
+        query = self._project.corrected_spectrum or self._project.spectrum
+        try:
+            return compare_bands(query, reference_spectrum).summary()
+        except Exception:  # noqa: BLE001 — a diagnostic must never block the overlay
+            return ""
 
     def _on_functional_group_selected(self, result) -> None:
         """Highlight diagnostic regions for the selected functional group."""
@@ -1486,6 +1510,7 @@ class MainWindow(QMainWindow):
         self._last_search_refs = []
         self._current_match_results = []
         self._match_results_panel.set_results([])
+        self._match_results_panel.set_band_difference("")
         self._refresh_consensus_analysis()
 
     def _refresh_consensus_analysis(self) -> None:

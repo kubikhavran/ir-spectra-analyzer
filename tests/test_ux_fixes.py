@@ -877,6 +877,7 @@ def _measurement_window(qtbot, tmp_path):
     return window, work
 
 
+@pytest.mark.lab_fixtures
 def test_saving_a_project_makes_the_next_sample_match_it(qtbot, tmp_path):
     """The measured series lives outside the library folder, yet must be matchable.
 
@@ -905,6 +906,7 @@ def test_saving_a_project_makes_the_next_sample_match_it(qtbot, tmp_path):
     assert window._project.smiles == "CCOC(C)=O"
 
 
+@pytest.mark.lab_fixtures
 def test_auto_registration_can_be_turned_off(qtbot, tmp_path):
     from unittest.mock import patch
 
@@ -923,6 +925,7 @@ def test_auto_registration_can_be_turned_off(qtbot, tmp_path):
     assert "PAR1637-SE" not in [r.name for r in window._current_match_results]
 
 
+@pytest.mark.lab_fixtures
 def test_add_current_spectrum_to_library_action(qtbot, tmp_path):
     """The manual action covers spectra the analyst does not save as a project."""
     window, work = _measurement_window(qtbot, tmp_path)

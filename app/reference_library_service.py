@@ -415,6 +415,8 @@ class ReferenceLibraryService:
                 commit=False,
             )
         self._db.commit()
+        # Vectors of the previous feature version can never be read again.
+        self._db.delete_stale_reference_features(feature_version=MATCH_FEATURE_VERSION)
 
     def _rerank_results(
         self,

@@ -64,6 +64,7 @@ def test_search_engine_aligns_transmittance_with_absorbance():
     assert results[0].score > 0.95
 
 
+@pytest.mark.lab_fixtures
 def test_reference_library_service_auto_imports_fixture_folder_and_finds_exact_match(db):
     """Bundled `reference library_1` should auto-import and return the exact file as top hit."""
     from file_io.format_registry import FormatRegistry
@@ -85,6 +86,7 @@ def test_reference_library_service_auto_imports_fixture_folder_and_finds_exact_m
     assert outcome.results[0].score == pytest.approx(1.0)
 
 
+@pytest.mark.lab_fixtures
 def test_ensure_project_library_imported_syncs_missing_fixture_files_even_when_db_non_empty(db):
     """A pre-populated DB must not block bundled-library sync."""
     from file_io.format_registry import FormatRegistry
@@ -377,6 +379,7 @@ def _service_with_library(tmp_path):
     return svc, db, lib, work
 
 
+@pytest.mark.lab_fixtures
 def test_registered_project_is_matchable_without_copying_into_the_library(tmp_path):
     """An analysed spectrum saved outside the library folder must still match.
 
@@ -402,6 +405,7 @@ def test_registered_project_is_matchable_without_copying_into_the_library(tmp_pa
     assert [r.name for r in filtered.results] == ["PAR1637-SE"]
 
 
+@pytest.mark.lab_fixtures
 def test_re_saving_a_project_updates_its_reference_instead_of_duplicating(tmp_path):
     svc, db, _lib, work = _service_with_library(tmp_path)
     first = _register_fixture(svc, db, "PAR1637-SE", "PAR1637-SE.SPA", work / "PAR1637-SE.irproj")
@@ -412,6 +416,7 @@ def test_re_saving_a_project_updates_its_reference_instead_of_duplicating(tmp_pa
     assert len(db.get_reference_identity_rows()) == 2  # library file + this project
 
 
+@pytest.mark.lab_fixtures
 def test_registering_a_spectrum_already_in_the_library_is_skipped(tmp_path):
     """No second hit list entry for something the library already covers."""
     svc, db, _lib, work = _service_with_library(tmp_path)
@@ -421,6 +426,7 @@ def test_registering_a_spectrum_already_in_the_library_is_skipped(tmp_path):
     assert len(db.get_reference_identity_rows()) == 1
 
 
+@pytest.mark.lab_fixtures
 def test_project_references_survive_switching_the_library_folder(tmp_path):
     """Own analysed spectra are not part of one purchased library."""
     from pathlib import Path
@@ -438,6 +444,7 @@ def test_project_references_survive_switching_the_library_folder(tmp_path):
     assert [r.name for r in svc.search_spectrum(query, top_n=10).results] == ["PAR1637-SE"]
 
 
+@pytest.mark.lab_fixtures
 def test_register_project_spectrum_rejects_an_empty_name(tmp_path):
     """A project saved with no usable name must not create a nameless reference."""
     import numpy as np
@@ -452,3 +459,32 @@ def test_register_project_spectrum_rejects_an_empty_name(tmp_path):
     )
     assert registration.status == "skipped"
     assert len(db.get_reference_identity_rows()) == 1
+
+
+# ── Feature-version migration ─────────────────────────────────────────────────
+
+
+def test_search_recomputes_vectors_after_a_feature_version_bump(tmp_path):
+    """A library indexed by an older metric must re-index itself on first search."""
+    from core.spectrum import Spectrum
+
+    db = Database(":memory:")
+    db.initialize()
+    wn = np.linspace(400.0, 4000.0, 400)
+    ref_id = db.add_reference_spectrum(
+        name="legacy", wavenumbers=wn, intensities=np.sin(wn / 300.0) + 1.0
+    )
+    stale_version = MATCH_FEATURE_VERSION - 1
+    db.upsert_reference_feature(
+        ref_id, feature_version=stale_version, feature_vector=np.ones(8, dtype=np.float32)
+    )
+    assert db.get_reference_search_rows(feature_version=MATCH_FEATURE_VERSION) == []
+
+    service = ReferenceLibraryService(db, project_root=tmp_path)
+    query = Spectrum(wavenumbers=wn, intensities=np.sin(wn / 300.0) + 1.0)
+    results = service.search_spectrum(query, top_n=5, auto_import_project_library=False)
+
+    assert [result.name for result in results.results] == ["legacy"]
+    # the current version is indexed and the superseded vector is gone
+    assert len(db.get_reference_search_rows(feature_version=MATCH_FEATURE_VERSION)) == 1
+    assert db.get_reference_search_rows(feature_version=stale_version) == []

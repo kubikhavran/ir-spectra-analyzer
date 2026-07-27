@@ -806,6 +806,20 @@ class Database:
         if commit:
             self._conn.commit()
 
+    def delete_stale_reference_features(self, *, feature_version: int) -> int:
+        """Drop cached vectors of superseded feature versions. Returns rows removed.
+
+        A feature-version bump leaves the previous vectors behind; on a large
+        library that is tens of megabytes of data nothing can read any more.
+        """
+        assert self._conn is not None
+        cursor = self._conn.execute(
+            "DELETE FROM reference_features WHERE feature_version != ?",
+            (int(feature_version),),
+        )
+        self._conn.commit()
+        return int(cursor.rowcount or 0)
+
     def delete_reference_spectrum(self, ref_id: int) -> None:
         """Delete a reference spectrum by id."""
         assert self._conn is not None

@@ -6,8 +6,13 @@ from dataclasses import dataclass
 
 import numpy as np
 
-from matching.feature_store import SEARCH_GRID, compute_rerank_vector, compute_search_vector
-from matching.preprocessing import prepare_for_matching
+from matching.feature_store import (
+    SEARCH_GRID,
+    compute_fingerprint_vector,
+    compute_rerank_vector,
+    compute_search_vector,
+)
+from matching.preprocessing import FINGERPRINT_RANGE, prepare_for_matching
 
 
 @dataclass
@@ -17,14 +22,23 @@ class MatchResult:
     Attributes:
         ref_id: Reference spectrum database ID.
         name: Reference spectrum name.
-        score: Spectral similarity score [0, 1].
+        score: Whole-spectrum similarity score [0, 1].
         description: Optional reference description.
+        fingerprint_score: Similarity over the skeleton region only [0, 1]. A
+            high fingerprint score with a clearly lower whole-spectrum score is
+            the signature of the same compound carrying a different substituent.
     """
 
     ref_id: int
     name: str
     score: float
     description: str = ""
+    fingerprint_score: float = 0.0
+
+    @property
+    def ranking_score(self) -> float:
+        """Score used for ordering: the better of the two views."""
+        return max(float(self.score), float(self.fingerprint_score))
 
 
 class SearchEngine:
@@ -41,8 +55,30 @@ class SearchEngine:
         self._references: list[dict] = []
         self._ref_vectors: list[np.ndarray] = []
         self._ref_matrix: np.ndarray | None = None
+        self._fingerprint_matrix: np.ndarray | None = None
         self._vector_cache: dict[tuple[int, str], np.ndarray] = {}
         self._rerank_vector_cache: dict[tuple[int, str], np.ndarray] = {}
+        self._fingerprint_vector_cache: dict[tuple[int, str], np.ndarray] = {}
+
+    def _fingerprint_mask(self, length: int) -> np.ndarray | None:
+        """Return the boolean mask selecting the skeleton region of a vector.
+
+        Feature vectors are the preprocessed signal normalized as a whole, so
+        slicing one and renormalizing yields exactly the vector that would come
+        from preprocessing with ``region=FINGERPRINT_RANGE``. That keeps the
+        skeleton score free — no second vector has to be stored per reference.
+        """
+        if self._grid.size != length:
+            return None
+        lo, hi = min(FINGERPRINT_RANGE), max(FINGERPRINT_RANGE)
+        mask = (self._grid >= lo) & (self._grid <= hi)
+        return mask if mask.any() else None
+
+    @staticmethod
+    def _normalize_rows(matrix: np.ndarray) -> np.ndarray:
+        """L2-normalize each row, leaving all-zero rows untouched."""
+        norms = np.linalg.norm(matrix, axis=1, keepdims=True)
+        return matrix / np.where(norms > 0.0, norms, 1.0)
 
     def load_references(self, references: list[dict]) -> None:
         """Load reference spectra from database rows.
@@ -75,8 +111,13 @@ class SearchEngine:
 
         if self._ref_vectors:
             self._ref_matrix = np.vstack(self._ref_vectors).astype(np.float32, copy=False)
+            mask = self._fingerprint_mask(self._ref_matrix.shape[1])
+            self._fingerprint_matrix = (
+                self._normalize_rows(self._ref_matrix[:, mask]) if mask is not None else None
+            )
         else:
             self._ref_matrix = None
+            self._fingerprint_matrix = None
 
     def search(
         self,
@@ -117,12 +158,16 @@ class SearchEngine:
         )
 
         scores = self._compute_scores(query_vec)
-        if top_n is None or top_n >= len(scores):
-            order = np.argsort(scores)[::-1]
+        fingerprint_scores = self._compute_fingerprint_scores(query_vec)
+        # Shortlist on the better of the two views, so a compound whose skeleton
+        # matches but whose substituent differs is not dropped before reranking.
+        ranking = np.maximum(scores, fingerprint_scores)
+        if top_n is None or top_n >= len(ranking):
+            order = np.argsort(ranking)[::-1]
         else:
             keep = max(int(top_n), 1)
-            candidate_idx = np.argpartition(scores, -keep)[-keep:]
-            order = candidate_idx[np.argsort(scores[candidate_idx])[::-1]]
+            candidate_idx = np.argpartition(ranking, -keep)[-keep:]
+            order = candidate_idx[np.argsort(ranking[candidate_idx])[::-1]]
 
         return [
             MatchResult(
@@ -130,6 +175,7 @@ class SearchEngine:
                 name=self._references[idx]["name"],
                 score=float(scores[idx]),
                 description=self._references[idx].get("description", ""),
+                fingerprint_score=float(fingerprint_scores[idx]),
             )
             for idx in order
         ]
@@ -143,7 +189,9 @@ class SearchEngine:
         """Drop cached preprocessed reference vectors."""
         self._vector_cache.clear()
         self._rerank_vector_cache.clear()
+        self._fingerprint_vector_cache.clear()
         self._ref_matrix = None
+        self._fingerprint_matrix = None
 
     def rerank_candidates(
         self,
@@ -163,6 +211,11 @@ class SearchEngine:
             query_intensities,
             y_unit=query_y_unit,
         )
+        query_fp = compute_fingerprint_vector(
+            query_wavenumbers,
+            query_intensities,
+            y_unit=query_y_unit,
+        )
         reranked: list[MatchResult] = []
         for candidate in candidates:
             cache_key = self._cache_key_for_ref(candidate)
@@ -172,8 +225,16 @@ class SearchEngine:
                     candidate["intensities"],
                     y_unit=candidate.get("y_unit"),
                 )
+            if cache_key not in self._fingerprint_vector_cache:
+                self._fingerprint_vector_cache[cache_key] = compute_fingerprint_vector(
+                    candidate["wavenumbers"],
+                    candidate["intensities"],
+                    y_unit=candidate.get("y_unit"),
+                )
             fine_score = self._score_pair(query_vec, self._rerank_vector_cache[cache_key])
-            coarse_score = None if coarse_scores is None else coarse_scores.get(int(candidate["id"]))
+            coarse_score = (
+                None if coarse_scores is None else coarse_scores.get(int(candidate["id"]))
+            )
             score = (
                 fine_score
                 if coarse_score is None
@@ -185,11 +246,25 @@ class SearchEngine:
                     name=str(candidate["name"]),
                     score=score,
                     description=str(candidate.get("description", "")),
+                    fingerprint_score=self._score_pair(
+                        query_fp, self._fingerprint_vector_cache[cache_key]
+                    ),
                 )
             )
 
-        reranked.sort(key=lambda result: result.score, reverse=True)
+        reranked.sort(key=lambda result: result.ranking_score, reverse=True)
         return reranked
+
+    def _compute_fingerprint_scores(self, query_vec: np.ndarray) -> np.ndarray:
+        """Return skeleton-region cosine scores, or zeros when unavailable."""
+        mask = self._fingerprint_mask(query_vec.size)
+        if self._fingerprint_matrix is None or mask is None:
+            return np.zeros(len(self._references), dtype=np.float32)
+        query_fp = query_vec[mask].astype(np.float32, copy=False)
+        norm = float(np.linalg.norm(query_fp))
+        if norm == 0.0:
+            return np.zeros(len(self._references), dtype=np.float32)
+        return np.clip(self._fingerprint_matrix @ (query_fp / norm), 0.0, 1.0)
 
     def _compute_scores(self, query_vec: np.ndarray) -> np.ndarray:
         """Return cosine scores against the loaded reference matrix."""
@@ -217,7 +292,9 @@ class SearchEngine:
         """Return a clipped cosine score for one normalized vector pair."""
         return float(
             np.clip(
-                np.dot(query_vec.astype(np.float32, copy=False), ref_vec.astype(np.float32, copy=False)),
+                np.dot(
+                    query_vec.astype(np.float32, copy=False), ref_vec.astype(np.float32, copy=False)
+                ),
                 0.0,
                 1.0,
             )

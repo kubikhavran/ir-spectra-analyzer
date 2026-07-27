@@ -431,7 +431,9 @@ def _supports_coherence(metric: _BandMetrics | None, threshold: float) -> bool:
     return metric.center_fit >= 0.20 or metric.shape_match >= 0.35
 
 
-def _resolve_source_links(source_refs: tuple[str, ...], source_lookup: dict[str, str]) -> tuple[str, ...]:
+def _resolve_source_links(
+    source_refs: tuple[str, ...], source_lookup: dict[str, str]
+) -> tuple[str, ...]:
     links: list[str] = []
     for ref in source_refs:
         resolved = source_lookup.get(ref)

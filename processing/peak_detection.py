@@ -55,3 +55,16 @@ def detect_peaks(
     ]
 
     return sorted(peaks, key=lambda p: p.position, reverse=True)
+
+
+def default_prominence(spectrum) -> float:
+    """Return the prominence threshold used for automatic detection on a spectrum.
+
+    Dip-type curves (%T, reflectance) and baseline-corrected signals span a
+    0–100 range, absorbance roughly 0–2, so a single constant cannot serve both.
+    """
+    from core.spectrum import SpectralUnit  # noqa: PLC0415 — avoids a circular import
+
+    if spectrum.is_dip_spectrum or spectrum.y_unit == SpectralUnit.BASELINE_CORRECTED:
+        return 1.0
+    return 0.05

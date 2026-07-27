@@ -94,11 +94,7 @@ def _select_top_groups(
     if not functional_group_results:
         return []
     cutoff = max(30.0, functional_group_results[0].score - 40.0)
-    return [
-        result
-        for result in functional_group_results[:5]
-        if result.score >= cutoff
-    ][:3]
+    return [result for result in functional_group_results[:5] if result.score >= cutoff][:3]
 
 
 def _build_hypothesis(
@@ -266,7 +262,10 @@ def _overall_score(
     score = 0.45 * fg_component + 0.35 * match_component + 0.20 * assignment_component
     if hypotheses:
         score -= min(len(hypotheses[0].conflicting_evidence) * 6.0, 18.0)
-    if len(functional_group_results) >= 2 and functional_group_results[0].score - functional_group_results[1].score < 8.0:
+    if (
+        len(functional_group_results) >= 2
+        and functional_group_results[0].score - functional_group_results[1].score < 8.0
+    ):
         score -= 6.0
     if len(match_results) >= 2 and (match_results[0].score - match_results[1].score) < 0.05:
         score -= 6.0
@@ -297,8 +296,10 @@ def _build_summary(
     overall_score: float,
 ) -> str:
     peak_count = 0 if project is None else len(project.peaks)
-    assigned_peak_count = 0 if project is None else sum(
-        1 for peak in project.peaks if getattr(peak, "vibration_labels", ())
+    assigned_peak_count = (
+        0
+        if project is None
+        else sum(1 for peak in project.peaks if getattr(peak, "vibration_labels", ()))
     )
     top_group = functional_group_results[0] if functional_group_results else None
     top_match = match_results[0] if match_results else None
