@@ -16,7 +16,7 @@ from PySide6.QtWidgets import (
 )
 
 from app.report_presets import ReportPresetManager
-from reporting.pdf_generator import ReportOptions
+from reporting.pdf_generator import LAYOUT_FULL_BLEED, LAYOUT_STANDARD, ReportOptions
 
 
 class ReportOptionsWidget(QWidget):
@@ -53,6 +53,18 @@ class ReportOptionsWidget(QWidget):
         preset_layout.addWidget(self._delete_preset_button)
         root_layout.addLayout(preset_layout)
 
+        layout_row = QHBoxLayout()
+        self._layout_combo = QComboBox()
+        self._layout_combo.addItem("Spectrum inside page margins", LAYOUT_STANDARD)
+        self._layout_combo.addItem(
+            "Spectrum across the whole page + structure and sample name in the plot",
+            LAYOUT_FULL_BLEED,
+        )
+        self._layout_combo.currentIndexChanged.connect(self._on_options_toggled)
+        layout_row.addWidget(QLabel("First page:"))
+        layout_row.addWidget(self._layout_combo, stretch=1)
+        root_layout.addLayout(layout_row)
+
         checkbox_layout = QHBoxLayout()
         self._include_metadata_checkbox = QCheckBox("Include metadata")
         self._include_metadata_checkbox.setChecked(True)
@@ -84,6 +96,7 @@ class ReportOptionsWidget(QWidget):
             include_peak_table=self._include_peak_table_checkbox.isChecked(),
             include_structures=self._include_structures_checkbox.isChecked(),
             split_xaxis=self._split_xaxis_checkbox.isChecked(),
+            layout=str(self._layout_combo.currentData()),
         )
 
     def current_preset_name(self) -> str | None:
@@ -102,6 +115,7 @@ class ReportOptionsWidget(QWidget):
         self._preset_combo.setEnabled(enabled)
         self._save_preset_button.setEnabled(enabled)
         self._delete_preset_button.setEnabled(enabled and self.current_preset_name() is not None)
+        self._layout_combo.setEnabled(enabled)
         self._include_metadata_checkbox.setEnabled(enabled)
         self._include_peak_table_checkbox.setEnabled(enabled)
         self._include_structures_checkbox.setEnabled(enabled)
@@ -162,6 +176,8 @@ class ReportOptionsWidget(QWidget):
             self._include_peak_table_checkbox.setChecked(options.include_peak_table)
             self._include_structures_checkbox.setChecked(options.include_structures)
             self._split_xaxis_checkbox.setChecked(options.split_xaxis)
+            layout_index = self._layout_combo.findData(options.layout)
+            self._layout_combo.setCurrentIndex(max(layout_index, 0))
         finally:
             self._suppress_state_updates = False
         self.options_changed.emit()

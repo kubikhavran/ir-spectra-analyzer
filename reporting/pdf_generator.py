@@ -14,8 +14,10 @@ from __future__ import annotations
 
 import io
 import struct
+from collections.abc import Callable
 from dataclasses import dataclass
 from pathlib import Path
+from typing import TYPE_CHECKING
 
 import matplotlib
 from reportlab.lib import colors
@@ -46,6 +48,11 @@ from core.peak_assignments import (
 )
 from core.project import Project
 from reporting.spectrum_renderer import SpectrumRenderer
+
+if TYPE_CHECKING:
+    from reportlab.pdfgen.canvas import Canvas
+
+    from core.spectrum import Spectrum
 
 # ---------------------------------------------------------------------------
 # Unicode font registration — DejaVu Sans ships with Matplotlib and covers
@@ -100,6 +107,16 @@ _PORT_W, _PORT_H = A4
 _PORT_TEXT_W = _PORT_W - 2 * _MARGIN
 _PORT_TEXT_H = _PORT_H - 2 * _MARGIN - 0.5 * cm  # leave room for footer
 
+# First-page layouts.
+LAYOUT_STANDARD = "standard"
+LAYOUT_FULL_BLEED = "full_bleed"
+LAYOUT_CHOICES = (LAYOUT_STANDARD, LAYOUT_FULL_BLEED)
+
+# The edge-to-edge page has no margins to hide resampling in, and its text is
+# drawn by ReportLab rather than rasterised — but the curve and peak labels are
+# still pixels, so give them a floor above the 150 dpi used inside a frame.
+_FULL_BLEED_MIN_DPI = 200
+
 
 @dataclass
 class ReportOptions:
@@ -117,6 +134,10 @@ class ReportOptions:
         diagnostic_regions: Runtime-only diagnostic overlays currently visible in the viewer.
         split_xaxis: When True, render the spectrum with a split X-axis at 2000 cm⁻¹
             (hi-wavenumber region left, fingerprint region right). Default True.
+        layout: First-page layout. LAYOUT_STANDARD keeps the spectrum inside the
+            usual 2 cm page margins; LAYOUT_FULL_BLEED drops the margins so the plot
+            covers the whole A4 sheet and floats the sample/file identity plus the
+            molecular structure into empty space inside the plot.
     """
 
     include_structures: bool = True
@@ -127,6 +148,7 @@ class ReportOptions:
     view_y_range: tuple[float, float] | None = None
     diagnostic_regions: tuple[object, ...] = ()
     split_xaxis: bool = True
+    layout: str = LAYOUT_STANDARD
     # id(peak) -> (label_x, label_y) in data coordinates, captured from the live
     # viewer so exported labels reproduce the on-screen layout exactly.
     peak_label_placements: dict = None  # type: ignore[assignment]
@@ -246,24 +268,39 @@ class PDFGenerator:
         _x_min, _x_max = options.view_x_range if options.view_x_range else (400.0, 3800.0)
 
         # Page 1: full-page spectrum (no header — maximum graph area)
-        self._append_spectrum_section(
-            story,
-            spectrum.wavenumbers,
-            spectrum.intensities,
-            project.peaks,
-            caption_style,
-            dpi=options.dpi,
-            y_unit=spectrum.y_unit,
-            is_dip_spectrum=spectrum.is_dip_spectrum,
-            text_width=_LAND_TEXT_W,
-            text_height=_LAND_TEXT_H,
-            x_min=_x_min,
-            x_max=_x_max,
-            y_view_range=options.view_y_range,
-            diagnostic_regions=options.diagnostic_regions,
-            split_at=2000.0 if options.split_xaxis else None,
-            label_placements=options.peak_label_placements,
-        )
+        full_bleed_painter = None
+        if options.layout == LAYOUT_FULL_BLEED:
+            full_bleed_painter = self._build_full_bleed_first_page(
+                project,
+                spectrum,
+                options,
+                x_min=_x_min,
+                x_max=_x_max,
+                font_regular=font_r,
+                font_bold=font_b,
+            )
+            # The page is painted entirely by the template callback; the frame
+            # only needs to exist so ReportLab emits the page.
+            story.append(Spacer(1, 1))
+        else:
+            self._append_spectrum_section(
+                story,
+                spectrum.wavenumbers,
+                spectrum.intensities,
+                project.peaks,
+                caption_style,
+                dpi=options.dpi,
+                y_unit=spectrum.y_unit,
+                is_dip_spectrum=spectrum.is_dip_spectrum,
+                text_width=_LAND_TEXT_W,
+                text_height=_LAND_TEXT_H,
+                x_min=_x_min,
+                x_max=_x_max,
+                y_view_range=options.view_y_range,
+                diagnostic_regions=options.diagnostic_regions,
+                split_at=2000.0 if options.split_xaxis else None,
+                label_placements=options.peak_label_placements,
+            )
 
         # Switch to portrait for subsequent pages, then page break
         story.append(NextPageTemplate("portrait"))
@@ -337,6 +374,29 @@ class PDFGenerator:
             pagesize=A4,
         )
 
+        if full_bleed_painter is not None:
+            first_template = PageTemplate(
+                id="fullbleed",
+                frames=[
+                    Frame(
+                        0,
+                        0,
+                        _LAND_W,
+                        _LAND_H,
+                        id="fullbleed_frame",
+                        leftPadding=0,
+                        rightPadding=0,
+                        topPadding=0,
+                        bottomPadding=0,
+                        showBoundary=0,
+                    )
+                ],
+                onPage=full_bleed_painter,
+                pagesize=landscape(A4),
+            )
+        else:
+            first_template = land_template
+
         doc = BaseDocTemplate(
             str(output_path),
             pagesize=landscape(A4),
@@ -345,8 +405,370 @@ class PDFGenerator:
             topMargin=_MARGIN,
             bottomMargin=_MARGIN + 0.5 * cm,
         )
-        doc.addPageTemplates([land_template, port_template])
+        doc.addPageTemplates([first_template, port_template])
         doc.build(story)
+
+    # ------------------------------------------------------------------
+    # Full-bleed first page
+    # ------------------------------------------------------------------
+
+    def _build_full_bleed_first_page(
+        self,
+        project: Project,
+        spectrum: Spectrum,
+        options: ReportOptions,
+        *,
+        x_min: float,
+        x_max: float,
+        font_regular: str,
+        font_bold: str,
+    ) -> Callable[[Canvas, object], None]:
+        """Render the edge-to-edge spectrum page and return its canvas painter.
+
+        The spectrum is rendered at exactly the page size, so nothing is scaled
+        down for the identity block or the structure — both float inside the plot
+        in whatever empty area the renderer found.
+        """
+        sample_name, file_name = self._header_identifiers(project, spectrum)
+        structure_png = self._structure_png_bytes(project, options, trim=True)
+        # %T curves leave their gap under the baseline, absorbance above it.
+        anchor_bottom = spectrum.is_dip_spectrum
+
+        png_bytes, box = SpectrumRenderer().render_with_annotation_box(
+            spectrum.wavenumbers,
+            spectrum.intensities,
+            project.peaks,
+            dpi=max(options.dpi, _FULL_BLEED_MIN_DPI),
+            y_unit=spectrum.y_unit,
+            is_dip_spectrum=spectrum.is_dip_spectrum,
+            figsize=(_LAND_W / 72.0, _LAND_H / 72.0),
+            x_min=x_min,
+            x_max=x_max,
+            y_view_range=options.view_y_range,
+            diagnostic_regions=options.diagnostic_regions,
+            split_at=2000.0 if options.split_xaxis else None,
+            label_placements=options.peak_label_placements,
+            annotation_target=self._annotation_target(structure_png),
+        )
+
+        def _paint(canvas: Canvas, doc: object) -> None:
+            from reportlab.lib.utils import ImageReader  # noqa: PLC0415
+
+            page_w, page_h = canvas._pagesize
+            canvas.drawImage(
+                ImageReader(io.BytesIO(png_bytes)),
+                0,
+                0,
+                width=page_w,
+                height=page_h,
+                preserveAspectRatio=False,
+                anchor="sw",
+            )
+            if box is None:
+                return
+            self._draw_annotation_block(
+                canvas,
+                x=box[0] * page_w,
+                y=box[1] * page_h,
+                width=(box[2] - box[0]) * page_w,
+                height=(box[3] - box[1]) * page_h,
+                sample_name=sample_name,
+                file_name=file_name,
+                structure_png=structure_png,
+                anchor_bottom=anchor_bottom,
+                font_regular=font_regular,
+                font_bold=font_bold,
+            )
+
+        return _paint
+
+    def _draw_annotation_block(
+        self,
+        canvas: Canvas,
+        *,
+        x: float,
+        y: float,
+        width: float,
+        height: float,
+        sample_name: str,
+        file_name: str,
+        structure_png: bytes | None,
+        anchor_bottom: bool,
+        font_regular: str,
+        font_bold: str,
+    ) -> None:
+        """Draw the identity lines above the structure inside a free area of the plot.
+
+        The frame is sized to the content it ends up holding rather than to the
+        whole free area, so a molecule that is much wider than tall does not sit in
+        a half-empty box.
+        """
+        pad = 8.0
+        avail_w = width - 2 * pad
+        avail_h = height - 2 * pad
+        if avail_w <= 0 or avail_h <= 0:
+            return
+
+        text_h, text_w, sample_size, file_size = self._identity_metrics(
+            sample_name, file_name, avail_w, font_regular, font_bold
+        )
+
+        structure_w = structure_h = 0.0
+        if structure_png is not None:
+            img_w, img_h = self._png_size(structure_png)
+            aspect = (img_h / img_w) if img_w else 1.0
+            structure_max_h = avail_h - text_h - pad
+            if structure_max_h > 24.0 and aspect > 0:
+                structure_w = min(avail_w, structure_max_h / aspect)
+                structure_h = structure_w * aspect
+            else:
+                structure_png = None
+
+        content_w = max(structure_w, text_w)
+        content_h = text_h + (pad + structure_h if structure_png is not None else 0.0)
+        frame_w = content_w + 2 * pad
+        frame_h = content_h + 2 * pad
+        # Sit on the edge of the gap the renderer picked, so the block lands in
+        # the corner of the axes instead of floating in the middle of the space.
+        frame_y = y if anchor_bottom else y + height - frame_h
+
+        canvas.saveState()
+        canvas.setFillColor(colors.white)
+        canvas.setStrokeColor(colors.HexColor("#BFBFBF"))
+        canvas.setLineWidth(0.5)
+        canvas.roundRect(x, frame_y, frame_w, frame_h, 4, stroke=1, fill=1)
+
+        self._draw_identity_lines(
+            canvas,
+            sample_name,
+            file_name,
+            x=x + pad,
+            top=frame_y + frame_h - pad,
+            max_width=text_w,
+            sample_size=sample_size,
+            file_size=file_size,
+            font_regular=font_regular,
+            font_bold=font_bold,
+        )
+        if structure_png is not None:
+            self._draw_structure(
+                canvas,
+                structure_png,
+                x=x + pad,
+                y=frame_y + pad,
+                max_width=content_w,
+                max_height=structure_h,
+            )
+        canvas.restoreState()
+
+    # Width the floating block asks for, as a fraction of the page, plus the
+    # vertical allowance for the two identity lines and the frame padding.
+    _BLOCK_TARGET_WIDTH = 0.26
+    _BLOCK_TEXT_ALLOWANCE = 40.0
+
+    @classmethod
+    def _annotation_target(cls, structure_png: bytes | None) -> tuple[float, float]:
+        """Ask the renderer for a gap shaped like the block we are going to draw."""
+        width_pt = _LAND_W * cls._BLOCK_TARGET_WIDTH
+        if structure_png is None:
+            return (width_pt * 0.8 / _LAND_W, cls._BLOCK_TEXT_ALLOWANCE / _LAND_H)
+
+        img_w, img_h = cls._png_size(structure_png)
+        aspect = img_h / img_w if img_w else 1.0
+        height_pt = width_pt * aspect + cls._BLOCK_TEXT_ALLOWANCE
+        return (width_pt / _LAND_W, min(max(height_pt / _LAND_H, 0.08), 0.5))
+
+    @staticmethod
+    def _png_size(png_bytes: bytes) -> tuple[int, int]:
+        """Read pixel dimensions straight from the PNG IHDR chunk."""
+        try:
+            width, height = struct.unpack(">II", png_bytes[16:24])
+        except Exception:  # noqa: BLE001
+            return (760, 760)
+        return (int(width) or 760, int(height) or 760)
+
+    def _draw_structure(
+        self,
+        canvas: Canvas,
+        png_bytes: bytes,
+        *,
+        x: float,
+        y: float,
+        max_width: float,
+        max_height: float,
+    ) -> None:
+        """Draw the molecule centred in the given area, keeping its aspect ratio."""
+        from reportlab.lib.utils import ImageReader  # noqa: PLC0415
+
+        img_w, img_h = self._png_size(png_bytes)
+        scale = min(max_width / img_w, max_height / img_h)
+        draw_w = img_w * scale
+        draw_h = img_h * scale
+        canvas.drawImage(
+            ImageReader(io.BytesIO(png_bytes)),
+            x + (max_width - draw_w) / 2.0,
+            y + (max_height - draw_h) / 2.0,
+            width=draw_w,
+            height=draw_h,
+            preserveAspectRatio=True,
+            mask="auto",
+        )
+
+    # Identity lines: sample designation on top, file identifier underneath —
+    # the same two values the portrait pages print in their header.
+    _SAMPLE_FONT_SIZE = 13.0
+    _FILE_FONT_SIZE = 9.5
+    _MIN_FONT_SIZE = 6.0
+
+    @classmethod
+    def _identity_metrics(
+        cls, sample_name: str, file_name: str, max_width: float, font_regular: str, font_bold: str
+    ) -> tuple[float, float, float, float]:
+        """Return (total height, widest line, sample font size, file font size)."""
+        sample_size = cls._fit_font_size(sample_name, font_bold, cls._SAMPLE_FONT_SIZE, max_width)
+        file_size = cls._fit_font_size(file_name, font_regular, cls._FILE_FONT_SIZE, max_width)
+
+        height = 0.0
+        widest = 0.0
+        if sample_name:
+            height += sample_size * 1.25
+            widest = max(widest, pdfmetrics.stringWidth(sample_name, font_bold, sample_size))
+        if file_name:
+            if height:
+                height += 2.0
+            height += file_size * 1.25
+            widest = max(widest, pdfmetrics.stringWidth(file_name, font_regular, file_size))
+        return (height, min(widest, max_width), sample_size, file_size)
+
+    @classmethod
+    def _draw_identity_lines(
+        cls,
+        canvas: Canvas,
+        sample_name: str,
+        file_name: str,
+        *,
+        x: float,
+        top: float,
+        max_width: float,
+        sample_size: float,
+        file_size: float,
+        font_regular: str,
+        font_bold: str,
+    ) -> None:
+        """Draw the sample designation and the file identifier from `top` downwards."""
+        cursor = top
+        if sample_name:
+            canvas.setFont(font_bold, sample_size)
+            canvas.setFillColor(colors.black)
+            cursor -= sample_size
+            canvas.drawString(
+                x, cursor, cls._clip_text(sample_name, font_bold, sample_size, max_width)
+            )
+            cursor -= sample_size * 0.25 + 2.0
+        if file_name:
+            canvas.setFont(font_regular, file_size)
+            canvas.setFillColor(colors.HexColor("#555555"))
+            cursor -= file_size
+            canvas.drawString(
+                x, cursor, cls._clip_text(file_name, font_regular, file_size, max_width)
+            )
+
+    @classmethod
+    def _fit_font_size(cls, text: str, font_name: str, max_size: float, max_width: float) -> float:
+        """Largest size (down to _MIN_FONT_SIZE) at which the text still fits."""
+        size = max_size
+        while size > cls._MIN_FONT_SIZE and pdfmetrics.stringWidth(text, font_name, size) > (
+            max_width
+        ):
+            size -= 0.5
+        return size
+
+    @staticmethod
+    def _clip_text(text: str, font_name: str, size: float, max_width: float) -> str:
+        """Truncate with an ellipsis when even the smallest size overflows."""
+        if pdfmetrics.stringWidth(text, font_name, size) <= max_width:
+            return text
+        clipped = text
+        while clipped and pdfmetrics.stringWidth(clipped + "…", font_name, size) > max_width:
+            clipped = clipped[:-1]
+        return clipped + "…" if clipped else ""
+
+    @staticmethod
+    def _header_identifiers(project: Project, spectrum: Spectrum) -> tuple[str, str]:
+        """Return (sample designation, file identifier) — the two header values."""
+        project_metadata = getattr(project, "metadata", None)
+        file_name = (
+            project_metadata.file_name if project_metadata and project_metadata.file_name else ""
+        )
+        sample_name = (
+            project_metadata.title
+            if project_metadata and project_metadata.title
+            else (spectrum.title or "")
+        )
+        return (sample_name or "", file_name or project.name)
+
+    @classmethod
+    def _structure_png_bytes(
+        cls, project: Project, options: ReportOptions, *, trim: bool = False
+    ) -> bytes | None:
+        """Render the project's molecule to PNG bytes, or None when there is none.
+
+        Args:
+            trim: Crop the empty border a molecule renderer leaves around the
+                drawing, so the image fills whatever box it is given.
+        """
+        from chemistry.structure_renderer import render_to_svg, svg_to_png_bytes  # noqa: PLC0415
+
+        mol_block = getattr(project, "mol_block", "")
+        if not options.include_structures:
+            return None
+        if not (project.smiles or mol_block or project.structure_image):
+            return None
+
+        png_bytes: bytes | None = None
+        if project.smiles or mol_block:
+            svg = render_to_svg(smiles=project.smiles, mol_block=mol_block, size=(380, 380))
+            if svg:
+                png_bytes = svg_to_png_bytes(svg, 760, 760)
+        if not png_bytes and project.structure_image:
+            png_bytes = project.structure_image
+        if png_bytes and trim:
+            png_bytes = cls._trim_png_border(png_bytes)
+        return png_bytes
+
+    @staticmethod
+    def _trim_png_border(png_bytes: bytes) -> bytes:
+        """Crop transparent (or white) padding around the drawing.
+
+        Returns the input unchanged if anything goes wrong — an untrimmed
+        structure is a cosmetic loss, a failed export is not.
+        """
+        try:
+            from PIL import Image as PILImage  # noqa: PLC0415
+
+            with PILImage.open(io.BytesIO(png_bytes)) as image:
+                rgba = image.convert("RGBA")
+                bbox = rgba.getchannel("A").getbbox()
+                if bbox is None or bbox == (0, 0, rgba.width, rgba.height):
+                    # Opaque render — fall back to the bounds of non-white pixels.
+                    grey = rgba.convert("L").point(lambda value: 255 - value)
+                    bbox = grey.getbbox() or bbox
+                if bbox is None:
+                    return png_bytes
+                margin = 4
+                cropped = rgba.crop(
+                    (
+                        max(bbox[0] - margin, 0),
+                        max(bbox[1] - margin, 0),
+                        min(bbox[2] + margin, rgba.width),
+                        min(bbox[3] + margin, rgba.height),
+                    )
+                )
+                buffer = io.BytesIO()
+                cropped.save(buffer, format="PNG")
+                return buffer.getvalue()
+        except Exception:  # noqa: BLE001
+            return png_bytes
 
     def _append_header_section(
         self,
@@ -367,17 +789,9 @@ class PDFGenerator:
             alignment=TA_RIGHT,
             spaceAfter=0,
         )
-        project_metadata = getattr(project, "metadata", None)
-        file_name = (
-            project_metadata.file_name if project_metadata and project_metadata.file_name else ""
-        )
-        spectrum_title = (
-            project_metadata.title
-            if project_metadata and project_metadata.title
-            else spectrum.title
-        )
-        left_para = Paragraph(file_name or project.name, title_style)
-        right_para = Paragraph(spectrum_title or "", title_right_style)
+        spectrum_title, file_name = self._header_identifiers(project, spectrum)
+        left_para = Paragraph(file_name, title_style)
+        right_para = Paragraph(spectrum_title, title_right_style)
         header_row = Table(
             [[left_para, right_para]],
             colWidths=[_PORT_TEXT_W * 0.6, _PORT_TEXT_W * 0.4],
@@ -591,8 +1005,6 @@ class PDFGenerator:
         options: ReportOptions,
     ) -> None:
         """Metadata table on the left, molecule structure image on the right."""
-        from chemistry.structure_renderer import render_to_svg, svg_to_png_bytes  # noqa: PLC0415
-
         # ── Build metadata rows ──────────────────────────────────────────────
         project_metadata = getattr(project, "metadata", None)
         meta_rows: list = []
@@ -601,16 +1013,9 @@ class PDFGenerator:
             if value:
                 meta_rows.append([Paragraph(key, key_style), Paragraph(value, val_style)])
 
-        file_name = (
-            project_metadata.file_name if project_metadata and project_metadata.file_name else ""
-        )
         # The sample designation is the spectrum title — the same value the
         # header prints top-right.
-        sample_name = (
-            project_metadata.title
-            if project_metadata and project_metadata.title
-            else (spectrum.title or "")
-        )
+        sample_name, file_name = self._header_identifiers(project, spectrum)
         client = (
             project_metadata.extra.get("omnic_client")
             if project_metadata and project_metadata.extra
@@ -635,7 +1040,7 @@ class PDFGenerator:
         )
 
         _add_row("Sample", sample_name)
-        _add_row("File", file_name or project.name)
+        _add_row("File", file_name)
         _add_row("Operator", project_metadata.operator if project_metadata else None)
         _add_row(
             "Instrument", instrument or str(spectrum.extra_metadata.get("instrument_serial", ""))
@@ -656,26 +1061,10 @@ class PDFGenerator:
         )
 
         # ── Try to render molecule structure (right column) ──────────────────
-        mol_block = getattr(project, "mol_block", "")
-        has_structure = options.include_structures and (
-            project.smiles or mol_block or project.structure_image
-        )
-
-        png_bytes: bytes | None = None
-        if has_structure:
-            if project.smiles or mol_block:
-                svg = render_to_svg(
-                    smiles=project.smiles,
-                    mol_block=mol_block,
-                    size=(380, 380),
-                )
-                if svg:
-                    png_bytes = svg_to_png_bytes(svg, 760, 760)
-            if not png_bytes and project.structure_image:
-                png_bytes = project.structure_image
+        png_bytes = self._structure_png_bytes(project, options)
 
         # ── Decide layout ────────────────────────────────────────────────────
-        if has_structure and png_bytes:
+        if png_bytes:
             left_col_w = _PORT_TEXT_W * 0.58
             right_col_w = _PORT_TEXT_W - left_col_w
         else:
@@ -701,11 +1090,8 @@ class PDFGenerator:
         else:
             meta_subtable = Spacer(left_col_w, 1)
 
-        if has_structure and png_bytes:
-            try:
-                img_w_px, img_h_px = struct.unpack(">II", png_bytes[16:24])
-            except Exception:  # noqa: BLE001
-                img_w_px = img_h_px = 760
+        if png_bytes:
+            img_w_px, img_h_px = self._png_size(png_bytes)
 
             max_w = right_col_w - 0.3 * cm  # small inset from column edge
             max_h = 7.0 * cm

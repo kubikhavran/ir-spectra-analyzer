@@ -23,12 +23,17 @@ from __future__ import annotations
 
 import io
 from pathlib import Path
+from typing import TYPE_CHECKING
 
 import numpy as np
 from matplotlib import colors as mcolors
 
 from core.peak import Peak
 from core.spectrum import SpectralUnit
+
+if TYPE_CHECKING:  # heavy Matplotlib imports stay out of the runtime path
+    from matplotlib.axes import Axes
+    from matplotlib.figure import Figure
 
 # Approximate tick spacing used by OMNIC
 _WN_MAJOR_STEP = 500.0  # cm⁻¹
@@ -41,6 +46,23 @@ _LO_RATIO = 65
 # Spectrum curve stroke width in points. Deliberately finer than the 0.8 pt
 # axis frame so printed narrow bands stay resolvable.
 _SPECTRUM_LINEWIDTH = 0.55
+
+# Tick font size the split-axis inch margins were tuned against — the size the
+# framed page-1 spectrum renders at. Larger figures scale the margins up from here.
+_MARGIN_TICK_SIZE = 11.0
+
+# Occupancy grid used to locate free space inside the plot for a floating
+# annotation block (full-bleed layout). Resolution is a compromise between
+# accuracy and the cost of the pure-Python maximal-rectangle scan.
+_GRID_NX = 220
+_GRID_NY = 150
+
+# Desired annotation block size as a fraction of the figure (width, height).
+_ANNOTATION_TARGET = (0.26, 0.40)
+
+# Bounded y-range expansions tried when the plot has no room for the block.
+# 1.0 = leave the spectrum exactly as-is.
+_ANNOTATION_Y_EXPANSIONS = (1.0, 1.15, 1.30)
 
 
 class SpectrumRenderer:
@@ -78,6 +100,89 @@ class SpectrumRenderer:
         Returns:
             PNG image as bytes.
         """
+        return self._render(
+            wavenumbers,
+            intensities,
+            peaks,
+            dpi=dpi,
+            y_unit=y_unit,
+            is_dip_spectrum=is_dip_spectrum,
+            figsize=figsize,
+            x_min=x_min,
+            x_max=x_max,
+            y_view_range=y_view_range,
+            diagnostic_regions=diagnostic_regions,
+            split_at=split_at,
+            label_placements=label_placements,
+        )[0]
+
+    def render_with_annotation_box(
+        self,
+        wavenumbers: np.ndarray,
+        intensities: np.ndarray,
+        peaks: list[Peak],
+        *,
+        dpi: int = 150,
+        y_unit: SpectralUnit = SpectralUnit.ABSORBANCE,
+        is_dip_spectrum: bool = False,
+        figsize: tuple[float, float] = (7.5, 3.2),
+        x_min: float = 400.0,
+        x_max: float = 3800.0,
+        y_view_range: tuple[float, float] | None = None,
+        diagnostic_regions: tuple[object, ...] | list[object] = (),
+        split_at: float | None = 2000.0,
+        label_placements: dict[int, tuple[float, float]] | None = None,
+        annotation_target: tuple[float, float] = _ANNOTATION_TARGET,
+    ) -> tuple[bytes, tuple[float, float, float, float] | None]:
+        """Render the spectrum and locate a free rectangle for a floating annotation.
+
+        Same output as :meth:`render_to_bytes`, plus the largest empty area found
+        inside the plot, expressed as ``(x0, y0, x1, y1)`` in figure fractions with
+        y measured from the bottom — ready to be mapped onto a PDF page.
+
+        The spectrum itself is never scaled down for the block. Only when the plot
+        offers no usable gap at all is the y-range stretched (bounded by
+        ``_ANNOTATION_Y_EXPANSIONS``) so a readable block still fits.
+
+        Returns:
+            (PNG bytes, box in figure fractions) — box is None when nothing fits.
+        """
+        return self._render(
+            wavenumbers,
+            intensities,
+            peaks,
+            dpi=dpi,
+            y_unit=y_unit,
+            is_dip_spectrum=is_dip_spectrum,
+            figsize=figsize,
+            x_min=x_min,
+            x_max=x_max,
+            y_view_range=y_view_range,
+            diagnostic_regions=diagnostic_regions,
+            split_at=split_at,
+            label_placements=label_placements,
+            annotation_target=annotation_target,
+        )
+
+    def _render(
+        self,
+        wavenumbers: np.ndarray,
+        intensities: np.ndarray,
+        peaks: list[Peak],
+        *,
+        dpi: int = 150,
+        y_unit: SpectralUnit = SpectralUnit.ABSORBANCE,
+        is_dip_spectrum: bool = False,
+        figsize: tuple[float, float] = (7.5, 3.2),
+        x_min: float = 400.0,
+        x_max: float = 3800.0,
+        y_view_range: tuple[float, float] | None = None,
+        diagnostic_regions: tuple[object, ...] | list[object] = (),
+        split_at: float | None = 2000.0,
+        label_placements: dict[int, tuple[float, float]] | None = None,
+        annotation_target: tuple[float, float] | None = None,
+    ) -> tuple[bytes, tuple[float, float, float, float] | None]:
+        """Render the spectrum, optionally reporting a free area for an annotation."""
         import matplotlib  # noqa: PLC0415
 
         matplotlib.use("Agg")
@@ -127,6 +232,7 @@ class SpectrumRenderer:
                 plt=plt,
                 ticker=ticker,
                 label_placements=label_placements,
+                annotation_target=annotation_target,
             )
 
         # ── Single-axis (original) rendering ──────────────────────────────────
@@ -259,11 +365,28 @@ class SpectrumRenderer:
 
         fig.tight_layout(pad=0.6 if figsize[0] <= 8.0 else 1.2)
 
+        annotation_box = None
+        if annotation_target is not None:
+            annotation_box = self._resolve_annotation_box(
+                fig=fig,
+                panels=[(ax, _plot_x_lo, _plot_x_hi)],
+                wavenumbers=wavenumbers,
+                intensities=intensities,
+                peaks=peaks,
+                is_dip_spectrum=is_dip_spectrum,
+                expand_down=_is_dip,
+                fs_peak=_fs_peak,
+                y_lo=_y_min,
+                y_hi=_y_max,
+                label_placements=label_placements,
+                target=annotation_target,
+            )
+
         buf = io.BytesIO()
         fig.savefig(buf, format="png", dpi=dpi, facecolor="white")
         plt.close(fig)
         buf.seek(0)
-        return buf.read()
+        return buf.read(), annotation_box
 
     def _render_split(  # noqa: PLR0913, PLR0914
         self,
@@ -288,7 +411,8 @@ class SpectrumRenderer:
         plt,
         ticker,
         label_placements: dict[int, tuple[float, float]] | None = None,
-    ) -> bytes:
+        annotation_target: tuple[float, float] | None = None,
+    ) -> tuple[bytes, tuple[float, float, float, float] | None]:
         """Render spectrum using a split-axis layout (hi-wavenumber | fingerprint).
 
         Uses add_axes with manually computed figure-fraction positions so that
@@ -299,11 +423,15 @@ class SpectrumRenderer:
         fig.patch.set_facecolor("white")
 
         # --- Axis geometry in figure fractions ----------------------------------
-        # Fixed inch margins → figure fractions (scale with figsize automatically)
-        lm = 0.75 / fig_w  # left  — room for Y-axis label + tick labels
-        rm = 0.10 / fig_w  # right — thin margin
-        bm = 0.45 / fig_h  # bottom — room for X-axis tick labels + label
-        tm = 0.10 / fig_h  # top   — thin margin
+        # Fixed inch margins → figure fractions (scale with figsize automatically).
+        # They were tuned for the margined page-1 frame (_MARGIN_TICK_SIZE) and only
+        # grow beyond it, so a bigger figure with larger type still fits its tick
+        # labels and axis titles while every existing layout stays untouched.
+        _mscale = max(1.0, fs_tick / _MARGIN_TICK_SIZE)
+        lm = 0.75 * _mscale / fig_w  # left  — room for Y-axis label + tick labels
+        rm = 0.10 * _mscale / fig_w  # right — thin margin
+        bm = 0.45 * _mscale / fig_h  # bottom — room for X-axis tick labels + label
+        tm = 0.10 * _mscale / fig_h  # top   — thin margin
 
         total_w = 1.0 - lm - rm
         hi_frac = _HI_RATIO / (_HI_RATIO + _LO_RATIO)  # 0.35
@@ -489,11 +617,28 @@ class SpectrumRenderer:
         ax_hi.set_ylim(bottom=y_min, top=y_max)
         ax_lo.set_ylim(bottom=y_min, top=y_max)
 
+        annotation_box = None
+        if annotation_target is not None:
+            annotation_box = self._resolve_annotation_box(
+                fig=fig,
+                panels=[(ax_hi, split_at, plot_x_hi), (ax_lo, plot_x_lo, split_at)],
+                wavenumbers=wavenumbers,
+                intensities=intensities,
+                peaks=peaks,
+                is_dip_spectrum=is_dip_spectrum,
+                expand_down=is_dip_spectrum or y_unit == SpectralUnit.TRANSMITTANCE,
+                fs_peak=fs_peak,
+                y_lo=y_min,
+                y_hi=y_max,
+                label_placements=label_placements,
+                target=annotation_target,
+            )
+
         buf = io.BytesIO()
         fig.savefig(buf, format="png", dpi=dpi, facecolor="white")
         plt.close(fig)
         buf.seek(0)
-        return buf.read()
+        return buf.read(), annotation_box
 
     def render_to_file(
         self,
@@ -627,6 +772,306 @@ class SpectrumRenderer:
         if is_dip_spectrum:
             return (y_min - data_y_span * 0.20, y_max + data_y_span * 0.05)
         return (max(0.0, y_min - data_y_span * 0.05), y_max + data_y_span * 0.20)
+
+    # ------------------------------------------------------------------
+    # Free-area search for the floating annotation block (full-bleed layout)
+    # ------------------------------------------------------------------
+
+    @classmethod
+    def _resolve_annotation_box(
+        cls,
+        *,
+        fig: Figure,
+        panels: list[tuple[Axes, float, float]],
+        wavenumbers: np.ndarray,
+        intensities: np.ndarray,
+        peaks: list[Peak],
+        is_dip_spectrum: bool,
+        expand_down: bool,
+        fs_peak: int,
+        y_lo: float,
+        y_hi: float,
+        label_placements: dict[int, tuple[float, float]] | None,
+        target: tuple[float, float],
+    ) -> tuple[float, float, float, float] | None:
+        """Find the best free rectangle, stretching the y-range only if forced to.
+
+        Every expansion step is applied to the live axes before measuring, so the
+        winning y-range is the one left on the figure when this returns.
+        """
+        best: tuple[float, tuple[float, float, float, float], tuple[float, float]] | None = None
+
+        for factor in _ANNOTATION_Y_EXPANSIONS:
+            lo, hi = cls._expanded_y_limits(y_lo, y_hi, factor, expand_down=expand_down)
+            for ax, _, _ in panels:
+                ax.set_ylim(bottom=lo, top=hi)
+
+            found = cls._annotation_box(
+                fig=fig,
+                panels=panels,
+                wavenumbers=wavenumbers,
+                intensities=intensities,
+                peaks=peaks,
+                is_dip_spectrum=is_dip_spectrum,
+                fs_peak=fs_peak,
+                y_lo=lo,
+                y_hi=hi,
+                label_placements=label_placements,
+                target=target,
+                anchor_bottom=expand_down,
+            )
+            if found is not None:
+                score, box = found
+                if best is None or score > best[0]:
+                    best = (score, box, (lo, hi))
+                if score >= 0.98:
+                    break
+
+        if best is None:
+            for ax, _, _ in panels:
+                ax.set_ylim(bottom=y_lo, top=y_hi)
+            return None
+
+        for ax, _, _ in panels:
+            ax.set_ylim(bottom=best[2][0], top=best[2][1])
+        return best[1]
+
+    @staticmethod
+    def _expanded_y_limits(
+        y_lo: float, y_hi: float, factor: float, *, expand_down: bool
+    ) -> tuple[float, float]:
+        """Grow the y-range away from the curve so an empty band appears."""
+        if factor <= 1.0:
+            return (y_lo, y_hi)
+        extra = (y_hi - y_lo) * (factor - 1.0)
+        return (y_lo - extra, y_hi) if expand_down else (y_lo, y_hi + extra)
+
+    @classmethod
+    def _annotation_box(
+        cls,
+        *,
+        fig: Figure,
+        panels: list[tuple[Axes, float, float]],
+        wavenumbers: np.ndarray,
+        intensities: np.ndarray,
+        peaks: list[Peak],
+        is_dip_spectrum: bool,
+        fs_peak: int,
+        y_lo: float,
+        y_hi: float,
+        label_placements: dict[int, tuple[float, float]] | None,
+        target: tuple[float, float],
+        anchor_bottom: bool,
+    ) -> tuple[float, tuple[float, float, float, float]] | None:
+        """Return (fit score, box) for the emptiest spot in the plot, or None.
+
+        The box is pushed to the far edge of the gap it was found in — down for
+        dip spectra, up for absorbance — so the block ends up in the corner of the
+        axes rather than floating in the middle of the free area.
+        """
+        occupied, region = cls._occupancy_grid(
+            fig=fig,
+            panels=panels,
+            wavenumbers=wavenumbers,
+            intensities=intensities,
+            peaks=peaks,
+            is_dip_spectrum=is_dip_spectrum,
+            fs_peak=fs_peak,
+            y_lo=y_lo,
+            y_hi=y_hi,
+            label_placements=label_placements,
+        )
+        reg_x0, reg_y0, reg_x1, reg_y1 = region
+        reg_w = reg_x1 - reg_x0
+        reg_h = reg_y1 - reg_y0
+        if reg_w <= 0 or reg_h <= 0:
+            return None
+
+        target_w, target_h = target
+        target_cols = max(1.0, target_w / reg_w * _GRID_NX)
+        target_rows = max(1.0, target_h / reg_h * _GRID_NY)
+
+        found = cls._best_free_rect(~occupied, target_cols, target_rows)
+        if found is None:
+            return None
+        score, c0, c1, r0, r1 = found
+
+        cell_w = reg_w / _GRID_NX
+        cell_h = reg_h / _GRID_NY
+        # One cell of breathing room keeps the block off the curve it hugs.
+        x0 = reg_x0 + (c0 + 1) * cell_w
+        x1 = reg_x0 + c1 * cell_w
+        y0 = reg_y0 + (r0 + 1) * cell_h
+        y1 = reg_y0 + r1 * cell_h
+        if x1 <= x0 or y1 <= y0:
+            return None
+
+        # Never grow past the target — a huge empty plot should not produce a
+        # billboard-sized structure.
+        width = min(x1 - x0, target_w)
+        height = min(y1 - y0, target_h)
+        box_y0 = y0 if anchor_bottom else y1 - height
+        return (min(score, 1.0), (x0, box_y0, x0 + width, box_y0 + height))
+
+    @staticmethod
+    def _to_figure_x(
+        values: np.ndarray | float, geometry: tuple[float, float, float, float]
+    ) -> np.ndarray:
+        """Map wavenumbers to figure fractions (the axis runs high → low)."""
+        axis_x0, axis_width, x_lo, x_hi = geometry
+        span = max(x_hi - x_lo, 1e-12)
+        return axis_x0 + (x_hi - np.clip(values, x_lo, x_hi)) / span * axis_width
+
+    @staticmethod
+    def _to_figure_y(
+        values: np.ndarray | float, geometry: tuple[float, float, float, float]
+    ) -> np.ndarray:
+        """Map intensities to figure fractions."""
+        axis_y0, axis_height, y_lo, y_hi = geometry
+        span = max(y_hi - y_lo, 1e-12)
+        return axis_y0 + (np.clip(values, y_lo, y_hi) - y_lo) / span * axis_height
+
+    @classmethod
+    def _occupancy_grid(
+        cls,
+        *,
+        fig: Figure,
+        panels: list[tuple[Axes, float, float]],
+        wavenumbers: np.ndarray,
+        intensities: np.ndarray,
+        peaks: list[Peak],
+        is_dip_spectrum: bool,
+        fs_peak: int,
+        y_lo: float,
+        y_hi: float,
+        label_placements: dict[int, tuple[float, float]] | None,
+    ) -> tuple[np.ndarray, tuple[float, float, float, float]]:
+        """Mark grid cells covered by the curve, leader lines and peak labels."""
+        positions = [ax.get_position() for ax, _, _ in panels]
+        reg_x0 = min(pos.x0 for pos in positions)
+        reg_x1 = max(pos.x1 for pos in positions)
+        reg_y0 = min(pos.y0 for pos in positions)
+        reg_y1 = max(pos.y1 for pos in positions)
+        region = (reg_x0, reg_y0, reg_x1, reg_y1)
+
+        occupied = np.zeros((_GRID_NY, _GRID_NX), dtype=bool)
+        cell_w = (reg_x1 - reg_x0) / _GRID_NX
+        cell_h = (reg_y1 - reg_y0) / _GRID_NY
+        if cell_w <= 0 or cell_h <= 0:
+            return occupied, region
+
+        fig_w_pt = fig.get_figwidth() * 72.0
+        fig_h_pt = fig.get_figheight() * 72.0
+        data_y_span = float(np.ptp(intensities)) or 1.0
+
+        def _col(fx: float) -> int:
+            return int(np.clip((fx - reg_x0) / cell_w, 0, _GRID_NX - 1))
+
+        def _row(fy: float) -> int:
+            return int(np.clip((fy - reg_y0) / cell_h, 0, _GRID_NY - 1))
+
+        def _mark(fx0: float, fy0: float, fx1: float, fy1: float) -> None:
+            c_a, c_b = sorted((_col(fx0), _col(fx1)))
+            r_a, r_b = sorted((_row(fy0), _row(fy1)))
+            occupied[r_a : r_b + 1, c_a : c_b + 1] = True
+
+        for pos, (_ax, x_lo, x_hi) in zip(positions, panels, strict=True):
+            x_geometry = (float(pos.x0), float(pos.width), x_lo, x_hi)
+            y_geometry = (float(pos.y0), float(pos.height), y_lo, y_hi)
+
+            in_panel = (wavenumbers >= x_lo) & (wavenumbers <= x_hi)
+            if in_panel.any():
+                cols = np.clip(
+                    (
+                        (cls._to_figure_x(wavenumbers[in_panel], x_geometry) - reg_x0) / cell_w
+                    ).astype(int),
+                    0,
+                    _GRID_NX - 1,
+                )
+                rows = np.clip(
+                    (
+                        (cls._to_figure_y(intensities[in_panel], y_geometry) - reg_y0) / cell_h
+                    ).astype(int),
+                    0,
+                    _GRID_NY - 1,
+                )
+                col_min = np.full(_GRID_NX, _GRID_NY, dtype=int)
+                col_max = np.full(_GRID_NX, -1, dtype=int)
+                np.minimum.at(col_min, cols, rows)
+                np.maximum.at(col_max, cols, rows)
+                # Dilate by one column so steep flanks stay a connected barrier.
+                span_lo = np.minimum(col_min, np.minimum(np.roll(col_min, 1), np.roll(col_min, -1)))
+                span_hi = np.maximum(col_max, np.maximum(np.roll(col_max, 1), np.roll(col_max, -1)))
+                for col in range(_GRID_NX):
+                    if span_hi[col] >= 0:
+                        occupied[max(int(span_lo[col]), 0) : int(span_hi[col]) + 1, col] = True
+
+            for peak in peaks:
+                if not x_lo <= peak.position <= x_hi:
+                    continue
+                label_x, label_y = cls._resolve_label_position(
+                    peak,
+                    data_y_span=data_y_span,
+                    is_dip_spectrum=is_dip_spectrum,
+                    label_placements=label_placements,
+                )
+                peak_fx = float(cls._to_figure_x(peak.position, x_geometry))
+                peak_fy = float(cls._to_figure_y(peak.intensity, y_geometry))
+                label_fx = float(cls._to_figure_x(label_x, x_geometry))
+                label_fy = float(cls._to_figure_y(label_y, y_geometry))
+                _mark(peak_fx, peak_fy, label_fx, label_fy)
+
+                text = str(int(round(peak.position)))
+                half_w = fs_peak * 0.75 / fig_w_pt
+                length = (len(text) * 0.62 * fs_peak + 2.0) / fig_h_pt
+                if label_fy <= peak_fy:
+                    _mark(label_fx - half_w, label_fy - length, label_fx + half_w, label_fy)
+                else:
+                    _mark(label_fx - half_w, label_fy, label_fx + half_w, label_fy + length)
+
+        # Keep the block clear of the axis frame.
+        occupied[:2, :] = True
+        occupied[-2:, :] = True
+        occupied[:, :2] = True
+        occupied[:, -2:] = True
+        return occupied, region
+
+    @staticmethod
+    def _best_free_rect(
+        free: np.ndarray, target_cols: float, target_rows: float
+    ) -> tuple[float, int, int, int, int] | None:
+        """Largest-rectangle-in-histogram scan scored by how well the target fits.
+
+        Returns (score, col_first, col_last, row_first, row_last); the score is
+        ``min(width/target_w, height/target_h)`` — 1.0 means the block fits at full
+        size — with rectangle area as tie-breaker.
+        """
+        n_rows, n_cols = free.shape
+        heights = np.zeros(n_cols, dtype=int)
+        best_key: tuple[float, int] | None = None
+        best: tuple[float, int, int, int, int] | None = None
+
+        for row in range(n_rows):
+            heights = np.where(free[row], heights + 1, 0)
+            bar = heights.tolist()
+            stack: list[tuple[int, int]] = []
+            for col in range(n_cols + 1):
+                current = bar[col] if col < n_cols else 0
+                start = col
+                while stack and stack[-1][1] >= current:
+                    left, height = stack.pop()
+                    start = left
+                    if height <= 0:
+                        continue
+                    width = col - left
+                    score = min(width / target_cols, height / target_rows)
+                    key = (min(score, 1.0), width * height)
+                    if best_key is None or key > best_key:
+                        best_key = key
+                        best = (score, left, col - 1, row - height + 1, row)
+                stack.append((start, current))
+
+        return best
 
     @staticmethod
     def _diagnostic_region_style(

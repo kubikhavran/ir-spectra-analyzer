@@ -40,6 +40,49 @@ def test_report_preset_manager_saves_and_loads_named_presets(tmp_path):
     assert [item.name for item in manager.list_presets()] == ["Lab standard"]
 
 
+def test_report_preset_manager_roundtrips_the_first_page_layout(tmp_path):
+    """The full-page spectrum layout must survive a save/load cycle."""
+    from reporting.pdf_generator import LAYOUT_FULL_BLEED
+
+    manager = _make_manager(tmp_path)
+    manager.save_preset("Full page", ReportOptions(layout=LAYOUT_FULL_BLEED))
+
+    preset = manager.get_preset("Full page")
+    assert preset is not None
+    assert preset.options.layout == LAYOUT_FULL_BLEED
+
+
+def test_report_preset_manager_rejects_unknown_layout(tmp_path):
+    """A preset stored by a newer/broken build falls back to the standard layout."""
+    from reporting.pdf_generator import LAYOUT_STANDARD
+
+    settings = Settings(tmp_path / "settings.json")
+    settings.load()
+    settings.set("report_presets", [{"name": "Odd", "layout": "poster"}])
+
+    preset = ReportPresetManager(settings).get_preset("Odd")
+    assert preset is not None
+    assert preset.options.layout == LAYOUT_STANDARD
+
+
+def test_export_dialog_can_select_the_full_page_layout(qtbot, tmp_path):
+    """The layout selector drives ReportOptions.layout for the PDF export."""
+    from reporting.pdf_generator import LAYOUT_FULL_BLEED, LAYOUT_STANDARD
+
+    manager = _make_manager(tmp_path)
+    dialog = ExportDialog(preset_manager=manager)
+    qtbot.addWidget(dialog)
+    combo = dialog._report_options_widget._layout_combo
+
+    assert dialog.report_options.layout == LAYOUT_STANDARD
+
+    combo.setCurrentIndex(combo.findData(LAYOUT_FULL_BLEED))
+
+    assert dialog.report_options.layout == LAYOUT_FULL_BLEED
+    # Diverging from the defaults must flip the preset combo to "Custom".
+    assert dialog._preset_combo.currentText() == "Custom"
+
+
 def test_report_preset_manager_deletes_presets(tmp_path):
     """Deleting a preset should remove it and clear last-used state when needed."""
     manager = _make_manager(tmp_path)

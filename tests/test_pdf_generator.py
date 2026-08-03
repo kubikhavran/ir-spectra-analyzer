@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import io
 from pathlib import Path
 
 import numpy as np
@@ -415,6 +416,234 @@ def test_pdf_without_project_smiles_skips_structure_section(tmp_path, monkeypatc
 
     assert out.exists()
     assert render_calls == [], "render_to_svg should not be called without SMILES/mol_block"
+
+
+def _banded_spectrum() -> tuple[np.ndarray, np.ndarray, list[Peak]]:
+    """A %T spectrum with a flat baseline and a few sharp bands — plenty of free area."""
+    wn = np.linspace(650, 4000, 4000)
+    ints = np.full_like(wn, 97.0)
+    bands = [(1050, 40), (1250, 30), (1600, 30), (1700, 55), (2950, 20), (3300, 15)]
+    for centre, depth in bands:
+        ints -= depth * np.exp(-0.5 * ((wn - centre) / 10.0) ** 2)
+    peaks = [
+        Peak(position=float(centre), intensity=float(np.interp(centre, wn, ints)))
+        for centre, _ in bands
+    ]
+    return wn, ints, peaks
+
+
+def test_full_bleed_spectrum_uses_the_whole_sheet(tmp_path: Path, monkeypatch) -> None:
+    """The edge-to-edge layout renders the plot at full page size, not inside margins."""
+    from reporting import pdf_generator as pdf_module
+    from reporting.pdf_generator import LAYOUT_FULL_BLEED, PDFGenerator, ReportOptions
+    from reporting.spectrum_renderer import SpectrumRenderer
+
+    captured: dict[str, object] = {}
+    original = SpectrumRenderer.render_with_annotation_box
+
+    def _spy(self, *args, **kwargs):
+        captured["figsize"] = kwargs["figsize"]
+        return original(self, *args, **kwargs)
+
+    monkeypatch.setattr(SpectrumRenderer, "render_with_annotation_box", _spy)
+
+    out = tmp_path / "full_bleed.pdf"
+    PDFGenerator().generate(_make_project(), out, options=ReportOptions(layout=LAYOUT_FULL_BLEED))
+
+    assert out.read_bytes().startswith(b"%PDF")
+    fig_w, fig_h = captured["figsize"]
+    assert fig_w * 72 == pytest.approx(pdf_module._LAND_W)
+    assert fig_h * 72 == pytest.approx(pdf_module._LAND_H)
+
+
+def test_standard_layout_keeps_the_framed_spectrum_page(tmp_path: Path, monkeypatch) -> None:
+    """The default layout is untouched — it still flows the spectrum through a frame."""
+    from reporting.pdf_generator import PDFGenerator, ReportOptions
+
+    calls: list[str] = []
+    original_section = PDFGenerator._append_spectrum_section
+    original_full_bleed = PDFGenerator._build_full_bleed_first_page
+
+    def _spy_section(self, *args, **kwargs):
+        calls.append("framed")
+        return original_section(self, *args, **kwargs)
+
+    def _spy_full_bleed(self, *args, **kwargs):
+        calls.append("full_bleed")
+        return original_full_bleed(self, *args, **kwargs)
+
+    monkeypatch.setattr(PDFGenerator, "_append_spectrum_section", _spy_section)
+    monkeypatch.setattr(PDFGenerator, "_build_full_bleed_first_page", _spy_full_bleed)
+
+    PDFGenerator().generate(_make_project(), tmp_path / "standard.pdf", options=ReportOptions())
+
+    assert calls == ["framed"]
+
+
+def test_full_bleed_page_draws_identity_and_structure(tmp_path: Path) -> None:
+    """Sample name, file name and the molecule all land on the full-page spectrum."""
+    from reporting.pdf_generator import LAYOUT_FULL_BLEED, PDFGenerator, ReportOptions
+
+    wn, ints, peaks = _banded_spectrum()
+    spectrum = Spectrum(
+        wavenumbers=wn, intensities=ints, y_unit=SpectralUnit.TRANSMITTANCE, title="PAR1706-HA"
+    )
+    project = Project(name="PAR1706-HA", spectrum=spectrum)
+    project.peaks.extend(peaks)
+    project.smiles = "CCO"
+    project.metadata.title = "PAR1706-HA"
+    project.metadata.file_name = "PAR1706-HA.SPA"
+
+    drawn_strings: list[str] = []
+    drawn_images: list[tuple[float, float]] = []
+
+    class _RecordingCanvas:
+        _pagesize = (100.0, 100.0)
+
+        def __getattr__(self, name):
+            def _noop(*args, **kwargs):
+                return None
+
+            return _noop
+
+        def drawString(self, x, y, text):  # noqa: N802
+            drawn_strings.append(text)
+
+        def drawImage(self, image, x, y, **kwargs):  # noqa: N802
+            drawn_images.append((kwargs.get("width", 0.0), kwargs.get("height", 0.0)))
+
+    generator = PDFGenerator()
+    painter = generator._build_full_bleed_first_page(
+        project,
+        spectrum,
+        ReportOptions(layout=LAYOUT_FULL_BLEED, dpi=72),
+        x_min=650.0,
+        x_max=4000.0,
+        font_regular="Helvetica",
+        font_bold="Helvetica-Bold",
+    )
+    canvas = _RecordingCanvas()
+    canvas._pagesize = (841.89, 595.28)
+    painter(canvas, None)
+
+    assert drawn_strings == ["PAR1706-HA", "PAR1706-HA.SPA"]
+    # First image is the page-filling spectrum, second the molecule inside it.
+    assert len(drawn_images) == 2
+    assert drawn_images[0] == pytest.approx((841.89, 595.28))
+    assert 0 < drawn_images[1][0] < 841.89
+
+
+def _assert_box_is_blank(png_bytes: bytes, box: tuple[float, float, float, float]) -> None:
+    """Fail unless every pixel under the reported free box is white."""
+    from PIL import Image as PILImage
+
+    with PILImage.open(io.BytesIO(png_bytes)) as image:
+        rgb = image.convert("RGB")
+        width, height = rgb.size
+        # Figure fractions measure y from the bottom; PIL rows from the top.
+        crop = rgb.crop(
+            (
+                round(box[0] * width),
+                round((1.0 - box[3]) * height),
+                round(box[2] * width),
+                round((1.0 - box[1]) * height),
+            )
+        )
+    assert crop.size[0] > 0
+    assert crop.size[1] > 0
+    assert crop.getextrema() == ((255, 255), (255, 255), (255, 255))
+
+
+def test_full_bleed_annotation_lands_on_empty_canvas() -> None:
+    """The reported free box must contain no ink from the rendered spectrum."""
+    from reporting.spectrum_renderer import SpectrumRenderer
+
+    wn, ints, peaks = _banded_spectrum()
+    png_bytes, box = SpectrumRenderer().render_with_annotation_box(
+        wn,
+        ints,
+        peaks,
+        dpi=100,
+        y_unit=SpectralUnit.TRANSMITTANCE,
+        is_dip_spectrum=True,
+        figsize=(11.69, 8.27),
+        x_min=650.0,
+        x_max=4000.0,
+        annotation_target=(0.26, 0.40),
+    )
+
+    assert box is not None
+    # Nothing was given up: the block fits at the full size it asked for.
+    assert box[2] - box[0] == pytest.approx(0.26, abs=0.01)
+    assert box[3] - box[1] == pytest.approx(0.40, abs=0.01)
+    _assert_box_is_blank(png_bytes, box)
+
+
+def test_annotation_box_sits_in_the_corner_of_the_axes() -> None:
+    """The block hugs the far edge of its gap: bottom for %T, top for absorbance."""
+    from reporting.spectrum_renderer import SpectrumRenderer
+
+    wn, dip_intensities, peaks = _banded_spectrum()
+    kwargs = {
+        "dpi": 72,
+        "figsize": (11.69, 8.27),
+        "x_min": 650.0,
+        "x_max": 4000.0,
+        "annotation_target": (0.26, 0.40),
+    }
+
+    _png, dip_box = SpectrumRenderer().render_with_annotation_box(
+        wn,
+        dip_intensities,
+        peaks,
+        y_unit=SpectralUnit.TRANSMITTANCE,
+        is_dip_spectrum=True,
+        **kwargs,
+    )
+    flipped = 100.0 - dip_intensities
+    up_peaks = [Peak(position=peak.position, intensity=100.0 - peak.intensity) for peak in peaks]
+    _png, abs_box = SpectrumRenderer().render_with_annotation_box(
+        wn,
+        flipped,
+        up_peaks,
+        y_unit=SpectralUnit.ABSORBANCE,
+        is_dip_spectrum=False,
+        **kwargs,
+    )
+
+    assert dip_box is not None
+    assert abs_box is not None
+    # Both plots share the same axes geometry, so the two boxes must end up on
+    # opposite edges of it — neither floating near the middle.
+    assert dip_box[1] < 0.15
+    assert abs_box[3] > 0.90
+
+
+def test_saturated_plot_still_gets_a_blank_block_area() -> None:
+    """Wall-to-wall noise has no natural gap, so a bounded y-stretch makes one."""
+    from reporting.spectrum_renderer import SpectrumRenderer
+
+    wn = np.linspace(650, 4000, 4000)
+    ints = np.random.default_rng(1).uniform(0.0, 100.0, wn.size)
+
+    png_bytes, box = SpectrumRenderer().render_with_annotation_box(
+        wn,
+        ints,
+        [],
+        dpi=100,
+        y_unit=SpectralUnit.TRANSMITTANCE,
+        is_dip_spectrum=True,
+        figsize=(11.69, 8.27),
+        x_min=650.0,
+        x_max=4000.0,
+        annotation_target=(0.26, 0.40),
+    )
+
+    assert box is not None
+    # The stretch is capped, so the block ends up smaller than it asked for
+    # rather than the curve being squashed to make room.
+    assert box[3] - box[1] < 0.40
+    _assert_box_is_blank(png_bytes, box)
 
 
 def _pdf_page_count(path: Path) -> int:

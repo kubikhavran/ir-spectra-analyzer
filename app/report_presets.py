@@ -4,7 +4,7 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 
-from reporting.pdf_generator import ReportOptions
+from reporting.pdf_generator import LAYOUT_CHOICES, LAYOUT_STANDARD, ReportOptions
 from storage.settings import Settings
 
 
@@ -110,6 +110,7 @@ class ReportPresetManager:
             "include_structures": options.include_structures,
             "dpi": options.dpi,
             "split_xaxis": options.split_xaxis,
+            "layout": options.layout,
         }
 
     @staticmethod
@@ -121,10 +122,15 @@ class ReportPresetManager:
         except (TypeError, ValueError):
             dpi_value = ReportOptions().dpi
 
+        layout = str(data.get("layout", LAYOUT_STANDARD))
+        if layout not in LAYOUT_CHOICES:
+            layout = LAYOUT_STANDARD
+
         return ReportOptions(
             include_metadata=bool(data.get("include_metadata", True)),
             include_peak_table=bool(data.get("include_peak_table", True)),
             include_structures=bool(data.get("include_structures", True)),
             dpi=dpi_value,
             split_xaxis=bool(data.get("split_xaxis", True)),
+            layout=layout,
         )
