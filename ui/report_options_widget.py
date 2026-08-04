@@ -55,11 +55,11 @@ class ReportOptionsWidget(QWidget):
 
         layout_row = QHBoxLayout()
         self._layout_combo = QComboBox()
-        self._layout_combo.addItem("Spectrum inside page margins", LAYOUT_STANDARD)
         self._layout_combo.addItem(
             "Spectrum across the whole page + structure and sample name in the plot",
             LAYOUT_FULL_BLEED,
         )
+        self._layout_combo.addItem("Spectrum inside page margins", LAYOUT_STANDARD)
         self._layout_combo.currentIndexChanged.connect(self._on_options_toggled)
         layout_row.addWidget(QLabel("First page:"))
         layout_row.addWidget(self._layout_combo, stretch=1)

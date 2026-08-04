@@ -4,7 +4,7 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 
-from reporting.pdf_generator import LAYOUT_CHOICES, LAYOUT_STANDARD, ReportOptions
+from reporting.pdf_generator import LAYOUT_CHOICES, ReportOptions
 from storage.settings import Settings
 
 
@@ -122,9 +122,11 @@ class ReportPresetManager:
         except (TypeError, ValueError):
             dpi_value = ReportOptions().dpi
 
-        layout = str(data.get("layout", LAYOUT_STANDARD))
+        # Presets saved before the layout choice existed carry no opinion about
+        # it, so they follow the current default rather than pinning a layout.
+        layout = str(data.get("layout", ReportOptions().layout))
         if layout not in LAYOUT_CHOICES:
-            layout = LAYOUT_STANDARD
+            layout = ReportOptions().layout
 
         return ReportOptions(
             include_metadata=bool(data.get("include_metadata", True)),

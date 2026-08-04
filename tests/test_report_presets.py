@@ -52,21 +52,24 @@ def test_report_preset_manager_roundtrips_the_first_page_layout(tmp_path):
     assert preset.options.layout == LAYOUT_FULL_BLEED
 
 
-def test_report_preset_manager_rejects_unknown_layout(tmp_path):
-    """A preset stored by a newer/broken build falls back to the standard layout."""
-    from reporting.pdf_generator import LAYOUT_STANDARD
-
+def test_preset_without_a_usable_layout_follows_the_current_default(tmp_path):
+    """An unreadable or absent layout means "no opinion", not the older layout."""
     settings = Settings(tmp_path / "settings.json")
     settings.load()
-    settings.set("report_presets", [{"name": "Odd", "layout": "poster"}])
+    settings.set(
+        "report_presets",
+        [{"name": "Odd", "layout": "poster"}, {"name": "Legacy"}],
+    )
 
-    preset = ReportPresetManager(settings).get_preset("Odd")
-    assert preset is not None
-    assert preset.options.layout == LAYOUT_STANDARD
+    manager = ReportPresetManager(settings)
+    for name in ("Odd", "Legacy"):
+        preset = manager.get_preset(name)
+        assert preset is not None
+        assert preset.options.layout == ReportOptions().layout
 
 
-def test_export_dialog_can_select_the_full_page_layout(qtbot, tmp_path):
-    """The layout selector drives ReportOptions.layout for the PDF export."""
+def test_export_dialog_defaults_to_the_full_page_layout(qtbot, tmp_path):
+    """The dialog opens on the full-page layout and can switch back to the old one."""
     from reporting.pdf_generator import LAYOUT_FULL_BLEED, LAYOUT_STANDARD
 
     manager = _make_manager(tmp_path)
@@ -74,11 +77,11 @@ def test_export_dialog_can_select_the_full_page_layout(qtbot, tmp_path):
     qtbot.addWidget(dialog)
     combo = dialog._report_options_widget._layout_combo
 
-    assert dialog.report_options.layout == LAYOUT_STANDARD
-
-    combo.setCurrentIndex(combo.findData(LAYOUT_FULL_BLEED))
-
     assert dialog.report_options.layout == LAYOUT_FULL_BLEED
+
+    combo.setCurrentIndex(combo.findData(LAYOUT_STANDARD))
+
+    assert dialog.report_options.layout == LAYOUT_STANDARD
     # Diverging from the defaults must flip the preset combo to "Custom".
     assert dialog._preset_combo.currentText() == "Custom"
 

@@ -456,9 +456,16 @@ def test_full_bleed_spectrum_uses_the_whole_sheet(tmp_path: Path, monkeypatch) -
     assert fig_h * 72 == pytest.approx(pdf_module._LAND_H)
 
 
+def test_full_page_layout_is_the_export_default() -> None:
+    """Exporting without an explicit choice produces the full-page spectrum."""
+    from reporting.pdf_generator import LAYOUT_FULL_BLEED, ReportOptions
+
+    assert ReportOptions().layout == LAYOUT_FULL_BLEED
+
+
 def test_standard_layout_keeps_the_framed_spectrum_page(tmp_path: Path, monkeypatch) -> None:
-    """The default layout is untouched — it still flows the spectrum through a frame."""
-    from reporting.pdf_generator import PDFGenerator, ReportOptions
+    """The older layout is untouched — it still flows the spectrum through a frame."""
+    from reporting.pdf_generator import LAYOUT_STANDARD, PDFGenerator, ReportOptions
 
     calls: list[str] = []
     original_section = PDFGenerator._append_spectrum_section
@@ -475,13 +482,21 @@ def test_standard_layout_keeps_the_framed_spectrum_page(tmp_path: Path, monkeypa
     monkeypatch.setattr(PDFGenerator, "_append_spectrum_section", _spy_section)
     monkeypatch.setattr(PDFGenerator, "_build_full_bleed_first_page", _spy_full_bleed)
 
-    PDFGenerator().generate(_make_project(), tmp_path / "standard.pdf", options=ReportOptions())
+    PDFGenerator().generate(
+        _make_project(),
+        tmp_path / "standard.pdf",
+        options=ReportOptions(layout=LAYOUT_STANDARD),
+    )
 
     assert calls == ["framed"]
 
 
-def test_full_bleed_page_draws_identity_and_structure(tmp_path: Path) -> None:
-    """Sample name, file name and the molecule all land on the full-page spectrum."""
+def test_full_bleed_page_draws_identity_and_structure() -> None:
+    """File name, sample name and the molecule all land on the full-page spectrum.
+
+    The two identity lines must be visually equal — same font, size and colour —
+    with the file identifier first and without its spectrum-file extension.
+    """
     from reporting.pdf_generator import LAYOUT_FULL_BLEED, PDFGenerator, ReportOptions
 
     wn, ints, peaks = _banded_spectrum()
@@ -491,14 +506,18 @@ def test_full_bleed_page_draws_identity_and_structure(tmp_path: Path) -> None:
     project = Project(name="PAR1706-HA", spectrum=spectrum)
     project.peaks.extend(peaks)
     project.smiles = "CCO"
-    project.metadata.title = "PAR1706-HA"
+    project.metadata.title = "LF_647"
     project.metadata.file_name = "PAR1706-HA.SPA"
 
-    drawn_strings: list[str] = []
+    drawn_strings: list[tuple[str, tuple[str, float], object]] = []
     drawn_images: list[tuple[float, float]] = []
 
     class _RecordingCanvas:
         _pagesize = (100.0, 100.0)
+
+        def __init__(self) -> None:
+            self.font: tuple[str, float] = ("", 0.0)
+            self.fill: object = None
 
         def __getattr__(self, name):
             def _noop(*args, **kwargs):
@@ -506,8 +525,14 @@ def test_full_bleed_page_draws_identity_and_structure(tmp_path: Path) -> None:
 
             return _noop
 
+        def setFont(self, name, size):  # noqa: N802
+            self.font = (name, size)
+
+        def setFillColor(self, color):  # noqa: N802
+            self.fill = color
+
         def drawString(self, x, y, text):  # noqa: N802
-            drawn_strings.append(text)
+            drawn_strings.append((text, self.font, self.fill))
 
         def drawImage(self, image, x, y, **kwargs):  # noqa: N802
             drawn_images.append((kwargs.get("width", 0.0), kwargs.get("height", 0.0)))
@@ -519,18 +544,32 @@ def test_full_bleed_page_draws_identity_and_structure(tmp_path: Path) -> None:
         ReportOptions(layout=LAYOUT_FULL_BLEED, dpi=72),
         x_min=650.0,
         x_max=4000.0,
-        font_regular="Helvetica",
         font_bold="Helvetica-Bold",
     )
     canvas = _RecordingCanvas()
     canvas._pagesize = (841.89, 595.28)
     painter(canvas, None)
 
-    assert drawn_strings == ["PAR1706-HA", "PAR1706-HA.SPA"]
+    assert [entry[0] for entry in drawn_strings] == ["PAR1706-HA", "LF_647"]
+    assert drawn_strings[0][1] == drawn_strings[1][1]  # identical font and size
+    assert drawn_strings[0][2] == drawn_strings[1][2]  # identical colour
     # First image is the page-filling spectrum, second the molecule inside it.
     assert len(drawn_images) == 2
     assert drawn_images[0] == pytest.approx((841.89, 595.28))
     assert 0 < drawn_images[1][0] < 841.89
+
+
+def test_identity_line_only_strips_known_spectrum_extensions() -> None:
+    """A dot inside the name is not an extension and must survive."""
+    from reporting.pdf_generator import PDFGenerator
+
+    strip = PDFGenerator._without_spectrum_suffix
+    assert strip("FER60-SE.SPA") == "FER60-SE"
+    assert strip("PAR1706-HA.spa") == "PAR1706-HA"
+    assert strip("run.jdx") == "run"
+    assert strip("saved.irproj") == "saved"
+    assert strip("sample 2.5 mg") == "sample 2.5 mg"
+    assert strip("FER60-SE") == "FER60-SE"
 
 
 def _assert_box_is_blank(png_bytes: bytes, box: tuple[float, float, float, float]) -> None:

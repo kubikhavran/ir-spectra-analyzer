@@ -112,6 +112,11 @@ LAYOUT_STANDARD = "standard"
 LAYOUT_FULL_BLEED = "full_bleed"
 LAYOUT_CHOICES = (LAYOUT_STANDARD, LAYOUT_FULL_BLEED)
 
+# Extensions dropped from the identity line drawn on the spectrum — there it
+# reads as a sample identifier, not as a file name. The metadata table on the
+# later pages still prints the file name in full.
+_IDENTITY_STRIPPED_SUFFIXES = frozenset({".spa", ".jdx", ".dx", ".irproj"})
+
 # The edge-to-edge page has no margins to hide resampling in, and its text is
 # drawn by ReportLab rather than rasterised — but the curve and peak labels are
 # still pixels, so give them a floor above the 150 dpi used inside a frame.
@@ -134,10 +139,11 @@ class ReportOptions:
         diagnostic_regions: Runtime-only diagnostic overlays currently visible in the viewer.
         split_xaxis: When True, render the spectrum with a split X-axis at 2000 cm⁻¹
             (hi-wavenumber region left, fingerprint region right). Default True.
-        layout: First-page layout. LAYOUT_STANDARD keeps the spectrum inside the
-            usual 2 cm page margins; LAYOUT_FULL_BLEED drops the margins so the plot
-            covers the whole A4 sheet and floats the sample/file identity plus the
-            molecular structure into empty space inside the plot.
+        layout: First-page layout, LAYOUT_FULL_BLEED by default. It drops the page
+            margins so the plot covers the whole A4 sheet and floats the file/sample
+            identity plus the molecular structure into empty space inside the plot.
+            LAYOUT_STANDARD is the older layout that keeps the spectrum inside the
+            usual 2 cm page margins with nothing drawn on top of it.
     """
 
     include_structures: bool = True
@@ -148,7 +154,7 @@ class ReportOptions:
     view_y_range: tuple[float, float] | None = None
     diagnostic_regions: tuple[object, ...] = ()
     split_xaxis: bool = True
-    layout: str = LAYOUT_STANDARD
+    layout: str = LAYOUT_FULL_BLEED
     # id(peak) -> (label_x, label_y) in data coordinates, captured from the live
     # viewer so exported labels reproduce the on-screen layout exactly.
     peak_label_placements: dict = None  # type: ignore[assignment]
@@ -276,7 +282,6 @@ class PDFGenerator:
                 options,
                 x_min=_x_min,
                 x_max=_x_max,
-                font_regular=font_r,
                 font_bold=font_b,
             )
             # The page is painted entirely by the template callback; the frame
@@ -420,7 +425,6 @@ class PDFGenerator:
         *,
         x_min: float,
         x_max: float,
-        font_regular: str,
         font_bold: str,
     ) -> Callable[[Canvas, object], None]:
         """Render the edge-to-edge spectrum page and return its canvas painter.
@@ -430,6 +434,7 @@ class PDFGenerator:
         in whatever empty area the renderer found.
         """
         sample_name, file_name = self._header_identifiers(project, spectrum)
+        file_name = self._without_spectrum_suffix(file_name)
         structure_png = self._structure_png_bytes(project, options, trim=True)
         # %T curves leave their gap under the baseline, absorbance above it.
         anchor_bottom = spectrum.is_dip_spectrum
@@ -476,7 +481,6 @@ class PDFGenerator:
                 file_name=file_name,
                 structure_png=structure_png,
                 anchor_bottom=anchor_bottom,
-                font_regular=font_regular,
                 font_bold=font_bold,
             )
 
@@ -494,7 +498,6 @@ class PDFGenerator:
         file_name: str,
         structure_png: bytes | None,
         anchor_bottom: bool,
-        font_regular: str,
         font_bold: str,
     ) -> None:
         """Draw the identity lines above the structure inside a free area of the plot.
@@ -509,9 +512,8 @@ class PDFGenerator:
         if avail_w <= 0 or avail_h <= 0:
             return
 
-        text_h, text_w, sample_size, file_size = self._identity_metrics(
-            sample_name, file_name, avail_w, font_regular, font_bold
-        )
+        lines = self._identity_lines(sample_name, file_name)
+        text_h, text_w, text_size = self._identity_metrics(lines, avail_w, font_bold)
 
         structure_w = structure_h = 0.0
         if structure_png is not None:
@@ -540,15 +542,12 @@ class PDFGenerator:
 
         self._draw_identity_lines(
             canvas,
-            sample_name,
-            file_name,
+            lines,
             x=x + pad,
             top=frame_y + frame_h - pad,
             max_width=text_w,
-            sample_size=sample_size,
-            file_size=file_size,
-            font_regular=font_regular,
-            font_bold=font_bold,
+            size=text_size,
+            font_name=font_bold,
         )
         if structure_png is not None:
             self._draw_structure(
@@ -614,64 +613,65 @@ class PDFGenerator:
             mask="auto",
         )
 
-    # Identity lines: sample designation on top, file identifier underneath —
-    # the same two values the portrait pages print in their header.
-    _SAMPLE_FONT_SIZE = 13.0
-    _FILE_FONT_SIZE = 9.5
+    # Identity lines: file identifier on top, sample designation underneath —
+    # the same two values the portrait pages print in their header, drawn in one
+    # uniform style so neither reads as more important than the other.
+    _IDENTITY_FONT_SIZE = 11.5
     _MIN_FONT_SIZE = 6.0
+
+    @staticmethod
+    def _identity_lines(sample_name: str, file_name: str) -> list[str]:
+        """Return the identity lines in display order, skipping empty values."""
+        return [line for line in (file_name, sample_name) if line]
+
+    @staticmethod
+    def _without_spectrum_suffix(file_name: str) -> str:
+        """Drop a known spectrum-file extension, leaving any other dots alone."""
+        stem, dot, suffix = file_name.rpartition(".")
+        if dot and f".{suffix.lower()}" in _IDENTITY_STRIPPED_SUFFIXES:
+            return stem
+        return file_name
 
     @classmethod
     def _identity_metrics(
-        cls, sample_name: str, file_name: str, max_width: float, font_regular: str, font_bold: str
-    ) -> tuple[float, float, float, float]:
-        """Return (total height, widest line, sample font size, file font size)."""
-        sample_size = cls._fit_font_size(sample_name, font_bold, cls._SAMPLE_FONT_SIZE, max_width)
-        file_size = cls._fit_font_size(file_name, font_regular, cls._FILE_FONT_SIZE, max_width)
+        cls, lines: list[str], max_width: float, font_name: str
+    ) -> tuple[float, float, float]:
+        """Return (total height, widest line, shared font size).
 
-        height = 0.0
-        widest = 0.0
-        if sample_name:
-            height += sample_size * 1.25
-            widest = max(widest, pdfmetrics.stringWidth(sample_name, font_bold, sample_size))
-        if file_name:
-            if height:
-                height += 2.0
-            height += file_size * 1.25
-            widest = max(widest, pdfmetrics.stringWidth(file_name, font_regular, file_size))
-        return (height, min(widest, max_width), sample_size, file_size)
+        One size is fitted for every line, so a long file name shrinks the sample
+        designation with it rather than the two drifting apart.
+        """
+        if not lines:
+            return (0.0, 0.0, cls._IDENTITY_FONT_SIZE)
+
+        size = min(
+            cls._fit_font_size(line, font_name, cls._IDENTITY_FONT_SIZE, max_width)
+            for line in lines
+        )
+        height = len(lines) * size * 1.25 + (len(lines) - 1) * 2.0
+        widest = max(pdfmetrics.stringWidth(line, font_name, size) for line in lines)
+        return (height, min(widest, max_width), size)
 
     @classmethod
     def _draw_identity_lines(
         cls,
         canvas: Canvas,
-        sample_name: str,
-        file_name: str,
+        lines: list[str],
         *,
         x: float,
         top: float,
         max_width: float,
-        sample_size: float,
-        file_size: float,
-        font_regular: str,
-        font_bold: str,
+        size: float,
+        font_name: str,
     ) -> None:
-        """Draw the sample designation and the file identifier from `top` downwards."""
+        """Draw the identity lines from `top` downwards in one uniform style."""
+        canvas.setFont(font_name, size)
+        canvas.setFillColor(colors.black)
         cursor = top
-        if sample_name:
-            canvas.setFont(font_bold, sample_size)
-            canvas.setFillColor(colors.black)
-            cursor -= sample_size
-            canvas.drawString(
-                x, cursor, cls._clip_text(sample_name, font_bold, sample_size, max_width)
-            )
-            cursor -= sample_size * 0.25 + 2.0
-        if file_name:
-            canvas.setFont(font_regular, file_size)
-            canvas.setFillColor(colors.HexColor("#555555"))
-            cursor -= file_size
-            canvas.drawString(
-                x, cursor, cls._clip_text(file_name, font_regular, file_size, max_width)
-            )
+        for line in lines:
+            cursor -= size
+            canvas.drawString(x, cursor, cls._clip_text(line, font_name, size, max_width))
+            cursor -= size * 0.25 + 2.0
 
     @classmethod
     def _fit_font_size(cls, text: str, font_name: str, max_size: float, max_width: float) -> float:
