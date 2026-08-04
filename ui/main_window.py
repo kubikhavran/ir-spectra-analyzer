@@ -62,6 +62,11 @@ class MainWindow(QMainWindow):
         from app.reference_library_service import ReferenceLibraryService  # noqa: PLC0415
 
         self._reference_library_service = ReferenceLibraryService(db, settings=settings)
+        from app.structure_preview import StructurePreviewService  # noqa: PLC0415
+
+        # Draws a matched spectrum's saved structure on hover. Built empty and fed
+        # by _refresh_saved_project_names — nothing here runs during a search.
+        self._structure_preview = StructurePreviewService()
         self._project = None
         self._current_project_path: str | None = None  # last saved/opened .irproj path
         self._recent_menu: QMenu | None = None
@@ -373,6 +378,9 @@ class MainWindow(QMainWindow):
         self._match_results_panel.match_requested.connect(self._on_match_spectrum)
         self._match_results_panel.apply_assignments_requested.connect(
             self._on_apply_assignments_from_match
+        )
+        self._match_results_panel.set_structure_preview_provider(
+            self._structure_preview.preview_png
         )
         self._functional_group_panel.group_selected.connect(self._on_functional_group_selected)
         self._functional_group_panel.diagnostic_visibility_changed.connect(
@@ -1307,9 +1315,12 @@ class MainWindow(QMainWindow):
             if entry.is_file() and entry.suffix.lower() == ".irproj"
         }
 
-    def _refresh_saved_project_names(self) -> None:
-        """Tell the match panel which candidates have a saved project on disk."""
-        self._match_results_panel.set_saved_project_names(self._saved_project_paths().keys())
+    def _refresh_saved_project_names(self) -> dict[str, Path]:
+        """Tell the match panel and the preview service about the saved projects."""
+        saved_projects = self._saved_project_paths()
+        self._match_results_panel.set_saved_project_names(saved_projects.keys())
+        self._structure_preview.set_project_paths(saved_projects)
+        return saved_projects
 
     def _on_set_annotated_projects_folder(self) -> None:
         """Let the user pick the folder that holds previously analysed .irproj files."""
@@ -1346,8 +1357,7 @@ class MainWindow(QMainWindow):
             )
             return
 
-        saved_projects = self._saved_project_paths()
-        self._match_results_panel.set_saved_project_names(saved_projects.keys())
+        saved_projects = self._refresh_saved_project_names()
         project_path = saved_projects.get(str(result.name).strip().lower())
         if project_path is None:
             QMessageBox.information(

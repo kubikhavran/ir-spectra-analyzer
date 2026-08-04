@@ -6,14 +6,15 @@ Zodpovědnost:
 - Signal pro výběr kandidáta (pro overlay v SpectrumWidget)
 - Signal pro import referenčního spektra z SPA souboru
 - Volitelné omezení seznamu na shody s uloženým .irproj projektem
+- Náhled struktury molekuly při přejetí myší nad shodou
 """
 
 from __future__ import annotations
 
-from collections.abc import Iterable
+from collections.abc import Callable, Iterable
 
-from PySide6.QtCore import QSignalBlocker, Signal
-from PySide6.QtGui import QColor
+from PySide6.QtCore import QEvent, QObject, QPoint, QSignalBlocker, Qt, Signal
+from PySide6.QtGui import QColor, QCursor, QGuiApplication, QHideEvent, QPixmap
 from PySide6.QtWidgets import (
     QCheckBox,
     QHBoxLayout,
@@ -33,6 +34,10 @@ SKELETON_MARKER = "▲"  # ▲ — skeleton agrees markedly better than the whol
 # How far the skeleton score must exceed the overall score to be worth flagging.
 SKELETON_LEAD_PP = 10.0
 
+# Hover preview size in logical pixels, and the device ratio its PNG is drawn at.
+PREVIEW_DISPLAY_PX = 220
+PREVIEW_DEVICE_RATIO = 2
+
 
 class MatchResultsPanel(QWidget):
     """Panel showing ranked spectral match results."""
@@ -47,7 +52,24 @@ class MatchResultsPanel(QWidget):
         self._results: list = []  # every result from the last search
         self._visible_results: list = []  # results currently shown in the list
         self._saved_project_names: set[str] = set()  # lowercased .irproj stems
+        # name -> PNG bytes of its saved structure; supplied by the main window so
+        # the panel itself never touches the disk.
+        self._structure_provider: Callable[[str], bytes | None] | None = None
+        self._preview_popup: QLabel | None = None
+        self._preview_name: str = ""
         self._setup_ui()
+
+    def set_structure_preview_provider(
+        self, provider: Callable[[str], bytes | None] | None
+    ) -> None:
+        """Supply the source of structure previews shown on hover.
+
+        Args:
+            provider: Callable mapping a match name to PNG bytes, or None when
+                that match has no saved structure to show.
+        """
+        self._structure_provider = provider
+        self._hide_structure_preview()
 
     def name_filter(self) -> str:
         """Return the current name-substring filter for scoping the library search."""
@@ -124,6 +146,12 @@ class MatchResultsPanel(QWidget):
 
         self._list = QListWidget()
         self._list.currentRowChanged.connect(self._on_row_changed)
+        # Hovering a candidate shows the structure saved for it, so a long hit
+        # list can be scanned for "is this actually the same molecule?" without
+        # clicking through every row.
+        self._list.setMouseTracking(True)
+        self._list.itemEntered.connect(self._on_item_hovered)
+        self._list.viewport().installEventFilter(self)
         layout.addWidget(self._list)
 
         # Which bands the sample and the selected reference do not share — the
@@ -176,6 +204,7 @@ class MatchResultsPanel(QWidget):
 
     def _rebuild_list(self) -> None:
         """Repopulate the list from the cached results and the current filter."""
+        self._hide_structure_preview()
         previous = self.selected_result()
         saved_only = self._saved_only_check.isChecked()
         self._visible_results = [
@@ -260,3 +289,107 @@ class MatchResultsPanel(QWidget):
         result = self.selected_result()
         if result is not None:
             self.apply_assignments_requested.emit(result)
+
+    # ------------------------------------------------------------------
+    # Structure preview on hover
+    # ------------------------------------------------------------------
+
+    def eventFilter(self, watched: QObject, event: QEvent) -> bool:  # noqa: N802
+        """Hide the preview as soon as the pointer leaves the list."""
+        if event.type() == QEvent.Type.Leave and watched is self._list.viewport():
+            self._hide_structure_preview()
+        return super().eventFilter(watched, event)
+
+    def hideEvent(self, event: QHideEvent) -> None:  # noqa: N802
+        """Never leave a preview floating over the app when the panel goes away."""
+        self._hide_structure_preview()
+        super().hideEvent(event)
+
+    def _on_item_hovered(self, item: QListWidgetItem) -> None:
+        """Show the structure saved for the hovered match, if there is one."""
+        if self._structure_provider is None:
+            return
+        result = item.data(256)
+        name = str(getattr(result, "name", "")).strip()
+        if not name:
+            self._hide_structure_preview()
+            return
+        if name == self._preview_name and self._preview_popup is not None:
+            self._move_preview_to_cursor()
+            return
+
+        png = self._structure_provider(name)
+        if not png:
+            self._hide_structure_preview()
+            return
+        pixmap = QPixmap()
+        if not pixmap.loadFromData(png) or pixmap.isNull():
+            self._hide_structure_preview()
+            return
+
+        popup = self._ensure_preview_popup()
+        popup.setPixmap(
+            pixmap.scaled(
+                220,
+                220,
+                Qt.AspectRatioMode.KeepAspectRatio,
+                Qt.TransformationMode.SmoothTransformation,
+            )
+        )
+        popup.adjustSize()
+        self._preview_name = name
+        self._move_preview_to_cursor()
+        popup.show()
+
+    @staticmethod
+    def _fit_preview(pixmap: QPixmap) -> QPixmap:
+        """Cap the preview at its display size and mark it as a 2x HiDPI image.
+
+        The provider already rasterises at exactly this size, so the scale step
+        normally does nothing — it only guards against an oversized image.
+        """
+        pixels = PREVIEW_DISPLAY_PX * PREVIEW_DEVICE_RATIO
+        if pixmap.width() > pixels or pixmap.height() > pixels:
+            pixmap = pixmap.scaled(
+                pixels,
+                pixels,
+                Qt.AspectRatioMode.KeepAspectRatio,
+                Qt.TransformationMode.SmoothTransformation,
+            )
+        pixmap.setDevicePixelRatio(float(PREVIEW_DEVICE_RATIO))
+        return pixmap
+
+    def _ensure_preview_popup(self) -> QLabel:
+        """Create the floating preview window on first use."""
+        if self._preview_popup is None:
+            popup = QLabel(None, Qt.WindowType.ToolTip)
+            # Near a screen edge the popup can be nudged under the pointer; if it
+            # took mouse events the list would see a Leave and start flickering.
+            popup.setAttribute(Qt.WidgetAttribute.WA_TransparentForMouseEvents, True)
+            popup.setAlignment(Qt.AlignmentFlag.AlignCenter)
+            popup.setStyleSheet(
+                "background: white; border: 1px solid #9E9E9E; border-radius: 3px; padding: 4px;"
+            )
+            self._preview_popup = popup
+        return self._preview_popup
+
+    def _move_preview_to_cursor(self) -> None:
+        """Place the preview beside the pointer, kept inside the screen."""
+        popup = self._preview_popup
+        if popup is None:
+            return
+        position = QCursor.pos() + QPoint(18, 18)
+        screen = QGuiApplication.screenAt(QCursor.pos()) or QGuiApplication.primaryScreen()
+        if screen is not None:
+            bounds = screen.availableGeometry()
+            position.setX(min(position.x(), bounds.right() - popup.width()))
+            position.setY(min(position.y(), bounds.bottom() - popup.height()))
+            position.setX(max(position.x(), bounds.left()))
+            position.setY(max(position.y(), bounds.top()))
+        popup.move(position)
+
+    def _hide_structure_preview(self) -> None:
+        """Take the preview off screen and forget what it was showing."""
+        self._preview_name = ""
+        if self._preview_popup is not None:
+            self._preview_popup.hide()
