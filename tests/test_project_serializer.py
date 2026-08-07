@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import json
 import os
 
 os.environ.setdefault("QT_QPA_PLATFORM", "offscreen")
@@ -119,6 +120,32 @@ def test_project_serializer_extra_metadata_roundtrip(tmp_path):
     loaded = serializer.load(file_path)
     assert loaded.spectrum.extra_metadata["resolution_cm"] == pytest.approx(4.0)
     assert loaded.spectrum.extra_metadata["instrument_serial"] == "iS10-ABC"
+
+
+def test_project_serializer_normalizes_numpy_scalars_at_json_boundary(tmp_path):
+    project = _make_project()
+    project.spectrum.extra_metadata["nested"] = {
+        "count": np.int64(7),
+        "enabled": np.bool_(True),
+        "scale": np.float32(0.25),
+        "label": np.str_("detector"),
+    }
+    project.peaks[0].vibration_id = np.int64(42)
+    project.peaks[0].vibration_ids = [np.int64(42), None]
+    project.peaks[0].vibration_labels = ["first", "manual"]
+
+    file_path = tmp_path / "numpy_scalars.irproj"
+    ProjectSerializer().save(project, file_path)
+    loaded = ProjectSerializer().load(file_path)
+
+    assert loaded.spectrum.extra_metadata["nested"] == {
+        "count": 7,
+        "enabled": True,
+        "scale": pytest.approx(0.25),
+        "label": "detector",
+    }
+    assert loaded.peaks[0].vibration_id == 42
+    assert loaded.peaks[0].vibration_ids == [42, None]
 
 
 def test_project_serializer_source_path_roundtrip(tmp_path):
@@ -263,3 +290,146 @@ def test_project_serializer_project_smiles_defaults_to_empty(tmp_path):
 
     loaded = serializer.load(file_path)
     assert loaded.smiles == ""
+
+
+def test_project_serializer_failed_save_preserves_existing_file(tmp_path, monkeypatch):
+    """A failed overwrite must leave the last valid project untouched."""
+    project = _make_project()
+    serializer = ProjectSerializer()
+    file_path = tmp_path / "atomic.irproj"
+    serializer.save(project, file_path)
+    original = file_path.read_bytes()
+
+    def _failing_dump(_payload, fp, **_kwargs) -> None:
+        fp.write('{"partial":')
+        raise OSError("simulated disk failure")
+
+    monkeypatch.setattr("storage.project_serializer.json.dump", _failing_dump)
+
+    with pytest.raises(OSError, match="simulated disk failure"):
+        serializer.save(project, file_path)
+
+    assert file_path.read_bytes() == original
+    assert not list(tmp_path.glob("*.tmp*"))
+
+
+def test_project_serializer_rejects_nonfinite_values_during_atomic_save(tmp_path):
+    project = _make_project()
+    serializer = ProjectSerializer()
+    file_path = tmp_path / "finite.irproj"
+    serializer.save(project, file_path)
+    original = file_path.read_bytes()
+    project.spectrum.intensities[0] = float("nan")
+
+    with pytest.raises(ValueError, match="JSON compliant"):
+        serializer.save(project, file_path)
+
+    assert file_path.read_bytes() == original
+
+
+def test_project_serializer_repairs_legacy_vibration_parallel_lists(tmp_path):
+    """A legacy single assignment must load into paired ID/label lists."""
+    project = _make_project()
+    serializer = ProjectSerializer()
+    file_path = tmp_path / "legacy_vibration.irproj"
+    serializer.save(project, file_path)
+
+    payload = json.loads(file_path.read_text(encoding="utf-8"))
+    peak_data = payload["project"]["peaks"][0]
+    peak_data.pop("vibration_ids")
+    peak_data.pop("vibration_labels")
+    file_path.write_text(json.dumps(payload), encoding="utf-8")
+
+    peak = serializer.load(file_path).peaks[0]
+    assert peak.vibration_ids == [42]
+    assert peak.vibration_labels == ["P1"]
+    assert len(peak.vibration_ids) == len(peak.vibration_labels)
+
+
+def test_project_serializer_repairs_single_id_without_parallel_label(tmp_path):
+    project = _make_project()
+    serializer = ProjectSerializer()
+    file_path = tmp_path / "single_id_without_label.irproj"
+    serializer.save(project, file_path)
+
+    payload = json.loads(file_path.read_text(encoding="utf-8"))
+    peak_data = payload["project"]["peaks"][0]
+    peak_data["vibration_id"] = None
+    peak_data["vibration_ids"] = [42]
+    peak_data["vibration_labels"] = []
+    file_path.write_text(json.dumps(payload), encoding="utf-8")
+
+    peak = serializer.load(file_path).peaks[0]
+    assert peak.vibration_ids == [42]
+    assert peak.vibration_labels == ["P1"]
+
+
+def test_project_serializer_rejects_non_integer_legacy_vibration_id(tmp_path):
+    project = _make_project()
+    serializer = ProjectSerializer()
+    file_path = tmp_path / "bad_legacy_vibration_id.irproj"
+    serializer.save(project, file_path)
+
+    payload = json.loads(file_path.read_text(encoding="utf-8"))
+    peak_data = payload["project"]["peaks"][0]
+    peak_data["vibration_id"] = "42"
+    peak_data["vibration_ids"] = []
+    peak_data["vibration_labels"] = []
+    file_path.write_text(json.dumps(payload), encoding="utf-8")
+
+    with pytest.raises(ValueError, match="vibration_id.*integer"):
+        serializer.load(file_path)
+
+
+def test_project_serializer_rejects_invalid_nested_metadata_schema(tmp_path):
+    """Malformed but valid JSON should fail at load, not later in an exporter."""
+    project = _make_project()
+    serializer = ProjectSerializer()
+    file_path = tmp_path / "bad_nested_schema.irproj"
+    serializer.save(project, file_path)
+
+    payload = json.loads(file_path.read_text(encoding="utf-8"))
+    payload["project"]["spectrum"]["extra_metadata"] = ["not", "a", "mapping"]
+    file_path.write_text(json.dumps(payload), encoding="utf-8")
+
+    with pytest.raises(ValueError, match="extra_metadata.*object"):
+        serializer.load(file_path)
+
+
+@pytest.mark.parametrize(
+    ("wavenumbers", "intensities", "message"),
+    [
+        ([[1000.0, 1100.0]], [[0.1, 0.2]], "one-dimensional"),
+        ([1000.0, float("nan")], [0.1, 0.2], "finite"),
+    ],
+)
+def test_project_serializer_rejects_invalid_spectral_arrays(
+    tmp_path, wavenumbers, intensities, message
+):
+    """Projects with malformed arrays must be rejected before reaching plotting code."""
+    project = _make_project()
+    serializer = ProjectSerializer()
+    file_path = tmp_path / "bad_arrays.irproj"
+    serializer.save(project, file_path)
+
+    payload = json.loads(file_path.read_text(encoding="utf-8"))
+    payload["project"]["spectrum"]["wavenumbers"] = wavenumbers
+    payload["project"]["spectrum"]["intensities"] = intensities
+    file_path.write_text(json.dumps(payload), encoding="utf-8")
+
+    with pytest.raises(ValueError, match=message):
+        serializer.load(file_path)
+
+
+def test_project_serializer_rejects_invalid_structure_image_base64(tmp_path):
+    project = _make_project()
+    serializer = ProjectSerializer()
+    file_path = tmp_path / "bad_image.irproj"
+    serializer.save(project, file_path)
+
+    payload = json.loads(file_path.read_text(encoding="utf-8"))
+    payload["project"]["structure_image"] = "not valid base64 ***"
+    file_path.write_text(json.dumps(payload), encoding="utf-8")
+
+    with pytest.raises(ValueError, match="structure_image"):
+        serializer.load(file_path)

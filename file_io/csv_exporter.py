@@ -17,6 +17,8 @@ from typing import TYPE_CHECKING
 from core.peak import Peak
 from core.peak_assignments import build_peak_assignment_rows, collect_export_metadata
 from core.spectrum import Spectrum
+from file_io.atomic_output import atomic_output_path
+from file_io.spreadsheet_safety import neutralize_spreadsheet_formula
 
 if TYPE_CHECKING:
     from core.project import Project
@@ -56,7 +58,8 @@ class CSVExporter:
 
         # ── Build each block as a list of equal-width rows ──────────────────
         metadata_block: list[list[str]] = [
-            [label, value] for label, value in collect_export_metadata(project, spectrum)
+            [label, neutralize_spreadsheet_formula(value)]
+            for label, value in collect_export_metadata(project, spectrum)
         ]
         metadata_header = ["Field", "Value"]
 
@@ -70,7 +73,7 @@ class CSVExporter:
                 str(row.position),
                 f"{row.intensity:.4f}",
                 row.intensity_label,
-                row.assignment,
+                neutralize_spreadsheet_formula(row.assignment),
             ]
             for row in assignment_rows
         ]
@@ -93,23 +96,25 @@ class CSVExporter:
         if include_spectrum_data and spectrum is not None:
             blocks.append((spectrum_header, spectrum_block, 2))
 
-        with output_path.open("w", newline="", encoding="utf-8-sig") as f:
-            writer = csv.writer(f, delimiter=delimiter)
+        with atomic_output_path(output_path) as temp_path:
+            with temp_path.open("w", newline="", encoding="utf-8-sig") as f:
+                writer = csv.writer(f, delimiter=delimiter)
 
-            if include_header:
-                header_row: list[str] = []
-                for i, (header, _block, _width) in enumerate(blocks):
-                    if i > 0:
-                        header_row.append("")  # blank spacer column
-                    header_row.extend(header)
-                writer.writerow(header_row)
+                if include_header:
+                    header_row: list[str] = []
+                    for i, (header, _block, _width) in enumerate(blocks):
+                        if i > 0:
+                            header_row.append("")  # blank spacer column
+                        header_row.extend(header)
+                    writer.writerow(header_row)
 
-            block_rows = [block for _header, block, _width in blocks]
-            block_widths = [width for _header, _block, width in blocks]
-            for combined in zip_longest(*block_rows, fillvalue=None):
-                out_row: list[str] = []
-                for i, (cells, width) in enumerate(zip(combined, block_widths, strict=True)):
-                    if i > 0:
-                        out_row.append("")  # blank spacer column
-                    out_row.extend(cells if cells is not None else [""] * width)
-                writer.writerow(out_row)
+                block_rows = [block for _header, block, _width in blocks]
+                block_widths = [width for _header, _block, width in blocks]
+                for combined in zip_longest(*block_rows, fillvalue=None):
+                    out_row: list[str] = []
+                    for i, (cells, width) in enumerate(zip(combined, block_widths, strict=True)):
+                        if i > 0:
+                            out_row.append("")  # blank spacer column
+                        out_row.extend(cells if cells is not None else [""] * width)
+                    writer.writerow(out_row)
+                f.flush()

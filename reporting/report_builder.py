@@ -13,7 +13,6 @@ from pathlib import Path
 
 from core.project import Project
 from reporting.pdf_generator import PDFGenerator, ReportOptions
-from reporting.spectrum_renderer import SpectrumRenderer
 
 
 class ReportBuilder:
@@ -24,7 +23,6 @@ class ReportBuilder:
 
     def __init__(self) -> None:
         self._generator = PDFGenerator()
-        self._renderer = SpectrumRenderer()
 
     def build(self, project: Project, output_path: Path) -> None:
         """Build and save a complete PDF report with default options.

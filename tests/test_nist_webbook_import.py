@@ -5,6 +5,7 @@ from __future__ import annotations
 from pathlib import Path
 
 import numpy as np
+import pytest
 
 
 def _make_nist_html() -> str:
@@ -79,6 +80,23 @@ def test_nist_webbook_client_accepts_direct_jcamp_url():
     assert reference.name == "Triethanolamine"
 
 
+def test_nist_webbook_client_strips_surrounding_url_whitespace():
+    from app.providers.nist_webbook import NISTWebBookClient
+
+    page_url = "https://webbook.nist.gov/cgi/cbook.cgi?ID=C102716&Index=0&Type=IR-SPEC"
+    jcamp_url = "https://webbook.nist.gov/cgi/cbook.cgi?JCAMP=C102716&Index=0&Type=IR"
+    responses = {
+        page_url: _make_nist_html().encode("utf-8"),
+        jcamp_url: _make_nist_jcamp(),
+    }
+
+    reference = NISTWebBookClient(fetcher=lambda url: responses[url]).fetch_reference(
+        f"  {page_url}\n"
+    )
+
+    assert reference.page_url == page_url
+
+
 def test_web_reference_import_service_imports_nist_reference(tmp_path: Path):
     from app.providers.nist_webbook import NISTWebBookClient
     from app.web_reference_import import WebReferenceImportService
@@ -117,3 +135,72 @@ def test_web_reference_import_service_imports_nist_reference(tmp_path: Path):
     assert stored["y_unit"] == "Absorbance"
     assert np.allclose(stored["wavenumbers"], [1000.0, 1200.0, 1400.0])
     db.close()
+
+
+@pytest.mark.parametrize(
+    "url",
+    [
+        "http://webbook.nist.gov/cgi/cbook.cgi?ID=C102716",
+        "https://webbook.nist.gov.evil.example/cgi/cbook.cgi?ID=C102716",
+        "https://webbook.nist.gov@127.0.0.1/cgi/cbook.cgi?ID=C102716",
+        "https://user@webbook.nist.gov/cgi/cbook.cgi?ID=C102716",
+        "https://webbook.nist.gov:444/cgi/cbook.cgi?ID=C102716",
+        "ftp://webbook.nist.gov/cgi/cbook.cgi?ID=C102716",
+    ],
+)
+def test_nist_webbook_client_rejects_non_https_or_non_nist_urls(url: str) -> None:
+    from app.providers.nist_webbook import NISTWebBookClient
+
+    fetched: list[str] = []
+    client = NISTWebBookClient(fetcher=lambda candidate: fetched.append(candidate) or b"")
+
+    with pytest.raises(ValueError, match="NIST WebBook"):
+        client.fetch_reference(url)
+
+    assert fetched == []
+
+
+def test_nist_webbook_client_rejects_off_site_jcamp_link() -> None:
+    from app.providers.nist_webbook import NISTWebBookClient
+
+    page_url = "https://webbook.nist.gov/cgi/cbook.cgi?ID=C102716&Index=0&Type=IR-SPEC"
+    html = b'<html><a href="https://evil.example/payload?JCAMP=C102716">JCAMP</a></html>'
+    fetched: list[str] = []
+
+    def fetch(url: str) -> bytes:
+        fetched.append(url)
+        return html
+
+    with pytest.raises(ValueError, match="NIST WebBook"):
+        NISTWebBookClient(fetcher=fetch).fetch_reference(page_url)
+
+    assert fetched == [page_url]
+
+
+def test_nist_redirect_handler_rejects_before_following_offsite_redirect() -> None:
+    from app.providers.nist_webbook import _NISTRedirectHandler
+
+    handler = _NISTRedirectHandler()
+    with pytest.raises(ValueError, match="NIST WebBook"):
+        handler.redirect_request(
+            None,
+            None,
+            302,
+            "Found",
+            {},
+            "https://evil.example/payload.jdx",
+        )
+
+
+def test_nist_response_reader_enforces_size_limit() -> None:
+    from app.providers.nist_webbook import _read_limited_response
+
+    class _Response:
+        headers = {"Content-Length": "5"}
+
+        @staticmethod
+        def read(size: int) -> bytes:
+            return b"12345"[:size]
+
+    with pytest.raises(ValueError, match="too large"):
+        _read_limited_response(_Response(), max_bytes=4)

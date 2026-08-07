@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+import pytest
+
 from matching.search_engine import MatchResult
 
 
@@ -117,3 +119,64 @@ def test_build_consensus_analysis_flags_close_library_matches_as_conflict():
     assert any(
         "library matches are close" in evidence.label.lower() for evidence in analysis.conflicts
     )
+
+
+def test_exclusion_band_is_never_positive_or_assignable_evidence():
+    from core.functional_groups import FunctionalGroupScore
+    from processing.consensus_analysis import build_consensus_analysis
+
+    exclusion = _make_band(
+        band_id="carbonyl_exclusion",
+        label="Carbonyl exclusion",
+        confidence=92.0,
+        role="exclusion",
+        suggested_preset_names=("C=O stretch",),
+    )
+    result = FunctionalGroupScore(
+        group_id="alcohol",
+        group_name="Alcohol",
+        color="#123456",
+        score=70.0,
+        summary="",
+        bands=(exclusion,),
+    )
+
+    assert not exclusion.is_confirmed
+    assert not exclusion.is_assignable
+    assert exclusion.evidence_label == "Conflict"
+    assert result.matched_bands == ()
+    assert result.suggested_bands == ()
+    assert result.supporting_bands == ()
+
+    analysis = build_consensus_analysis(None, functional_group_results=[result])
+    hypothesis = analysis.hypotheses[0]
+    assert hypothesis.score == 70.0
+    assert not any(item.kind == "matched_band" for item in hypothesis.supporting_evidence)
+
+
+def test_consensus_uses_search_ranking_score_for_fingerprint_first_results():
+    from processing.consensus_analysis import build_consensus_analysis
+
+    whole_spectrum_hit = MatchResult(
+        ref_id=1,
+        name="Whole-spectrum hit",
+        score=0.80,
+        fingerprint_score=0.80,
+    )
+    skeleton_hit = MatchResult(
+        ref_id=2,
+        name="Same skeleton",
+        score=0.40,
+        fingerprint_score=0.90,
+    )
+
+    # Deliberately pass raw-score order, as an adapter may do after SearchEngine.
+    analysis = build_consensus_analysis(
+        None,
+        match_results=[whole_spectrum_hit, skeleton_hit],
+    )
+
+    assert analysis.top_matches[0].target_id == 2
+    assert analysis.top_matches[0].score == 90.0
+    assert analysis.overall_score == pytest.approx(31.5)
+    assert all(0.0 <= conflict.score <= 100.0 for conflict in analysis.conflicts)

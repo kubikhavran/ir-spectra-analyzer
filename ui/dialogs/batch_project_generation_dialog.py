@@ -22,15 +22,17 @@ from PySide6.QtWidgets import (
 
 from app.batch_project_generation import BatchProjectGenerator, BatchProjectSummary
 from app.output_path_policy import OVERWRITE_MODE_OPTIONS
+from ui.dialogs.background_task_dialog import BackgroundTaskDialogMixin
 
 
-class BatchProjectGenerationDialog(QDialog):
+class BatchProjectGenerationDialog(BackgroundTaskDialogMixin, QDialog):
     """Dialog for generating `.irproj` files in bulk from a folder of spectra."""
 
     def __init__(self, generator: BatchProjectGenerator | None = None, parent=None) -> None:
         super().__init__(parent)
         self._generator = generator or BatchProjectGenerator()
         self._generate_thread: QThread | None = None
+        self._background_thread_attribute = "_generate_thread"
         self.setWindowTitle("Batch Generate Projects")
         self.setMinimumSize(860, 560)
         self._setup_ui()
@@ -75,6 +77,7 @@ class BatchProjectGenerationDialog(QDialog):
         root_layout.addLayout(overwrite_layout)
 
         self._summary_label = QLabel("Choose input and output folders, then click Generate.")
+        self._summary_label.setTextFormat(Qt.TextFormat.PlainText)
         self._summary_label.setWordWrap(True)
         root_layout.addWidget(self._summary_label)
 
@@ -224,9 +227,9 @@ class BatchProjectGenerationDialog(QDialog):
         worker.completed.connect(self._on_background_generation_completed)
         worker.failed.connect(self._on_background_generation_failed)
         worker.finished.connect(thread.quit)
-        worker.finished.connect(self._on_generate_worker_finished)
         worker.finished.connect(worker.deleteLater)
         thread.finished.connect(thread.deleteLater)
+        thread.finished.connect(self._on_generate_worker_finished)
         thread.started.connect(
             lambda: QMetaObject.invokeMethod(worker, "run", Qt.ConnectionType.QueuedConnection)
         )

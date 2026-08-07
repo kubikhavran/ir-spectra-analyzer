@@ -123,13 +123,13 @@ The easiest path. No Python knowledge required.
 1. Go to the [**Releases page**](https://github.com/kubikhavran/ir-spectra-analyzer/releases/latest).
 2. Download `IR-Spectra-Analyzer-Setup-<version>.exe`.
 3. Double-click to install. The wizard creates a Start Menu entry, an
-   optional Desktop shortcut, and registers `.spa` / `.irproj` so you can
-   double-click spectrum files to open them in the app.
+   optional Desktop shortcut, registers `.irproj`, and adds the app to
+   **Open with** for `.spa` files without replacing an existing OMNIC default.
 4. Launch **IR Spectra Analyzer** from the Start Menu.
 
 To uninstall, use **Settings → Apps → Installed Apps → IR Spectra Analyzer → Uninstall**
 (standard Windows flow). Your library database and preferences stay in
-`%APPDATA%\ir-spectra-analyzer\` and are preserved across reinstalls.
+`%USERPROFILE%\.ir-spectra-analyzer\` and are preserved across reinstalls.
 
 > **First-run SmartScreen warning:** The installer is currently unsigned
 > (code-signing is planned). Windows may show a "Windows protected your PC"
@@ -139,9 +139,8 @@ To uninstall, use **Settings → Apps → Installed Apps → IR Spectra Analyzer
 ### macOS users — download the DMG
 
 1. Go to the [**Releases page**](https://github.com/kubikhavran/ir-spectra-analyzer/releases/latest).
-2. Download the DMG that matches your Mac:
-   - **Apple Silicon (M1/M2/M3/M4):** `IR-Spectra-Analyzer-<version>-arm64.dmg`
-   - **Intel Mac:** `IR-Spectra-Analyzer-<version>-x86_64.dmg`
+2. Download `IR-Spectra-Analyzer-<version>-arm64.dmg` for an Apple Silicon Mac.
+   The automated Intel build is currently paused; Intel users can build from source.
 3. Double-click the DMG → drag **IR Spectra Analyzer** into the **Applications** folder.
 4. Eject the disk image, then launch from Launchpad or Spotlight.
 
@@ -232,8 +231,8 @@ pytest -q                           # runs the full test suite (offscreen Qt)
 
 ## Reference library
 
-The library lives in a local SQLite database (`~/.ir-spectra-analyzer/library.db`
-on Linux/macOS, `%APPDATA%\ir-spectra-analyzer\` on Windows) and a user-chosen
+The library lives in a local SQLite database (`~/.ir-spectra-analyzer/projects.db`
+on every platform; on Windows `~` is `%USERPROFILE%`) and a user-chosen
 folder of `.spa` files on disk.
 
 **Open the library:** `Database → Reference Library...`
@@ -401,11 +400,11 @@ runs on `windows-latest` to produce an installer and attach it to the
 matching GitHub Release:
 
 ```bash
-git tag v0.7.0
-git push origin v0.7.0
+git tag v0.24.0
+git push origin v0.24.0
 ```
 
-A few minutes later `IR-Spectra-Analyzer-Setup-0.7.0.exe` appears on the
+A few minutes later `IR-Spectra-Analyzer-Setup-0.24.0.exe` appears on the
 [Releases page](https://github.com/kubikhavran/ir-spectra-analyzer/releases).
 
 To build locally on a **macOS** machine:
@@ -419,13 +418,13 @@ pip install pyinstaller dmgbuild
 python scripts/build_icon.py
 
 # 3. Bundle to dist/IR Spectra Analyzer.app/
-pyinstaller packaging/ir-spectra-analyzer-mac.spec --clean --noconfirm
+IR_SPECTRA_VERSION=0.24.0 pyinstaller packaging/ir-spectra-analyzer-mac.spec --clean --noconfirm
 
 # 4. Wrap in a DMG
 dmgbuild -s packaging/dmg_settings.py \
-  -D version=0.7.0 -D arch=arm64 \
+  -D version=0.24.0 -D arch=arm64 \
   "IR Spectra Analyzer" \
-  "dist/IR-Spectra-Analyzer-0.7.0-arm64.dmg"
+  "dist/IR-Spectra-Analyzer-0.24.0-arm64.dmg"
 ```
 
 To build locally on a **Windows** machine:
@@ -456,9 +455,10 @@ Install the [Microsoft Visual C++ Redistributable](https://aka.ms/vs/17/release/
 and relaunch.
 
 **JSME molecule editor won't load elements**
-The first launch downloads JSME + its GWT code-split fragments into
-`~/.ir-spectra-analyzer/jsme_cache/`. If you see a "Loading JS code failed" dialog,
-delete that cache folder and relaunch — the app will re-download everything.
+The first launch downloads the pinned JSME 2024.4.29 release and its GWT
+code-split fragments into `~/.ir-spectra-analyzer/jsme/2024.4.29/`. If you see a
+"Loading JS code failed" dialog, delete that version folder and relaunch; the app
+will re-download and verify the loader.
 
 **`.spa` parsing fails with "unknown magic"**
 The file is probably not a standard OMNIC SPA. Known-good instruments: Nicolet iS5,

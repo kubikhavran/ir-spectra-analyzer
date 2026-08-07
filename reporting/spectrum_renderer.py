@@ -23,17 +23,20 @@ from __future__ import annotations
 
 import io
 from pathlib import Path
-from typing import TYPE_CHECKING
+from typing import TYPE_CHECKING, cast
 
 import numpy as np
 from matplotlib import colors as mcolors
 
 from core.peak import Peak
 from core.spectrum import SpectralUnit
+from file_io.atomic_output import atomic_output_path
 
 if TYPE_CHECKING:  # heavy Matplotlib imports stay out of the runtime path
     from matplotlib.axes import Axes
     from matplotlib.figure import Figure
+
+    from core.functional_groups import DiagnosticBandMatch
 
 # Approximate tick spacing used by OMNIC
 _WN_MAJOR_STEP = 500.0  # cm⁻¹
@@ -241,7 +244,8 @@ class SpectrumRenderer:
         ax.set_facecolor("white")
 
         if diagnostic_regions:
-            for region in diagnostic_regions:
+            for raw_region in diagnostic_regions:
+                region = cast("DiagnosticBandMatch", raw_region)
                 facecolor, edgecolor, linestyle, linewidth, alpha = self._diagnostic_region_style(
                     region
                 )
@@ -383,8 +387,10 @@ class SpectrumRenderer:
             )
 
         buf = io.BytesIO()
-        fig.savefig(buf, format="png", dpi=dpi, facecolor="white")
-        plt.close(fig)
+        try:
+            fig.savefig(buf, format="png", dpi=dpi, facecolor="white")
+        finally:
+            plt.close(fig)
         buf.seek(0)
         return buf.read(), annotation_box
 
@@ -457,7 +463,8 @@ class SpectrumRenderer:
 
         # --- Diagnostic regions ---
         if diagnostic_regions:
-            for region in diagnostic_regions:
+            for raw_region in diagnostic_regions:
+                region = cast("DiagnosticBandMatch", raw_region)
                 facecolor, edgecolor, linestyle, linewidth, alpha = self._diagnostic_region_style(
                     region
                 )
@@ -635,8 +642,10 @@ class SpectrumRenderer:
             )
 
         buf = io.BytesIO()
-        fig.savefig(buf, format="png", dpi=dpi, facecolor="white")
-        plt.close(fig)
+        try:
+            fig.savefig(buf, format="png", dpi=dpi, facecolor="white")
+        finally:
+            plt.close(fig)
         buf.seek(0)
         return buf.read(), annotation_box
 
@@ -672,7 +681,8 @@ class SpectrumRenderer:
             is_dip_spectrum=is_dip_spectrum,
             split_at=split_at,
         )
-        output_path.write_bytes(png_bytes)
+        with atomic_output_path(output_path) as temp_path:
+            temp_path.write_bytes(png_bytes)
 
     @classmethod
     def _resolve_label_position(

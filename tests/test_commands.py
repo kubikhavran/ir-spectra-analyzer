@@ -75,6 +75,65 @@ def test_assign_preset_command_redo_undo():
     assert 42 not in peak.vibration_ids
 
 
+def test_assign_idless_presets_distinguishes_labels_and_drops_noop_command():
+    _app()
+    from core.commands import AssignPresetCommand
+    from core.peak import Peak
+    from core.vibration_presets import VibrationPreset
+
+    peak = Peak(position=1200.0, intensity=0.4)
+    first = VibrationPreset("manual A", 1100.0, 1250.0)
+    second = VibrationPreset("manual B", 1150.0, 1300.0)
+    stack = QUndoStack()
+
+    stack.push(AssignPresetCommand(peak, first))
+    stack.push(AssignPresetCommand(peak, second))
+    command_count = stack.count()
+    stack.push(AssignPresetCommand(peak, second))
+    assert peak.vibration_labels == ["manual A", "manual B"]
+    assert peak.vibration_ids == [None, None]
+    assert stack.count() == command_count
+
+    stack.undo()
+    assert peak.vibration_labels == ["manual A"]
+
+
+def test_noop_peak_commands_do_not_dirty_undo_stack():
+    _app()
+    from core.commands import RemovePresetCommand, SetPeakVibrationsCommand
+    from core.peak import Peak
+    from core.vibration_presets import VibrationPreset
+
+    peak = Peak(position=1700.0, intensity=0.8)
+    stack = QUndoStack()
+    stack.setClean()
+
+    stack.push(RemovePresetCommand(peak, VibrationPreset("missing", 1600.0, 1800.0, db_id=7)))
+    stack.push(SetPeakVibrationsCommand(peak, [], []))
+
+    assert stack.count() == 0
+    assert stack.isClean()
+
+
+def test_remove_preset_repairs_misaligned_legacy_assignment_lists():
+    _app()
+    from core.commands import RemovePresetCommand
+    from core.peak import Peak
+    from core.vibration_presets import VibrationPreset
+
+    peak = Peak(position=1700.0, intensity=0.8, vibration_ids=[7], vibration_labels=[])
+    preset = VibrationPreset("C=O", 1650.0, 1750.0, db_id=7)
+    stack = QUndoStack()
+
+    stack.push(RemovePresetCommand(peak, preset))
+    assert peak.vibration_ids == []
+    assert peak.vibration_labels == []
+
+    stack.undo()
+    assert peak.vibration_ids == [7]
+    assert peak.vibration_labels == ["C=O"]
+
+
 def test_set_peak_vibrations_command_redo_undo():
     _app()
     from core.commands import SetPeakVibrationsCommand

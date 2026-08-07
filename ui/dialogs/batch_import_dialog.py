@@ -21,16 +21,18 @@ from PySide6.QtWidgets import (
 
 from app.reference_import import BatchImportSummary, ReferenceImportService
 from storage.database import Database
+from ui.dialogs.background_task_dialog import BackgroundTaskDialogMixin
 
 
-class BatchImportDialog(QDialog):
-    """Dialog for importing multiple `.spa` files into the reference library."""
+class BatchImportDialog(BackgroundTaskDialogMixin, QDialog):
+    """Dialog for importing supported spectrum files into the reference library."""
 
     def __init__(self, db: Database, parent=None) -> None:
         super().__init__(parent)
         self._db = db
         self._service = ReferenceImportService(db)
         self._import_thread: QThread | None = None
+        self._background_thread_attribute = "_import_thread"
         self.setWindowTitle("Batch Import References")
         self.setMinimumSize(760, 520)
         self._setup_ui()
@@ -42,7 +44,7 @@ class BatchImportDialog(QDialog):
         folder_layout = QHBoxLayout()
         self._folder_edit = QLineEdit()
         self._folder_edit.setReadOnly(True)
-        self._folder_edit.setPlaceholderText("Choose a folder containing .spa files")
+        self._folder_edit.setPlaceholderText("Choose a folder containing SPA or JCAMP files")
         self._browse_button = QPushButton("Browse...")
         self._browse_button.clicked.connect(self._on_browse)
         folder_layout.addWidget(QLabel("Folder:"))
@@ -50,21 +52,30 @@ class BatchImportDialog(QDialog):
         folder_layout.addWidget(self._browse_button)
         root_layout.addLayout(folder_layout)
 
-        self._skip_duplicates_checkbox = QCheckBox("Skip duplicates by filename")
+        self._skip_duplicates_checkbox = QCheckBox(
+            "Skip unchanged files already imported from the same path"
+        )
         self._skip_duplicates_checkbox.setChecked(True)
+        self._skip_duplicates_checkbox.setToolTip(
+            "Files with the same display name in different folders are still imported."
+        )
         root_layout.addWidget(self._skip_duplicates_checkbox)
 
-        self._detect_peaks_checkbox = QCheckBox("Auto-detect peaks")
+        self._detect_peaks_checkbox = QCheckBox("Detect peaks for import report")
         self._detect_peaks_checkbox.setChecked(False)
+        self._detect_peaks_checkbox.setToolTip(
+            "Show a detected-peak count for each imported spectrum; matching still uses full spectra."
+        )
         root_layout.addWidget(self._detect_peaks_checkbox)
 
         self._summary_label = QLabel("Select a folder and click Import.")
+        self._summary_label.setTextFormat(Qt.TextFormat.PlainText)
         self._summary_label.setWordWrap(True)
         root_layout.addWidget(self._summary_label)
 
-        self._results_table = QTableWidget(0, 4)
+        self._results_table = QTableWidget(0, 5)
         self._results_table.setHorizontalHeaderLabels(
-            ["File", "Status", "Reference Name", "Reason"]
+            ["File", "Status", "Reference Name", "Reason", "Peaks"]
         )
         self._results_table.setEditTriggers(QTableWidget.EditTrigger.NoEditTriggers)
         self._results_table.verticalHeader().setVisible(False)
@@ -79,6 +90,9 @@ class BatchImportDialog(QDialog):
         )
         self._results_table.horizontalHeader().setSectionResizeMode(
             3, QHeaderView.ResizeMode.Stretch
+        )
+        self._results_table.horizontalHeader().setSectionResizeMode(
+            4, QHeaderView.ResizeMode.ResizeToContents
         )
         root_layout.addWidget(self._results_table)
 
@@ -95,12 +109,12 @@ class BatchImportDialog(QDialog):
 
     def _on_browse(self) -> None:
         """Open a folder picker and update the dialog state."""
-        folder = QFileDialog.getExistingDirectory(self, "Select Folder with SPA Files")
+        folder = QFileDialog.getExistingDirectory(self, "Select Folder with Spectrum Files")
         if folder:
             self._set_folder(Path(folder))
 
     def _set_folder(self, folder: Path) -> None:
-        """Store the selected folder and show how many `.spa` files were found."""
+        """Store the selected folder and show how many supported files were found."""
         self._folder_edit.setText(str(folder))
         self._import_button.setEnabled(True)
         self._results_table.setRowCount(0)
@@ -112,9 +126,11 @@ class BatchImportDialog(QDialog):
             return
 
         if files:
-            self._summary_label.setText(f"Found {len(files)} .spa file(s) in the selected folder.")
+            self._summary_label.setText(
+                f"Found {len(files)} supported spectrum file(s) in the selected folder."
+            )
         else:
-            self._summary_label.setText("No .spa files found in the selected folder.")
+            self._summary_label.setText("No supported spectrum files found in the selected folder.")
 
     def _on_import(self) -> None:
         """Run the batch import for the currently selected folder."""
@@ -171,9 +187,9 @@ class BatchImportDialog(QDialog):
         worker.completed.connect(self._on_background_import_completed)
         worker.failed.connect(self._on_background_import_failed)
         worker.finished.connect(thread.quit)
-        worker.finished.connect(self._on_import_worker_finished)
         worker.finished.connect(worker.deleteLater)
         thread.finished.connect(thread.deleteLater)
+        thread.finished.connect(self._on_import_worker_finished)
         thread.started.connect(
             lambda: QMetaObject.invokeMethod(worker, "run", Qt.ConnectionType.QueuedConnection)
         )
@@ -214,8 +230,15 @@ class BatchImportDialog(QDialog):
             self._results_table.setItem(row, 1, QTableWidgetItem(result.status.value))
             self._results_table.setItem(row, 2, QTableWidgetItem(result.reference_name))
             self._results_table.setItem(row, 3, QTableWidgetItem(result.reason))
+            peak_count = str(len(result.detected_peaks)) if result.detected_peaks else ""
+            self._results_table.setItem(row, 4, QTableWidgetItem(peak_count))
 
-        self._summary_label.setText(
-            f"Total .spa files found: {summary.total_found}\n"
+        summary_text = (
+            f"Total spectrum files found: {summary.total_found}\n"
             f"Imported: {summary.imported} | Skipped: {summary.skipped} | Failed: {summary.failed}"
         )
+        if self._detect_peaks_checkbox.isChecked():
+            summary_text += (
+                f" | Peaks: {sum(len(result.detected_peaks) for result in summary.results)}"
+            )
+        self._summary_label.setText(summary_text)

@@ -21,6 +21,7 @@ Notes
       xattr -rd com.apple.quarantine "/Applications/IR Spectra Analyzer.app"
 """
 
+import os
 from pathlib import Path
 
 from PyInstaller.utils.hooks import collect_data_files, collect_submodules
@@ -28,6 +29,7 @@ from PyInstaller.utils.hooks import collect_data_files, collect_submodules
 PROJECT_ROOT = Path(SPECPATH).resolve().parent
 ASSETS = PROJECT_ROOT / "assets"
 ICON_ICNS = ASSETS / "icon.icns"
+APP_VERSION = os.environ.get("IR_SPECTRA_VERSION", "0.24.0")
 
 datas = [
     (str(ASSETS / "icon.icns"), "assets"),
@@ -103,12 +105,12 @@ app = BUNDLE(
     name="IR Spectra Analyzer.app",
     icon=str(ICON_ICNS) if ICON_ICNS.exists() else None,
     bundle_identifier="com.irspectra.analyzer",
-    version="0.22.0",
+    version=APP_VERSION,
     info_plist={
         "NSPrincipalClass": "NSApplication",
         "NSHighResolutionCapable": True,
         "CFBundleDisplayName": "IR Spectra Analyzer",
-        "CFBundleShortVersionString": "0.22.0",
+        "CFBundleShortVersionString": APP_VERSION,
         "LSMinimumSystemVersion": "12.0",
         "NSRequiresAquaSystemAppearance": False,
         "CFBundleDocumentTypes": [

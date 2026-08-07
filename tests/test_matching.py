@@ -66,6 +66,28 @@ def test_empty_reference_spectra(tmp_path):
     db.close()
 
 
+@pytest.mark.parametrize("descending", [False, True])
+def test_matching_partial_range_flat_transmittance_has_no_artificial_cutoff_band(descending):
+    """Out-of-range target points must continue the baseline, not become zero-percent T."""
+    from core.spectrum import SpectralUnit
+    from matching.preprocessing import prepare_for_matching
+
+    source_axis = np.linspace(650.0, 4000.0, 3351)
+    if descending:
+        source_axis = source_axis[::-1]
+    target_axis = np.linspace(400.0, 4000.0, 3601)
+    flat_transmittance = np.full_like(source_axis, 100.0)
+
+    feature = prepare_for_matching(
+        source_axis,
+        flat_transmittance,
+        target_axis,
+        y_unit=SpectralUnit.TRANSMITTANCE,
+    )
+
+    assert np.allclose(feature, 0.0, atol=1e-12)
+
+
 def test_reference_metadata_and_feature_rows_roundtrip_without_full_blob_load(tmp_path):
     from matching.feature_store import MATCH_FEATURE_VERSION
 

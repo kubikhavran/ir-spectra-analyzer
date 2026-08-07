@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from PySide6.QtCore import Qt, QUrl, Signal
+from PySide6.QtCore import QMetaObject, QObject, Qt, QThread, QUrl, Signal, Slot
 from PySide6.QtGui import QDesktopServices
 from PySide6.QtWidgets import (
     QApplication,
@@ -18,9 +18,32 @@ from PySide6.QtWidgets import (
 
 from app.providers.nist_webbook import NISTWebBookClient, NISTWebBookReference
 from app.web_reference_import import WebReferenceImportService
+from ui.dialogs.background_task_dialog import BackgroundTaskDialogMixin
 
 
-class WebReferenceImportDialog(QDialog):
+class _WebReferencePreviewWorker(QObject):
+    """Fetch one NIST preview outside the GUI thread."""
+
+    completed = Signal(object)
+    failed = Signal(str)
+    finished = Signal()
+
+    def __init__(self, client: NISTWebBookClient, url: str) -> None:
+        super().__init__()
+        self._client = client
+        self._url = url
+
+    @Slot()
+    def run(self) -> None:
+        try:
+            self.completed.emit(self._client.fetch_reference(self._url))
+        except Exception as exc:  # noqa: BLE001
+            self.failed.emit(str(exc) or exc.__class__.__name__)
+        finally:
+            self.finished.emit()
+
+
+class WebReferenceImportDialog(BackgroundTaskDialogMixin, QDialog):
     """Preview and import a single NIST WebBook IR reference."""
 
     reference_imported = Signal(int)
@@ -36,6 +59,10 @@ class WebReferenceImportDialog(QDialog):
         self._service = service
         self._preview_client = preview_client or NISTWebBookClient()
         self._preview_reference: NISTWebBookReference | None = None
+        self._preview_thread: QThread | None = None
+        self._preview_request_url = ""
+        self._operation_busy = False
+        self._background_thread_attribute = "_preview_thread"
         self.setWindowTitle("Import Web Reference")
         self.setMinimumWidth(560)
         self._setup_ui()
@@ -61,10 +88,12 @@ class WebReferenceImportDialog(QDialog):
 
         self._status_label = QLabel("Paste a NIST WebBook IR URL and click Preview.")
         self._status_label.setWordWrap(True)
+        self._status_label.setTextFormat(Qt.TextFormat.PlainText)
         layout.addWidget(self._status_label)
 
         self._preview_label = QLabel("No preview loaded.")
         self._preview_label.setWordWrap(True)
+        self._preview_label.setTextFormat(Qt.TextFormat.PlainText)
         self._preview_label.setTextInteractionFlags(
             self._preview_label.textInteractionFlags()
             | Qt.TextInteractionFlag.TextBrowserInteraction
@@ -111,24 +140,56 @@ class WebReferenceImportDialog(QDialog):
         if not url:
             self._status_label.setText("Enter a NIST WebBook URL first.")
             return
-        self._set_busy(True, "Fetching NIST reference preview…")
-        try:
-            reference = self._preview_client.fetch_reference(url)
-        except Exception as exc:  # noqa: BLE001
-            self._preview_reference = None
-            self._import_btn.setEnabled(False)
-            self._open_source_btn.setEnabled(False)
-            self._status_label.setText(f"Preview failed: {exc}")
-            self._preview_label.setText("No preview loaded.")
+        if self._preview_thread is not None:
             return
-        finally:
-            self._set_busy(False)
+
+        worker = _WebReferencePreviewWorker(self._preview_client, url)
+        thread = QThread(self)
+        worker.moveToThread(thread)
+        worker.completed.connect(
+            lambda reference, request_url=url: self._on_preview_completed(reference, request_url)
+        )
+        worker.failed.connect(
+            lambda message, request_url=url: self._on_preview_failed(message, request_url)
+        )
+        worker.finished.connect(thread.quit)
+        worker.finished.connect(worker.deleteLater)
+        thread.finished.connect(self._on_preview_thread_finished)
+        thread.finished.connect(thread.deleteLater)
+        thread.started.connect(
+            lambda: QMetaObject.invokeMethod(worker, "run", Qt.ConnectionType.QueuedConnection)
+        )
+        self._preview_thread = thread
+        self._preview_request_url = url
+        self._set_busy(True, "Fetching NIST reference preview…")
+        thread.start()
+
+    def _on_preview_completed(
+        self,
+        reference: NISTWebBookReference,
+        request_url: str,
+    ) -> None:
+        """Apply a preview only if it still belongs to the current URL."""
+        if request_url != self._preview_request_url or request_url != self._url_edit.text().strip():
+            return
 
         self._preview_reference = reference
-        self._open_source_btn.setEnabled(True)
-        self._import_btn.setEnabled(True)
         self._status_label.setText("Preview loaded. Import will store this reference locally.")
         self._preview_label.setText(self._format_preview(reference))
+
+    def _on_preview_failed(self, message: str, request_url: str) -> None:
+        """Show a fetch failure unless the request has since become stale."""
+        if request_url != self._preview_request_url or request_url != self._url_edit.text().strip():
+            return
+        self._preview_reference = None
+        self._status_label.setText(f"Preview failed: {message}")
+        self._preview_label.setText("No preview loaded.")
+
+    def _on_preview_thread_finished(self) -> None:
+        """Release the worker thread and restore dialog controls."""
+        self._preview_thread = None
+        self._preview_request_url = ""
+        self._set_busy(False)
 
     def _on_import(self) -> None:
         """Store the previewed NIST reference in the local database."""
@@ -154,8 +215,13 @@ class WebReferenceImportDialog(QDialog):
             return
         QDesktopServices.openUrl(QUrl(self._preview_reference.page_url))
 
+    def _background_task_is_running(self) -> bool:
+        """Also guard the short synchronous database-store phase."""
+        return self._operation_busy or super()._background_task_is_running()
+
     def _set_busy(self, busy: bool, message: str = "") -> None:
         """Toggle controls during a blocking network call."""
+        self._operation_busy = busy
         if message:
             self._status_label.setText(message)
         self._url_edit.setEnabled(not busy)

@@ -128,3 +128,72 @@ def test_format_registry_reads_jcamp_extensions(tmp_path: Path) -> None:
     assert dx_spectrum.title == "Registry"
     assert np.allclose(jdx_spectrum.wavenumbers, [1000.0, 1200.0])
     assert np.allclose(dx_spectrum.intensities, [0.1, 0.2])
+
+
+def test_jcamp_reader_strips_inline_comments_before_parsing_numbers() -> None:
+    from file_io.jcamp_reader import JCAMPReader
+
+    content = b"""##TITLE=Inline comment
+##XUNITS=1/CM
+##YUNITS=ABSORBANCE
+##DELTAX=1
+##NPOINTS=2
+##XYDATA=(X++(Y..Y))
+1000 10 20 $$ operator note 99
+##END=
+"""
+
+    spectrum = JCAMPReader().read_bytes(content)
+
+    assert np.allclose(spectrum.wavenumbers, [1000.0, 1001.0])
+    assert np.allclose(spectrum.intensities, [10.0, 20.0])
+
+
+def test_jcamp_reader_rejects_unsupported_compressed_xydata() -> None:
+    from file_io.jcamp_reader import JCAMPReader, JCAMPReadError
+
+    content = b"""##TITLE=Compressed
+##XUNITS=1/CM
+##YUNITS=ABSORBANCE
+##DELTAX=1
+##NPOINTS=2
+##XYDATA=(X++(Y..Y))
+1000 A10 B20
+##END=
+"""
+
+    with pytest.raises(JCAMPReadError, match="compressed|AFFN"):
+        JCAMPReader().read_bytes(content)
+
+
+def test_jcamp_reader_rejects_declared_point_count_mismatch() -> None:
+    from file_io.jcamp_reader import JCAMPReader, JCAMPReadError
+
+    content = b"""##TITLE=Truncated
+##XUNITS=1/CM
+##YUNITS=ABSORBANCE
+##DELTAX=1
+##NPOINTS=3
+##XYDATA=(X++(Y..Y))
+1000 10 20
+##END=
+"""
+
+    with pytest.raises(JCAMPReadError, match="NPOINTS.*3.*2"):
+        JCAMPReader().read_bytes(content)
+
+
+def test_jcamp_reader_rejects_zero_declared_points_when_data_exists() -> None:
+    from file_io.jcamp_reader import JCAMPReader, JCAMPReadError
+
+    content = b"""##TITLE=Invalid point count
+##XUNITS=1/CM
+##YUNITS=ABSORBANCE
+##NPOINTS=0
+##XYPOINTS=(XY..XY)
+1000 10
+##END=
+"""
+
+    with pytest.raises(JCAMPReadError, match="NPOINTS.*0.*1"):
+        JCAMPReader().read_bytes(content)

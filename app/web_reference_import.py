@@ -82,33 +82,34 @@ class WebReferenceImportService:
 
     def _store_reference(self, reference: NISTWebBookReference, *, commit: bool) -> int:
         spectrum = reference.spectrum
-        ref_id = self._db.add_reference_spectrum(
-            name=reference.name,
-            wavenumbers=spectrum.wavenumbers,
-            intensities=spectrum.intensities,
-            description=reference.description,
-            source=reference.page_url,
-            y_unit=spectrum.y_unit.value,
-            source_provider="nist_webbook",
-            external_id=reference.metadata.get("external_id", ""),
-            sample_state=reference.metadata.get("state", ""),
-            sampling_procedure=reference.metadata.get("sampling_procedure", ""),
-            path_length=reference.metadata.get("path_length", ""),
-            resolution=reference.metadata.get("resolution", ""),
-            origin=reference.metadata.get("origin", ""),
-            owner=reference.metadata.get("owner", ""),
-            commit=False,
-        )
-        self._db.upsert_reference_feature(
-            ref_id,
-            feature_version=MATCH_FEATURE_VERSION,
-            feature_vector=compute_search_vector(
-                spectrum.wavenumbers,
-                spectrum.intensities,
-                y_unit=spectrum.y_unit,
-            ),
-            commit=False,
-        )
+        with self._db.savepoint():
+            ref_id = self._db.add_reference_spectrum(
+                name=reference.name,
+                wavenumbers=spectrum.wavenumbers,
+                intensities=spectrum.intensities,
+                description=reference.description,
+                source=reference.page_url,
+                y_unit=spectrum.y_unit.value,
+                source_provider="nist_webbook",
+                external_id=reference.metadata.get("external_id", ""),
+                sample_state=reference.metadata.get("state", ""),
+                sampling_procedure=reference.metadata.get("sampling_procedure", ""),
+                path_length=reference.metadata.get("path_length", ""),
+                resolution=reference.metadata.get("resolution", ""),
+                origin=reference.metadata.get("origin", ""),
+                owner=reference.metadata.get("owner", ""),
+                commit=False,
+            )
+            self._db.upsert_reference_feature(
+                ref_id,
+                feature_version=MATCH_FEATURE_VERSION,
+                feature_vector=compute_search_vector(
+                    spectrum.wavenumbers,
+                    spectrum.intensities,
+                    y_unit=spectrum.y_unit,
+                ),
+                commit=False,
+            )
         if commit:
             self._db.commit()
         return ref_id

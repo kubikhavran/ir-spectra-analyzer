@@ -17,12 +17,14 @@ Schéma:
 from __future__ import annotations
 
 import sqlite3
+from collections.abc import Iterator
+from contextlib import contextmanager
 from pathlib import Path
 
 import numpy as np
 
 from app.config import DB_PATH
-from utils.file_utils import normalize_source_path
+from utils.file_utils import normalize_source_path, normalize_source_url
 
 
 class Database:
@@ -33,6 +35,7 @@ class Database:
     def __init__(self, db_path: str | Path = DB_PATH) -> None:
         self._db_path = db_path
         self._conn: sqlite3.Connection | None = None
+        self._savepoint_counter = 0
 
     def initialize(self) -> None:
         """Create data directory, open connection, apply schema, seed data."""
@@ -43,11 +46,41 @@ class Database:
         self._conn.row_factory = sqlite3.Row
         self._apply_schema()
         self._seed_vibration_presets()
+        # SQLite leaves FK enforcement disabled by default. Enable it only after
+        # legacy seed/schema maintenance so an old, unused project row cannot
+        # prevent the application from opening; all runtime writes are guarded.
+        self._conn.execute("PRAGMA foreign_keys = ON")
+        if self._conn.execute("PRAGMA foreign_keys").fetchone()[0] != 1:
+            raise RuntimeError("Could not enable SQLite foreign-key enforcement")
 
     def commit(self) -> None:
         """Commit the current transaction."""
         assert self._conn is not None
         self._conn.commit()
+
+    @contextmanager
+    def savepoint(self) -> Iterator[None]:
+        """Rollback one logical write unit without discarding the outer batch."""
+        assert self._conn is not None
+        # A top-level SQLite SAVEPOINT commits when it is released. Start an
+        # explicit outer transaction so callers' ``commit=False`` contract is
+        # preserved and they can still roll back the completed logical unit.
+        started_transaction = not self._conn.in_transaction
+        if started_transaction:
+            self._conn.execute("BEGIN")
+        self._savepoint_counter += 1
+        name = f"ir_item_{self._savepoint_counter}"
+        self._conn.execute(f"SAVEPOINT {name}")
+        try:
+            yield
+        except BaseException:
+            self._conn.execute(f"ROLLBACK TO SAVEPOINT {name}")
+            self._conn.execute(f"RELEASE SAVEPOINT {name}")
+            if started_transaction:
+                self._conn.rollback()
+            raise
+        else:
+            self._conn.execute(f"RELEASE SAVEPOINT {name}")
 
     @property
     def db_path(self) -> str | Path:
@@ -131,7 +164,8 @@ class Database:
             CREATE INDEX IF NOT EXISTS idx_reference_spectra_name ON reference_spectra(name);
 
             CREATE TABLE IF NOT EXISTS reference_features (
-                reference_id     INTEGER NOT NULL,
+                reference_id     INTEGER NOT NULL REFERENCES reference_spectra(id)
+                                                ON DELETE CASCADE,
                 feature_version  INTEGER NOT NULL,
                 feature_vector   BLOB    NOT NULL,
                 created_at       TEXT    NOT NULL DEFAULT (datetime('now')),
@@ -176,6 +210,8 @@ class Database:
             except sqlite3.OperationalError:
                 pass
 
+        self._migrate_reference_features_foreign_key(cursor)
+
         cursor.execute(
             """
             UPDATE reference_spectra
@@ -201,6 +237,72 @@ class Database:
             """
             CREATE INDEX IF NOT EXISTS idx_reference_spectra_source_norm
                 ON reference_spectra(source_norm)
+            """
+        )
+        # Older builds treated web URLs as filesystem paths, making source_norm
+        # depend on the process CWD. Repair those rows in place on first startup.
+        web_rows = cursor.execute(
+            """
+            SELECT id, source
+            FROM reference_spectra
+            WHERE source LIKE 'http://%' OR source LIKE 'https://%'
+            """
+        ).fetchall()
+        for row in web_rows:
+            try:
+                normalized_url = normalize_source_url(row["source"])
+            except ValueError:
+                # Preserve malformed legacy data instead of making application
+                # startup depend on a historical source string being valid.
+                continue
+            cursor.execute(
+                "UPDATE reference_spectra SET source_norm = ? WHERE id = ?",
+                (normalized_url, int(row["id"])),
+            )
+        self._conn.commit()
+
+    def _migrate_reference_features_foreign_key(self, cursor: sqlite3.Cursor) -> None:
+        """Add the reference-feature FK to databases created by older releases."""
+        assert self._conn is not None
+        foreign_keys = cursor.execute("PRAGMA foreign_key_list(reference_features)").fetchall()
+        if any(
+            row["table"] == "reference_spectra"
+            and row["from"] == "reference_id"
+            and row["on_delete"].casefold() == "cascade"
+            for row in foreign_keys
+        ):
+            return
+
+        # Cached features are fully recomputable. Preserve valid rows while
+        # dropping only historical orphans that cannot satisfy the new FK.
+        cursor.execute("DROP TABLE IF EXISTS reference_features_with_fk")
+        cursor.execute(
+            """
+            CREATE TABLE reference_features_with_fk (
+                reference_id INTEGER NOT NULL REFERENCES reference_spectra(id)
+                                              ON DELETE CASCADE,
+                feature_version INTEGER NOT NULL,
+                feature_vector BLOB NOT NULL,
+                created_at TEXT NOT NULL DEFAULT (datetime('now')),
+                PRIMARY KEY (reference_id, feature_version)
+            )
+            """
+        )
+        cursor.execute(
+            """
+            INSERT INTO reference_features_with_fk
+                (reference_id, feature_version, feature_vector, created_at)
+            SELECT rf.reference_id, rf.feature_version, rf.feature_vector, rf.created_at
+            FROM reference_features AS rf
+            INNER JOIN reference_spectra AS rs ON rs.id = rf.reference_id
+            """
+        )
+        cursor.execute("DROP TABLE reference_features")
+        cursor.execute("ALTER TABLE reference_features_with_fk RENAME TO reference_features")
+        cursor.execute(
+            """
+            CREATE INDEX idx_reference_features_version
+                ON reference_features(feature_version)
             """
         )
         self._conn.commit()
@@ -462,7 +564,10 @@ class Database:
             (name, range_min, range_max, category, description, color),
         )
         self._conn.commit()
-        return cursor.lastrowid
+        row_id = cursor.lastrowid
+        if row_id is None:
+            raise RuntimeError("SQLite did not return an id for the inserted vibration preset")
+        return row_id
 
     def delete_vibration_preset(self, preset_id: int) -> None:
         """Delete a custom (non-builtin) vibration preset by id."""
@@ -527,7 +632,10 @@ class Database:
         )
         if commit:
             self._conn.commit()
-        return cursor.lastrowid
+        row_id = cursor.lastrowid
+        if row_id is None:
+            raise RuntimeError("SQLite did not return an id for the inserted reference spectrum")
+        return row_id
 
     def update_reference_spectrum(
         self,
@@ -867,16 +975,17 @@ class Database:
         column = f"{alias}.source_norm" if alias else "source_norm"
         provider_column = f"{alias}.source_provider" if alias else "source_provider"
         prefix = source_prefix.rstrip("/\\")
-        local_scope_clause = f"({column} = ? OR {column} LIKE ?)"
+        escaped_prefix = prefix.replace("\\", "\\\\").replace("%", "\\%").replace("_", "\\_")
+        local_scope_clause = f"({column} = ? OR {column} LIKE ? ESCAPE '\\')"
         if include_web_refs:
             provider_expr = f"coalesce(nullif({provider_column}, ''), 'local')"
             return (
                 f"({local_scope_clause} OR {provider_expr} != 'local')",
-                (prefix, f"{prefix}/%"),
+                (prefix, f"{escaped_prefix}/%"),
             )
         return (
             local_scope_clause,
-            (prefix, f"{prefix}/%"),
+            (prefix, f"{escaped_prefix}/%"),
         )
 
     def close(self) -> None:

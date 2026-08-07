@@ -8,14 +8,23 @@ Provides two tabs:
 
 from __future__ import annotations
 
+import hashlib
 import json
+import os
+import tempfile
 import urllib.request
 from pathlib import Path
+from urllib.parse import unquote, urlparse
 
 from PySide6.QtCore import QEventLoop, QObject, Qt, QTimer, QUrl, Signal, Slot
 from PySide6.QtGui import QImage, QPixmap
 from PySide6.QtWebChannel import QWebChannel
-from PySide6.QtWebEngineCore import QWebEngineSettings
+from PySide6.QtWebEngineCore import (
+    QWebEnginePage,
+    QWebEngineProfile,
+    QWebEngineSettings,
+    QWebEngineUrlRequestInterceptor,
+)
 from PySide6.QtWebEngineWidgets import QWebEngineView
 from PySide6.QtWidgets import (
     QDialog,
@@ -34,10 +43,13 @@ from PySide6.QtWidgets import (
 # JSME local cache helpers
 # ---------------------------------------------------------------------------
 
-_JSME_CACHE_DIR = Path.home() / ".ir-spectra-analyzer" / "jsme"
-# Correct filename is lowercase jsme.nocache.js (unpkg.com/jsme-editor package, v2024.04.29)
+_JSME_VERSION = "2024.4.29"
+_JSME_CACHE_DIR = Path.home() / ".ir-spectra-analyzer" / "jsme" / _JSME_VERSION
+# Correct filename is lowercase jsme.nocache.js.
 _JSME_JS = _JSME_CACHE_DIR / "jsme.nocache.js"
-_JSME_BASE_URL = "https://unpkg.com/jsme-editor"
+_JSME_BASE_URL = f"https://unpkg.com/jsme-editor@{_JSME_VERSION}"
+_JSME_LOADER_SHA256 = "ab4e6d3a74f6539332f894351af64413f8c2ceab1513bab3e25758866c1ad7ff"
+_JSME_MAX_FILE_BYTES = 16 * 1024 * 1024
 
 # GWT companion stylesheets loaded by the nocache bootstrap. Without these
 # files on disk next to the JS, JSME's element-picker dialog (the popup that
@@ -206,6 +218,103 @@ function sendMolFile() {{
 """
 
 
+def _atomic_write_bytes(path: Path, payload: bytes) -> None:
+    """Write one cache asset completely before exposing its final filename."""
+    path.parent.mkdir(parents=True, exist_ok=True)
+    temp_path: Path | None = None
+    try:
+        with tempfile.NamedTemporaryFile(
+            mode="wb",
+            dir=path.parent,
+            prefix=f".{path.name}.",
+            suffix=".tmp",
+            delete=False,
+        ) as handle:
+            temp_path = Path(handle.name)
+            handle.write(payload)
+            handle.flush()
+            os.fsync(handle.fileno())
+        os.replace(temp_path, path)
+        temp_path = None
+    finally:
+        if temp_path is not None:
+            try:
+                temp_path.unlink(missing_ok=True)
+            except OSError:
+                # Preserve the error that prevented the atomic replacement.
+                # A leftover uniquely named temp file is harmless and can be
+                # cleaned by the user/OS later.
+                pass
+
+
+def _validate_jsme_asset_url(url: str) -> None:
+    parsed = urlparse(url)
+    expected_prefix = f"/jsme-editor@{_JSME_VERSION}/"
+    try:
+        port = parsed.port
+    except ValueError as exc:
+        raise ValueError("Unexpected JSME download URL") from exc
+    decoded_path = unquote(parsed.path)
+    if (
+        parsed.scheme.casefold() != "https"
+        or (parsed.hostname or "").casefold() != "unpkg.com"
+        or parsed.username is not None
+        or parsed.password is not None
+        or port not in {None, 443}
+        or not decoded_path.startswith(expected_prefix)
+        or any(part in {".", ".."} for part in decoded_path.split("/"))
+    ):
+        raise ValueError("Unexpected JSME download redirect")
+
+
+class _JSMERedirectHandler(urllib.request.HTTPRedirectHandler):
+    """Reject an untrusted redirect before urllib contacts its destination."""
+
+    def redirect_request(self, req, fp, code, msg, headers, newurl):
+        _validate_jsme_asset_url(newurl)
+        return super().redirect_request(req, fp, code, msg, headers, newurl)
+
+
+def _download_jsme_asset(
+    url: str,
+    destination: Path,
+    *,
+    expected_sha256: str | None = None,
+) -> bytes:
+    """Download one pinned JSME asset with a size guard and atomic cache write."""
+    _validate_jsme_asset_url(url)
+    opener = urllib.request.build_opener(_JSMERedirectHandler())
+    with opener.open(url, timeout=15) as response:  # noqa: S310
+        _validate_jsme_asset_url(response.geturl())
+        declared = response.headers.get("Content-Length")
+        if declared:
+            try:
+                declared_size = int(declared)
+            except ValueError:
+                declared_size = None
+            if declared_size is not None and declared_size > _JSME_MAX_FILE_BYTES:
+                raise ValueError("JSME asset is too large")
+        payload = bytes(response.read(_JSME_MAX_FILE_BYTES + 1))
+    if not payload or len(payload) > _JSME_MAX_FILE_BYTES:
+        raise ValueError("JSME asset is empty or too large")
+    if expected_sha256 and hashlib.sha256(payload).hexdigest() != expected_sha256:
+        raise ValueError("JSME loader checksum mismatch")
+    _atomic_write_bytes(destination, payload)
+    return payload
+
+
+def _read_cached_asset(path: Path, *, expected_sha256: str | None = None) -> bytes | None:
+    if not path.exists():
+        return None
+    size = path.stat().st_size
+    if size <= 0 or size > _JSME_MAX_FILE_BYTES:
+        return None
+    payload = path.read_bytes()
+    if expected_sha256 and hashlib.sha256(payload).hexdigest() != expected_sha256:
+        return None
+    return payload
+
+
 def _ensure_jsme_cached() -> Path | None:
     """Download JSME.nocache.js + companion .cache.js and GWT css files.
 
@@ -223,14 +332,18 @@ def _ensure_jsme_cached() -> Path | None:
     try:
         _JSME_CACHE_DIR.mkdir(parents=True, exist_ok=True)
 
-        if _JSME_JS.exists():
-            loader_bytes = _JSME_JS.read_bytes()
-        else:
+        loader_bytes = _read_cached_asset(
+            _JSME_JS,
+            expected_sha256=_JSME_LOADER_SHA256,
+        )
+        if loader_bytes is None:
             # 1. Download the nocache loader
             loader_url = f"{_JSME_BASE_URL}/jsme.nocache.js"
-            with urllib.request.urlopen(loader_url, timeout=10) as resp:  # noqa: S310
-                loader_bytes = resp.read()
-            _JSME_JS.write_bytes(loader_bytes)
+            loader_bytes = _download_jsme_asset(
+                loader_url,
+                _JSME_JS,
+                expected_sha256=_JSME_LOADER_SHA256,
+            )
 
         # 2. Find companion .cache.js hashes embedded in the loader
         loader_text = loader_bytes.decode("utf-8", errors="replace")
@@ -241,11 +354,11 @@ def _ensure_jsme_cached() -> Path | None:
         for h in unique_hashes:
             cache_url = f"{_JSME_BASE_URL}/{h}.cache.js"
             dest = _JSME_CACHE_DIR / f"{h}.cache.js"
-            if dest.exists():
+            if _read_cached_asset(dest) is not None:
                 continue
+            dest.unlink(missing_ok=True)
             try:
-                with urllib.request.urlopen(cache_url, timeout=15) as resp:  # noqa: S310
-                    dest.write_bytes(resp.read())
+                _download_jsme_asset(cache_url, dest)
             except Exception:  # noqa: BLE001
                 pass  # non-fatal: the loader will skip unavailable permutations
 
@@ -262,13 +375,13 @@ def _ensure_jsme_cached() -> Path | None:
             n = 1
             while n < 64:  # sanity cap; JSME currently has 11 fragments
                 dest = frag_dir / f"{n}.cache.js"
-                if dest.exists() and dest.stat().st_size > 0:
+                if _read_cached_asset(dest) is not None:
                     n += 1
                     continue
+                dest.unlink(missing_ok=True)
                 frag_url = f"{_JSME_BASE_URL}/deferredjs/{h}/{n}.cache.js"
                 try:
-                    with urllib.request.urlopen(frag_url, timeout=15) as resp:  # noqa: S310
-                        dest.write_bytes(resp.read())
+                    _download_jsme_asset(frag_url, dest)
                 except urllib.error.HTTPError as e:
                     if e.code == 404:
                         break  # no more fragments for this permutation
@@ -284,13 +397,13 @@ def _ensure_jsme_cached() -> Path | None:
         # popup is effectively invisible to the user.
         for rel in _JSME_CSS_REFS:
             dest = _JSME_CACHE_DIR / rel
-            if dest.exists() and dest.stat().st_size > 0:
+            if _read_cached_asset(dest) is not None:
                 continue
+            dest.unlink(missing_ok=True)
             try:
                 dest.parent.mkdir(parents=True, exist_ok=True)
                 css_url = f"{_JSME_BASE_URL}/{rel}"
-                with urllib.request.urlopen(css_url, timeout=15) as resp:  # noqa: S310
-                    dest.write_bytes(resp.read())
+                _download_jsme_asset(css_url, dest)
             except Exception:  # noqa: BLE001
                 pass  # non-fatal: JSME still loads, just without styled popups
 
@@ -308,7 +421,7 @@ def _write_jsme_html() -> Path | None:
     try:
         _JSME_CACHE_DIR.mkdir(parents=True, exist_ok=True)
         html_path = _JSME_CACHE_DIR / "editor.html"
-        html_path.write_text(_JSME_HTML_TEMPLATE.format(), encoding="utf-8")
+        _atomic_write_bytes(html_path, _JSME_HTML_TEMPLATE.format().encode("utf-8"))
         return html_path
     except Exception:  # noqa: BLE001
         return None
@@ -348,6 +461,27 @@ class _JSBridge(QObject):
         return self._last_smiles
 
 
+class _JSMERequestInterceptor(QWebEngineUrlRequestInterceptor):
+    """Allow only bundled Qt resources and files inside the pinned JSME cache."""
+
+    def __init__(self, cache_root: Path, parent: QObject | None = None) -> None:
+        super().__init__(parent)
+        self._cache_root = cache_root.resolve()
+
+    def interceptRequest(self, info) -> None:  # noqa: N802
+        url = info.requestUrl()
+        scheme = url.scheme().casefold()
+        if scheme == "file":
+            try:
+                candidate = Path(url.toLocalFile()).resolve()
+                allowed = candidate == self._cache_root or self._cache_root in candidate.parents
+            except OSError:
+                allowed = False
+            info.block(not allowed)
+            return
+        info.block(scheme not in {"qrc", "data", "blob", "about"})
+
+
 # ---------------------------------------------------------------------------
 # Dialog
 # ---------------------------------------------------------------------------
@@ -372,6 +506,8 @@ class MoleculeEditorDialog(QDialog):
         self._canvas_png_bytes: bytes = b""
         self._canvas_mol_block: str = ""
         self._web_view: QWebEngineView | None = None
+        self._web_profile: QWebEngineProfile | None = None
+        self._web_page: QWebEnginePage | None = None
 
         self._build_ui()
         self._connect_signals()
@@ -440,12 +576,28 @@ class MoleculeEditorDialog(QDialog):
         # Web view
         self._web_view = QWebEngineView()
         self._web_view.setSizePolicy(QSizePolicy.Policy.Expanding, QSizePolicy.Policy.Expanding)
+        # A dedicated off-the-record profile keeps the cache-only request
+        # policy local to this dialog instead of mutating Qt's shared default
+        # profile (which may serve other web views).
+        self._web_profile = QWebEngineProfile()
+        self._web_page = QWebEnginePage(self._web_profile, self._web_view)
+        self._web_view.setPage(self._web_page)
+        # The non-default profile must outlive its page. Keep it unparented
+        # (so widget teardown cannot delete it first) and queue its deletion
+        # directly from the page's destroyed signal.
+        self._web_page.destroyed.connect(self._web_profile.deleteLater)
 
         # Allow local file to load qrc:// WebChannel resource
         settings = self._web_view.settings()
+        # JSME is a set of local GWT fragments, so local file access is required.
+        # Scope it to the versioned cache and deny every remote request.
         settings.setAttribute(QWebEngineSettings.WebAttribute.LocalContentCanAccessFileUrls, True)
-        settings.setAttribute(QWebEngineSettings.WebAttribute.LocalContentCanAccessRemoteUrls, True)
+        settings.setAttribute(
+            QWebEngineSettings.WebAttribute.LocalContentCanAccessRemoteUrls, False
+        )
         settings.setAttribute(QWebEngineSettings.WebAttribute.JavascriptEnabled, True)
+        self._request_interceptor = _JSMERequestInterceptor(_JSME_CACHE_DIR, self._web_profile)
+        self._web_profile.setUrlRequestInterceptor(self._request_interceptor)
 
         # Set up web channel
         self._channel = QWebChannel()
@@ -537,7 +689,7 @@ class MoleculeEditorDialog(QDialog):
 
         # Prefer the stored MOL block: it preserves the exact 2D layout the
         # user drew last time, and it works without RDKit.
-        mol_block = self._initial_mol_block
+        mol_block: str | None = self._initial_mol_block
         if not mol_block and self._initial_smiles:
             from chemistry.structure_renderer import smiles_to_mol_block  # noqa: PLC0415
 
@@ -558,12 +710,12 @@ class MoleculeEditorDialog(QDialog):
         smiles = self._smiles_input.text().strip()
         self._update_smiles_preview(smiles)
 
-    def _update_smiles_preview(self, smiles: str) -> None:
+    def _update_smiles_preview(self, smiles: str) -> bool:
         if not smiles:
             self._smiles_preview.setPixmap(QPixmap())
             self._smiles_preview.setText("Enter SMILES to preview")
             self._smiles_status.setText("")
-            return
+            return True
 
         try:
             from chemistry.structure_renderer import render_smiles_to_png  # noqa: PLC0415
@@ -574,12 +726,13 @@ class MoleculeEditorDialog(QDialog):
             self._smiles_status.setText("RDKit not installed")
             self._smiles_preview.setPixmap(QPixmap())
             self._smiles_preview.setText("Enter SMILES to preview")
-            return
+            return False
 
         if png_bytes is None:
             self._smiles_status.setText("Invalid SMILES")
             self._smiles_preview.setPixmap(QPixmap())
             self._smiles_preview.setText("Enter SMILES to preview")
+            return False
         else:
             self._smiles_status.setText("Valid")
             image = QImage.fromData(png_bytes)
@@ -591,6 +744,7 @@ class MoleculeEditorDialog(QDialog):
                     Qt.TransformationMode.SmoothTransformation,
                 )
             )
+            return True
 
     def _on_ok(self) -> None:
         """Collect SMILES from the active tab and accept the dialog."""
@@ -608,7 +762,14 @@ class MoleculeEditorDialog(QDialog):
             if not self._canvas_mol_block and self._draw_smiles == self._initial_smiles:
                 self._canvas_mol_block = self._initial_mol_block
         else:
-            self._accepted_smiles = self._smiles_input.text().strip()
+            candidate = self._smiles_input.text().strip()
+            # The text may have changed since Preview was last clicked. Validate
+            # the exact value that would be committed; an empty value remains a
+            # valid request to clear the current structure.
+            if not self._update_smiles_preview(candidate):
+                self._tabs.setCurrentIndex(1)
+                return
+            self._accepted_smiles = candidate
         self.accept()
 
     def _flush_mol_block(self) -> None:

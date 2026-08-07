@@ -9,6 +9,8 @@ Zodpovědnost:
 
 from __future__ import annotations
 
+from typing import Any, cast
+
 
 def render_to_svg(
     smiles: str = "",
@@ -44,7 +46,7 @@ def render_to_svg(
         opts.padding = 0.05
         drawer.DrawMolecule(mol)
         drawer.FinishDrawing()
-        return drawer.GetDrawingText()
+        return cast(str, drawer.GetDrawingText())
     except Exception:  # noqa: BLE001
         return None
 
@@ -154,10 +156,10 @@ def smiles_to_mol_block(smiles: str) -> str | None:
     if mol is None:
         return None
     try:
-        return Chem.MolToMolBlock(mol)
+        return cast(str, Chem.MolToMolBlock(mol))
     except Exception:  # noqa: BLE001
         try:
-            return Chem.MolToMolBlock(mol, kekulize=False)
+            return cast(str, Chem.MolToMolBlock(mol, kekulize=False))
         except Exception:  # noqa: BLE001
             return None
 
@@ -188,7 +190,7 @@ def _relaxed_sanitize(mol) -> bool:
     return True
 
 
-def _mol_from_smiles_relaxed(smiles: str):  # type: ignore[return]
+def _mol_from_smiles_relaxed(smiles: str) -> Any | None:
     """Parse SMILES with a relaxed-sanitization fallback for unusual valences."""
     from rdkit import Chem
     from rdkit.Chem import AllChem
@@ -208,7 +210,7 @@ def _is_real_element(symbol: str) -> bool:
     try:
         from rdkit.Chem import GetPeriodicTable
 
-        return GetPeriodicTable().GetAtomicNumber(symbol) > 0
+        return bool(GetPeriodicTable().GetAtomicNumber(symbol) > 0)
     except Exception:  # noqa: BLE001
         return False
 
@@ -247,7 +249,7 @@ def _replace_pseudo_atoms(mol_block: str) -> tuple[str, dict[int, str]]:
     return "\n".join(lines), labels
 
 
-def _apply_atom_labels(mol, labels: dict[int, str]) -> None:
+def _apply_atom_labels(mol: Any, labels: dict[int, str]) -> None:
     """Show custom labels on the molecule: recorded pseudo-atoms + MOL aliases."""
     for idx, text in labels.items():
         if 0 <= idx < mol.GetNumAtoms():
@@ -261,7 +263,7 @@ def _apply_atom_labels(mol, labels: dict[int, str]) -> None:
                 atom.SetProp("atomLabel", alias)
 
 
-def _load_mol(smiles: str = "", mol_block: str = ""):  # type: ignore[return]
+def _load_mol(smiles: str = "", mol_block: str = "") -> Any | None:
     """Load a molecule from mol_block (preferred) or SMILES.
 
     Returns an RDKit Mol object, or None if loading fails or RDKit is missing.

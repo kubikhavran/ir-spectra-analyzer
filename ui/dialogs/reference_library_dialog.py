@@ -4,6 +4,7 @@ from __future__ import annotations
 
 from datetime import datetime, timedelta
 from pathlib import Path
+from typing import Any
 
 from PySide6.QtCore import QDate, QMetaObject, Qt, QThread, Signal
 from PySide6.QtGui import QDragEnterEvent, QDropEvent, QKeyEvent
@@ -32,6 +33,7 @@ from app.web_reference_import import WebReferenceImportService
 from core.spectrum import Spectrum
 from matching.quality import match_quality_label
 from storage.database import Database
+from ui.dialogs.background_task_dialog import BackgroundTaskDialogMixin
 from ui.models.reference_library_table_model import (
     COL_CREATED_AT,
     COL_DESCRIPTION,
@@ -53,9 +55,10 @@ _PREVIEW_COLORS: tuple[tuple[int, int, int], ...] = (
     (150, 80, 200),
     (210, 140, 30),
 )
+_REFERENCE_FILE_EXTENSIONS = frozenset({".spa", ".jdx", ".dx"})
 
 
-class ReferenceLibraryDialog(QDialog):
+class ReferenceLibraryDialog(BackgroundTaskDialogMixin, QDialog):
     """Dialog for viewing, renaming, and deleting reference spectra."""
 
     # Emitted when the user asks to load a reference's source file into the
@@ -81,13 +84,16 @@ class ReferenceLibraryDialog(QDialog):
         self._refs: list[dict] = []  # currently displayed (after filters)
         self._refs_all: list[dict] = []  # full unfiltered list from DB
         self._similarity_by_ref_id: dict[int, float] = {}
-        self._pg = None
-        self._preview_plot = None
-        self._preview_curves: list = []  # one pg.PlotDataItem per selected ref
-        self._current_spectrum_curve = None
-        self._preview_placeholder = None
-        self._preview_legend = None
+        # pyqtgraph exposes these runtime-created Qt types without complete
+        # static type information.
+        self._pg: Any = None
+        self._preview_plot: Any = None
+        self._preview_curves: list[Any] = []  # one pg.PlotDataItem per selected ref
+        self._current_spectrum_curve: Any = None
+        self._preview_placeholder: Any = None
+        self._preview_legend: Any = None
         self._reference_task_thread: QThread | None = None
+        self._background_thread_attribute = "_reference_task_thread"
         self._reference_task_kind: str | None = None
         self.setWindowTitle("Reference Library")
         self.setMinimumSize(960, 620)
@@ -143,6 +149,7 @@ class ReferenceLibraryDialog(QDialog):
         self._preview_label = QLabel("Select a row to preview")
         self._preview_label.setAlignment(Qt.AlignmentFlag.AlignTop | Qt.AlignmentFlag.AlignLeft)
         self._preview_label.setWordWrap(True)
+        self._preview_label.setTextFormat(Qt.TextFormat.PlainText)
         self._create_preview_plot_widget(right_layout)
 
         self._show_current_spectrum_cb = QCheckBox("Show current spectrum")
@@ -154,11 +161,13 @@ class ReferenceLibraryDialog(QDialog):
 
         self._library_label = QLabel(self._project_library_status_text())
         self._library_label.setWordWrap(True)
+        self._library_label.setTextFormat(Qt.TextFormat.PlainText)
         self._library_label.setStyleSheet("color: gray; font-size: 9pt;")
         right_layout.addWidget(self._library_label)
 
         self._search_label = QLabel(self._search_status_text())
         self._search_label.setWordWrap(True)
+        self._search_label.setTextFormat(Qt.TextFormat.PlainText)
         self._search_label.setStyleSheet("color: gray; font-size: 9pt;")
         right_layout.addWidget(self._search_label)
 
@@ -172,6 +181,7 @@ class ReferenceLibraryDialog(QDialog):
 
         # --- Footer stats line ---
         self._stats_label = QLabel("")
+        self._stats_label.setTextFormat(Qt.TextFormat.PlainText)
         self._stats_label.setStyleSheet("color: gray; font-size: 9pt;")
         self._stats_label.setWordWrap(True)
         root_layout.addWidget(self._stats_label)
@@ -560,6 +570,8 @@ class ReferenceLibraryDialog(QDialog):
             and is_idle
         )
         self._clear_search_btn.setEnabled(bool(self._similarity_by_ref_id) and is_idle)
+        self._clear_library_btn.setEnabled(bool(self._refs_all) and is_idle)
+        self._table.setEnabled(is_idle)
         self._sync_project_library_btn.setEnabled(
             self._project_library_folder is not None and is_idle
         )
@@ -642,12 +654,12 @@ class ReferenceLibraryDialog(QDialog):
         self._library_label.setText(self._project_library_status_text(summary))
 
     def _on_import_files(self) -> None:
-        """Import one or more `.spa` files directly into the reference library."""
+        """Import one or more supported files directly into the reference library."""
         paths, _ = QFileDialog.getOpenFileNames(
             self,
             "Import Reference Spectrum",
             "" if self._project_library_folder is None else str(self._project_library_folder),
-            "OMNIC SPA Files (*.spa *.SPA);;All Files (*)",
+            "IR Spectrum Files (*.spa *.SPA *.jdx *.JDX *.dx *.DX);;All Files (*)",
         )
         if not paths:
             return
@@ -670,7 +682,7 @@ class ReferenceLibraryDialog(QDialog):
         self._select_reference_row(ref_id)
 
     def _import_paths(self, paths: list[Path]) -> None:
-        """Import a list of `.spa` paths (used by both the file dialog and drag-drop)."""
+        """Import spectrum paths selected through the file dialog or drag-and-drop."""
         if not paths:
             return
         imported = 0
@@ -702,34 +714,69 @@ class ReferenceLibraryDialog(QDialog):
     # ------------------------------------------------------------------
 
     @staticmethod
+    def _mime_may_contain_spa_paths(event_mime) -> bool:
+        """Cheap drag-hover check; recursive folder scanning is deferred to drop."""
+        if not event_mime.hasUrls():
+            return False
+        for url in event_mime.urls():
+            if not url.isLocalFile():
+                continue
+            path = Path(url.toLocalFile())
+            if path.is_dir() or path.suffix.lower() in _REFERENCE_FILE_EXTENSIONS:
+                return True
+        return False
+
+    @staticmethod
     def _extract_spa_paths(event_mime) -> list[Path]:
-        """Return `.spa` files from a QMimeData URL list (recursing into folders)."""
+        """Return supported spectrum files from URLs, recursing into folders once."""
         if not event_mime.hasUrls():
             return []
         result: list[Path] = []
+        seen: set[str] = set()
+
+        def add_path(candidate: Path) -> None:
+            key = str(candidate.resolve(strict=False)).casefold()
+            if key not in seen:
+                seen.add(key)
+                result.append(candidate)
+
         for url in event_mime.urls():
             if not url.isLocalFile():
                 continue
             path = Path(url.toLocalFile())
             if path.is_dir():
-                result.extend(sorted(path.rglob("*.[sS][pP][aA]")))
-            elif path.suffix.lower() == ".spa":
-                result.append(path)
+                for candidate in sorted(path.rglob("*")):
+                    if (
+                        candidate.is_file()
+                        and candidate.suffix.lower() in _REFERENCE_FILE_EXTENSIONS
+                    ):
+                        add_path(candidate)
+            elif path.suffix.lower() in _REFERENCE_FILE_EXTENSIONS:
+                add_path(path)
         return result
 
     def dragEnterEvent(self, event: QDragEnterEvent) -> None:  # noqa: N802 (Qt override)
-        if self._extract_spa_paths(event.mimeData()):
+        if self._reference_task_thread is not None:
+            event.ignore()
+            return
+        if self._mime_may_contain_spa_paths(event.mimeData()):
             event.acceptProposedAction()
         else:
             event.ignore()
 
     def dragMoveEvent(self, event) -> None:  # noqa: N802 (Qt override)
-        if self._extract_spa_paths(event.mimeData()):
+        if self._reference_task_thread is not None:
+            event.ignore()
+            return
+        if self._mime_may_contain_spa_paths(event.mimeData()):
             event.acceptProposedAction()
         else:
             event.ignore()
 
     def dropEvent(self, event: QDropEvent) -> None:  # noqa: N802 (Qt override)
+        if self._reference_task_thread is not None:
+            event.ignore()
+            return
         paths = self._extract_spa_paths(event.mimeData())
         if not paths:
             event.ignore()
@@ -752,6 +799,10 @@ class ReferenceLibraryDialog(QDialog):
         description cell of the table, we fall through to default behaviour
         so typing is not intercepted.
         """
+        if self._reference_task_thread is not None and event.key() != Qt.Key.Key_Escape:
+            event.accept()
+            return
+
         focus_widget = self.focusWidget()
         table_is_editing = self._table.state() == self._table.State.EditingState
 
@@ -1011,9 +1062,12 @@ class ReferenceLibraryDialog(QDialog):
     def _display_path(path: Path) -> str:
         """Show a readable path in the dialog without hard-coding absolute roots."""
         try:
-            return str(path.relative_to(Path.cwd()))
+            display_path = path.relative_to(Path.cwd())
         except ValueError:
-            return str(path)
+            display_path = path
+        # Forward slashes remain readable on Windows and make copied status text
+        # stable across platforms.
+        return display_path.as_posix()
 
     def _search_status_text(
         self,
@@ -1152,8 +1206,9 @@ class ReferenceLibraryDialog(QDialog):
         pg = self._pg
         self._clear_preview_curves()
 
+        current_spectrum = self._current_spectrum
         show_current = (
-            self._current_spectrum is not None
+            current_spectrum is not None
             and self._current_spectrum_curve is not None
             and self._show_current_spectrum_cb.isChecked()
         )
@@ -1176,11 +1231,15 @@ class ReferenceLibraryDialog(QDialog):
             )
             self._preview_curves.append(curve)
 
-        if show_current and self._current_spectrum_curve is not None:
-            cur_y = np.asarray(self._current_spectrum.intensities, dtype=float)
+        if (
+            show_current
+            and current_spectrum is not None
+            and self._current_spectrum_curve is not None
+        ):
+            cur_y = np.asarray(current_spectrum.intensities, dtype=float)
             cur_max = np.max(np.abs(cur_y))
             norm_cur_y = cur_y / cur_max if cur_max > 0 else cur_y
-            self._current_spectrum_curve.setData(x=self._current_spectrum.wavenumbers, y=norm_cur_y)
+            self._current_spectrum_curve.setData(x=current_spectrum.wavenumbers, y=norm_cur_y)
             self._current_spectrum_curve.setVisible(True)
         elif self._current_spectrum_curve is not None:
             self._current_spectrum_curve.setData([], [])

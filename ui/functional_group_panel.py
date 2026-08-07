@@ -2,6 +2,9 @@
 
 from __future__ import annotations
 
+from html import escape
+from typing import TYPE_CHECKING
+
 from PySide6.QtCore import QSignalBlocker, Qt, Signal
 from PySide6.QtGui import QColor
 from PySide6.QtWidgets import (
@@ -12,6 +15,9 @@ from PySide6.QtWidgets import (
     QVBoxLayout,
     QWidget,
 )
+
+if TYPE_CHECKING:
+    from core.peak import Peak
 
 
 class FunctionalGroupPanel(QWidget):
@@ -24,7 +30,7 @@ class FunctionalGroupPanel(QWidget):
     def __init__(self, parent=None) -> None:
         super().__init__(parent)
         self._results: list = []
-        self._active_peak = None
+        self._active_peak: Peak | None = None
         self._assignment_preview_map: dict[str, str] = {}
         self._setup_ui()
 
@@ -51,6 +57,7 @@ class FunctionalGroupPanel(QWidget):
         layout.addWidget(self._group_list, stretch=3)
 
         self._group_info_label = QLabel()
+        self._group_info_label.setTextFormat(Qt.TextFormat.RichText)
         self._group_info_label.setWordWrap(True)
         self._group_info_label.setOpenExternalLinks(True)
         self._group_info_label.setTextInteractionFlags(
@@ -64,6 +71,7 @@ class FunctionalGroupPanel(QWidget):
         layout.addWidget(self._group_info_label)
 
         self._peak_info_label = QLabel()
+        self._peak_info_label.setTextFormat(Qt.TextFormat.RichText)
         self._peak_info_label.setWordWrap(True)
         self._peak_info_label.setStyleSheet(
             "font-size: 9pt; color: #375A7F; background: #F4F8FB; border: 1px solid #D6E4F0; "
@@ -135,7 +143,7 @@ class FunctionalGroupPanel(QWidget):
         self.group_selected.emit(selected_result)
         self._rebuild_detail_list(selected_result)
 
-    def set_active_peak(self, peak) -> None:
+    def set_active_peak(self, peak: Peak | None) -> None:
         self._active_peak = peak
         current = self.current_result()
         if current is not None:
@@ -180,22 +188,23 @@ class FunctionalGroupPanel(QWidget):
 
     def _rebuild_detail_list(self, result) -> None:
         self._detail_list.clear()
+        active_peak = self._active_peak
 
-        if self._active_peak is not None:
+        if active_peak is not None:
             self._detail_label.setText(
-                f"Suggestions for active peak {self._active_peak.position:.0f} cm\u207b\u00b9"
+                f"Suggestions for active peak {active_peak.position:.0f} cm\u207b\u00b9"
             )
         else:
             self._detail_label.setText("Suggested vibrations and evidence")
 
         suggestions = list(result.suggested_bands or result.bands)
-        if self._active_peak is not None:
+        if active_peak is not None:
             suggestions.sort(
                 key=lambda band: (
                     not self._is_actionable_band(band),
-                    not (band.is_assignable and band.covers_wavenumber(self._active_peak.position)),
+                    not (band.is_assignable and band.covers_wavenumber(active_peak.position)),
                     not self._can_assign_band(band),
-                    not band.covers_wavenumber(self._active_peak.position),
+                    not band.covers_wavenumber(active_peak.position),
                     band.is_missing_required,
                     -band.confidence,
                     -band.range_max,
@@ -225,17 +234,17 @@ class FunctionalGroupPanel(QWidget):
             item.setData(256, band)
             item.setForeground(self._band_foreground_color(band))
             item.setToolTip(self._band_tooltip(band))
-            if self._active_peak is not None and band.covers_wavenumber(self._active_peak.position):
+            if active_peak is not None and band.covers_wavenumber(active_peak.position):
                 item.setBackground(QColor("#E8F6F3"))
             self._detail_list.addItem(item)
 
     def _rebuild_group_info(self, result) -> None:
-        matched = ", ".join(band.label for band in result.matched_bands[:3]) or "none"
-        missing = ", ".join(band.label for band in result.missing_bands[:3]) or "none"
-        bonuses = ", ".join(result.matched_bonus_labels) or "none"
+        matched = ", ".join(escape(str(band.label)) for band in result.matched_bands[:3]) or "none"
+        missing = ", ".join(escape(str(band.label)) for band in result.missing_bands[:3]) or "none"
+        bonuses = ", ".join(escape(str(label)) for label in result.matched_bonus_labels) or "none"
         sources = self._format_source_links(result.source_links)
         self._group_info_label.setText(
-            f"<b>{result.group_name}</b><br>"
+            f"<b>{escape(str(result.group_name))}</b><br>"
             f"Matched: {matched}<br>"
             f"Missing required: {missing}<br>"
             f"Coherence bonus: {bonuses}<br>"
@@ -256,11 +265,13 @@ class FunctionalGroupPanel(QWidget):
         if assignable:
             best_band = max(assignable, key=lambda band: band.confidence)
             preview_name = self._preview_name_for_band(best_band)
-            preview_text = f' It will assign "{preview_name}".' if preview_name else ""
+            preview_text = f' It will assign "{escape(str(preview_name))}".' if preview_name else ""
             self._peak_info_label.setText(
                 f"<b>Peak {active_position:.0f} cm\u207b\u00b9</b><br>"
-                f"Best assignable match: {best_band.label} ({best_band.confidence:.0f}%). "
-                f"Observed {best_band.observed_intensity_class}, expected {best_band.expected_intensity}. "
+                f"Best assignable match: {escape(str(best_band.label))} "
+                f"({best_band.confidence:.0f}%). Observed "
+                f"{escape(str(best_band.observed_intensity_class))}, expected "
+                f"{escape(str(best_band.expected_intensity))}. "
                 f"Double-click a green suggestion to assign it into the peak table.{preview_text}"
             )
             return
@@ -270,7 +281,8 @@ class FunctionalGroupPanel(QWidget):
             best_band = max(local_evidence, key=lambda band: band.confidence)
             self._peak_info_label.setText(
                 f"<b>Peak {active_position:.0f} cm\u207b\u00b9</b><br>"
-                f"This group has local evidence at {best_band.label}, but no assignable suggestion "
+                f"This group has local evidence at {escape(str(best_band.label))}, "
+                "but no assignable suggestion "
                 "is available for the active peak yet."
             )
             return
@@ -333,7 +345,7 @@ class FunctionalGroupPanel(QWidget):
             return "none"
         rendered = []
         for index, link in enumerate(links[:3], start=1):
-            rendered.append(f'<a href="{link}">[{index}]</a>')
+            rendered.append(f'<a href="{escape(str(link), quote=True)}">[{index}]</a>')
         return " ".join(rendered)
 
     def _on_detail_double_clicked(self, item: QListWidgetItem) -> None:

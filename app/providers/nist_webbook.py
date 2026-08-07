@@ -7,8 +7,9 @@ import ssl
 from dataclasses import dataclass
 from html import unescape
 from urllib.parse import parse_qs, urlencode, urljoin, urlparse, urlunparse
-from urllib.request import Request, urlopen
+from urllib.request import HTTPRedirectHandler, HTTPSHandler, Request, build_opener
 
+from app.config import APP_VERSION
 from core.spectrum import Spectrum
 from file_io.jcamp_reader import JCAMPReader
 
@@ -19,6 +20,8 @@ _ROW_RE = re.compile(
 )
 _JCAMP_RE = re.compile(r'href="([^"]*?\bJCAMP=[^"]+)"', re.IGNORECASE)
 _TAG_RE = re.compile(r"<[^>]+>")
+_NIST_HOST = "webbook.nist.gov"
+_MAX_RESPONSE_BYTES = 32 * 1024 * 1024
 
 
 @dataclass(frozen=True)
@@ -92,10 +95,7 @@ class NISTWebBookClient:
 
     def _normalize_page_url(self, url: str) -> str:
         parsed = urlparse(url.strip())
-        if not parsed.scheme:
-            raise ValueError("NIST WebBook URL must include http:// or https://")
-        if "webbook.nist.gov" not in parsed.netloc:
-            raise ValueError("Only NIST WebBook URLs are supported.")
+        _validate_nist_url(url)
 
         query = parse_qs(parsed.query, keep_blank_values=True)
         if "JCAMP" in query:
@@ -107,7 +107,7 @@ class NISTWebBookClient:
         if query.get("Type", [""])[0] != "IR-SPEC":
             query["Type"] = ["IR-SPEC"]
             return urlunparse(parsed._replace(query=urlencode(query, doseq=True)))
-        return url
+        return urlunparse(parsed)
 
     def _extract_metadata(self, html: str) -> dict[str, str]:
         metadata: dict[str, str] = {}
@@ -124,7 +124,9 @@ class NISTWebBookClient:
         match = _JCAMP_RE.search(html)
         if match is None:
             raise ValueError("NIST page does not expose a JCAMP download link.")
-        return urljoin(page_url, unescape(match.group(1)))
+        jcamp_url = urljoin(page_url, unescape(match.group(1)))
+        _validate_nist_url(jcamp_url)
+        return jcamp_url
 
     @staticmethod
     def _extract_external_id(page_url: str) -> str:
@@ -141,23 +143,68 @@ class NISTWebBookClient:
 
     @staticmethod
     def _default_fetch(url: str) -> bytes:
+        _validate_nist_url(url)
         request = Request(
             url,
             headers={
                 "User-Agent": (
-                    "Mozilla/5.0 (compatible; IR-Spectra-Analyzer/0.6; "
+                    f"Mozilla/5.0 (compatible; IR-Spectra-Analyzer/{APP_VERSION}; "
                     "+https://github.com/kubikhavran/ir-spectra-analyzer)"
                 )
             },
         )
-        with urlopen(request, timeout=20, context=_ssl_context()) as response:  # noqa: S310
-            return response.read()
+        opener = build_opener(_NISTRedirectHandler(), HTTPSHandler(context=_ssl_context()))
+        with opener.open(request, timeout=20) as response:  # noqa: S310
+            _validate_nist_url(response.geturl())
+            return _read_limited_response(response, max_bytes=_MAX_RESPONSE_BYTES)
 
 
-def _ssl_context() -> ssl.SSLContext | None:
+class _NISTRedirectHandler(HTTPRedirectHandler):
+    """Reject redirects before urllib can contact a non-NIST destination."""
+
+    def redirect_request(self, req, fp, code, msg, headers, newurl):
+        _validate_nist_url(newurl)
+        return super().redirect_request(req, fp, code, msg, headers, newurl)
+
+
+def _validate_nist_url(url: str) -> None:
+    """Require an exact, credential-free HTTPS NIST WebBook origin."""
+    parsed = urlparse(url.strip())
+    if parsed.scheme.casefold() != "https":
+        raise ValueError("NIST WebBook URL must use HTTPS.")
+    if parsed.username is not None or parsed.password is not None:
+        raise ValueError("NIST WebBook URL must not contain credentials.")
+    if (parsed.hostname or "").casefold() != _NIST_HOST:
+        raise ValueError("Only NIST WebBook URLs are supported.")
+    try:
+        port = parsed.port
+    except ValueError as exc:
+        raise ValueError("NIST WebBook URL contains an invalid port.") from exc
+    if port not in {None, 443}:
+        raise ValueError("NIST WebBook URL must use the standard HTTPS port.")
+
+
+def _read_limited_response(response, *, max_bytes: int) -> bytes:
+    """Read at most ``max_bytes`` and reject oversized network responses."""
+    content_length = response.headers.get("Content-Length")
+    if content_length:
+        try:
+            declared_size = int(content_length)
+        except (TypeError, ValueError):
+            declared_size = None
+        if declared_size is not None and declared_size > max_bytes:
+            raise ValueError(f"NIST WebBook response is too large ({declared_size} bytes).")
+
+    payload = bytes(response.read(max_bytes + 1))
+    if len(payload) > max_bytes:
+        raise ValueError(f"NIST WebBook response is too large (limit {max_bytes} bytes).")
+    return payload
+
+
+def _ssl_context() -> ssl.SSLContext:
     """Prefer a bundled CA bundle when available, otherwise use urllib defaults."""
     try:
         import certifi  # noqa: PLC0415
     except ImportError:
-        return None
+        return ssl.create_default_context()
     return ssl.create_default_context(cafile=certifi.where())

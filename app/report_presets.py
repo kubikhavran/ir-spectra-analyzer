@@ -117,9 +117,12 @@ class ReportPresetManager:
     def _options_from_dict(data: dict[str, object]) -> ReportOptions:
         """Deserialize ReportOptions from stored preset data."""
         dpi = data.get("dpi", ReportOptions().dpi)
-        try:
-            dpi_value = int(dpi)
-        except (TypeError, ValueError):
+        if isinstance(dpi, (str, bytes, bytearray, int, float)):
+            try:
+                dpi_value = int(dpi)
+            except (TypeError, ValueError):
+                dpi_value = ReportOptions().dpi
+        else:
             dpi_value = ReportOptions().dpi
 
         # Presets saved before the layout choice existed carry no opinion about

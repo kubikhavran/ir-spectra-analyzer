@@ -16,17 +16,22 @@ from __future__ import annotations
 
 from datetime import datetime
 from pathlib import Path
+from typing import TYPE_CHECKING
 
 from PySide6.QtCore import QMetaObject, Qt, QThread
 from PySide6.QtGui import QKeySequence, QShortcut, QUndoStack
 from PySide6.QtWidgets import (
+    QApplication,
     QDialog,
     QDockWidget,
     QFileDialog,
     QLabel,
+    QLineEdit,
     QMainWindow,
     QMenu,
     QMessageBox,
+    QPlainTextEdit,
+    QTextEdit,
 )
 
 from app.report_presets import ReportPresetManager
@@ -42,6 +47,10 @@ from ui.spectrum_widget import SpectrumWidget
 from ui.toolbar import MainToolbar
 from ui.vibration_panel import VibrationPanel
 from ui.vibration_text_edit import VibrationTextEditDialog
+
+if TYPE_CHECKING:
+    from core.peak import Peak
+    from core.project import Project
 
 
 class MainWindow(QMainWindow):
@@ -67,14 +76,16 @@ class MainWindow(QMainWindow):
         # Draws a matched spectrum's saved structure on hover. Built empty and fed
         # by _refresh_saved_project_names — nothing here runs during a search.
         self._structure_preview = StructurePreviewService()
-        self._project = None
+        self._project: Project | None = None
         self._current_project_path: str | None = None  # last saved/opened .irproj path
         self._recent_menu: QMenu | None = None
         self._undo_stack = QUndoStack(self)
-        self._last_search_refs: list = []  # cached from last _on_match_spectrum call
+        self._non_undo_dirty = False
+        self._project_revision = 0
         self._current_match_results: list = []
         self._current_functional_group_results: list = []
         self._reference_search_thread: QThread | None = None
+        self._reference_search_context: tuple[int, int, str] | None = None
         self._vibration_presets_cache: list = []
         self._molecule_widget: MoleculeWidget
         self._report_preset_manager = ReportPresetManager(settings)
@@ -341,11 +352,13 @@ class MainWindow(QMainWindow):
         )
 
         self._undo_stack.indexChanged.connect(self._on_undo_redo)
+        self._undo_stack.cleanChanged.connect(lambda _clean: self._update_window_title())
 
     def _on_undo_redo(self) -> None:
         """Refresh UI state after undo/redo operations."""
         if self._project is None or self._project.spectrum is None:
             return
+        self._project_revision += 1
         preferred_peak = self._peak_table.selected_peak()
         preferred_group_id = self._current_functional_group_id()
         spectrum = (
@@ -356,14 +369,83 @@ class MainWindow(QMainWindow):
         # Keep the user's current zoom/pan — adding a peak while zoomed in must
         # not snap the graph back to the full view.
         self._spectrum_widget.set_spectrum(spectrum, preserve_view=True)
+        current_smiles = getattr(self._molecule_widget, "_current_smiles", "")
+        current_mol_block = getattr(self._molecule_widget, "_current_mol_block", "")
+        if current_smiles != self._project.smiles or current_mol_block != getattr(
+            self._project, "mol_block", ""
+        ):
+            self._molecule_widget.set_structure(
+                self._project.smiles,
+                mol_block=getattr(self._project, "mol_block", ""),
+                image_bytes=self._project.structure_image,
+            )
         self._refresh_peak_views(preferred_peak)
         self._refresh_functional_group_analysis(preferred_group_id=preferred_group_id)
+        self._update_window_title()
+
+    def _has_unsaved_changes(self) -> bool:
+        """Return whether replacing/closing the current project would lose work."""
+        if self._project is None:
+            return False
+        try:
+            undo_is_clean = self._undo_stack.isClean()
+        except RuntimeError:
+            # Qt may destroy child objects before their final signals are delivered
+            # while a test/application is tearing the window down.
+            undo_is_clean = True
+        return self._non_undo_dirty or not undo_is_clean
+
+    def _update_window_title(self) -> None:
+        """Show the current project and a conventional unsaved-change marker."""
+        title = "IR Spectra Analyzer"
+        if self._project is not None:
+            project_name = (
+                Path(self._current_project_path).name
+                if self._current_project_path
+                else (self._project.name or "Untitled")
+            )
+            title = f"{project_name} - {title}"
+        if self._has_unsaved_changes():
+            title = f"*{title}"
+        try:
+            self.setWindowTitle(title)
+        except RuntimeError:
+            # The QUndoStack can emit cleanChanged during QObject destruction.
+            return
+
+    def _mark_non_undo_dirty(self) -> None:
+        self._non_undo_dirty = True
+        self._project_revision += 1
+        self._update_window_title()
+
+    def _mark_project_saved(self) -> None:
+        self._non_undo_dirty = False
+        self._undo_stack.setClean()
+        self._update_window_title()
+
+    def _confirm_project_replacement(self) -> bool:
+        """Ask how to handle unsaved work before open/replace/close operations."""
+        if not self._has_unsaved_changes():
+            return True
+        answer = QMessageBox.warning(
+            self,
+            "Unsaved Changes",
+            "The current project has unsaved changes. Save them before continuing?",
+            QMessageBox.StandardButton.Save
+            | QMessageBox.StandardButton.Discard
+            | QMessageBox.StandardButton.Cancel,
+            QMessageBox.StandardButton.Save,
+        )
+        if answer == QMessageBox.StandardButton.Save:
+            return self._on_save_project()
+        return bool(answer == QMessageBox.StandardButton.Discard)
 
     def _connect_signals(self) -> None:
         """Wire up inter-component signals."""
         self._spectrum_widget.peak_clicked.connect(self._on_peak_clicked)
         self._spectrum_widget.peak_selected_in_viewer.connect(self._on_peak_selected_in_viewer)
         self._spectrum_widget.peak_delete_requested.connect(self._on_delete_peak_object)
+        self._spectrum_widget.peak_label_moved.connect(self._on_peak_label_moved)
         self._peak_table.peak_selected.connect(self._on_peak_selected)
         self._metadata_panel.metadata_changed.connect(self._on_metadata_changed)
         self._vibration_panel.preset_selected.connect(self._on_preset_selected)
@@ -371,7 +453,6 @@ class MainWindow(QMainWindow):
         self._vibration_panel.preset_added.connect(self._on_vibration_preset_changed)
         self._vibration_panel.preset_deleted.connect(self._on_vibration_preset_changed)
         self._vibration_panel.preset_remove_requested.connect(self._on_remove_vibration)
-        self._peak_table.vibration_label_removed.connect(self._on_vibration_label_removed)
         self._peak_table.vibration_edit_requested.connect(self._on_edit_peak_vibration_requested)
         self._match_results_panel.candidate_selected.connect(self._on_match_candidate_selected)
         self._match_results_panel.import_reference.connect(self._on_import_reference)
@@ -455,6 +536,9 @@ class MainWindow(QMainWindow):
         # project-load path re-sets it afterwards.
         self._current_project_path = None
         self._undo_stack.clear()
+        self._undo_stack.setClean()
+        self._non_undo_dirty = False
+        self._project_revision = 0
         if recent_path:
             self._add_to_recent(recent_path)
 
@@ -483,6 +567,7 @@ class MainWindow(QMainWindow):
             image_bytes=project.structure_image,
         )
         self._refresh_functional_group_analysis()
+        self._update_window_title()
 
     def _sync_project_metadata_from_panel(self) -> None:
         if self._project is None:
@@ -490,25 +575,32 @@ class MainWindow(QMainWindow):
         self._on_metadata_changed(self._metadata_panel.current_metadata())
 
     def _open_recent_path(self, path: str) -> None:
-        if path.lower().endswith(".irproj"):
-            self._load_project_from_path(path)
-            return
-        self._load_spectrum(path)
+        try:
+            if path.lower().endswith(".irproj"):
+                self._load_project_from_path(path)
+                return
+            self._load_spectrum(path)
+        except Exception as exc:  # noqa: BLE001
+            QMessageBox.critical(self, "Open Error", f"Failed to open recent file:\n{exc}")
 
     def _load_project_from_path(self, path: str) -> None:
         from pathlib import Path  # noqa: PLC0415
 
         from storage.project_serializer import ProjectSerializer  # noqa: PLC0415
 
+        if not self._confirm_project_replacement():
+            return
         project = ProjectSerializer().load(path)
         self._apply_project_to_ui(project, recent_path=path)
         self._current_project_path = path
+        self._mark_project_saved()
         self.statusBar().showMessage(f"Project loaded: {Path(path).name}")
 
     def _on_metadata_changed(self, metadata) -> None:
         if self._project is None:
             return
 
+        changed = self._project.metadata != metadata
         self._project.metadata = metadata
         self._project.updated_at = datetime.now()
 
@@ -518,6 +610,8 @@ class MainWindow(QMainWindow):
         if self._project.corrected_spectrum is not None:
             self._project.corrected_spectrum.title = metadata.title
             self._project.corrected_spectrum.comments = metadata.comments
+        if changed:
+            self._mark_non_undo_dirty()
 
     # --- Event handlers ---
 
@@ -562,7 +656,6 @@ class MainWindow(QMainWindow):
         """Persist the folder of a just-saved file for the next save/export dialog."""
         try:
             self._settings.set("last_save_dir", str(Path(path).parent))
-            self._settings.save()
         except Exception:  # noqa: BLE001 — remembering the folder is best-effort
             pass
 
@@ -580,11 +673,11 @@ class MainWindow(QMainWindow):
             directory = self._last_save_dir()
         return str(directory / f"{basename}{extension}")
 
-    def _on_save_project(self) -> None:
+    def _on_save_project(self) -> bool:
         """Handle File → Save Project action."""
         if self._project is None:
             self.statusBar().showMessage("No project loaded")
-            return
+            return False
 
         path, _ = QFileDialog.getSaveFileName(
             self,
@@ -593,25 +686,34 @@ class MainWindow(QMainWindow):
             "IR Project Files (*.irproj);;JSON files (*.json)",
         )
         if not path:
-            return
+            return False
+
+        from pathlib import Path  # noqa: PLC0415
+
+        from storage.project_serializer import ProjectSerializer  # noqa: PLC0415
 
         try:
-            from pathlib import Path  # noqa: PLC0415
-
-            from storage.project_serializer import ProjectSerializer  # noqa: PLC0415
-
             self._sync_project_metadata_from_panel()
             ProjectSerializer().save(self._project, path)
-            self._current_project_path = path
-            self._remember_save_dir(path)
-            self.statusBar().showMessage(f"Project saved: {Path(path).name}")
+        except Exception as e:  # noqa: BLE001
+            QMessageBox.critical(self, "Save Error", f"Failed to save project:\n{e}")
+            return False
+
+        self._current_project_path = path
+        self._mark_project_saved()
+        self._remember_save_dir(path)
+        self.statusBar().showMessage(f"Project saved: {Path(path).name}")
+        try:
             self._add_to_recent(path)
             # A project saved into the annotated folder becomes applicable to
             # future matches straight away.
             self._refresh_saved_project_names()
             self._register_saved_project_as_reference(path)
         except Exception as e:  # noqa: BLE001
-            QMessageBox.critical(self, "Save Error", f"Failed to save project:\n{e}")
+            self.statusBar().showMessage(
+                f"Project saved: {Path(path).name} (follow-up update failed: {e})"
+            )
+        return True
 
     def _on_open_project(self) -> None:
         """Handle File → Open Project action."""
@@ -637,6 +739,8 @@ class MainWindow(QMainWindow):
         from core.project import Project  # noqa: PLC0415
         from file_io.format_registry import FormatRegistry  # noqa: PLC0415
 
+        if not self._confirm_project_replacement():
+            return
         try:
             registry = FormatRegistry()
             spectrum = registry.read(Path(path))
@@ -690,17 +794,11 @@ class MainWindow(QMainWindow):
         if self._project is None or self._project.spectrum is None:
             self.statusBar().showMessage("No spectrum loaded")
             return
-        from core.spectrum import SpectralUnit  # noqa: PLC0415
-        from processing.peak_detection import detect_peaks  # noqa: PLC0415
+        from processing.peak_detection import default_prominence, detect_peaks  # noqa: PLC0415
 
         spectrum = self._project.corrected_spectrum or self._project.spectrum
         invert = spectrum.is_dip_spectrum
-        if invert:
-            prominence = 1.0  # dip-type spectra span 0-100 range
-        elif spectrum.y_unit == SpectralUnit.BASELINE_CORRECTED:
-            prominence = 1.0  # corrected signal in %T-scale (0-100 range)
-        else:
-            prominence = 0.05  # absorbance — peaks in 0-2 range, skip minor noise
+        prominence = default_prominence(spectrum)
         peaks = detect_peaks(
             spectrum.wavenumbers, spectrum.intensities, invert=invert, prominence=prominence
         )
@@ -749,8 +847,6 @@ class MainWindow(QMainWindow):
         command = CorrectBaselineCommand(self._project, corrected_spectrum)
         self._undo_stack.push(command)
 
-        self._spectrum_widget.set_spectrum(self._project.corrected_spectrum)
-        self._refresh_functional_group_analysis()
         self.statusBar().showMessage("Baseline corrected (Ctrl+Z to undo)")
 
     def _on_export(self) -> None:
@@ -778,6 +874,10 @@ class MainWindow(QMainWindow):
 
     def _export_pdf(self, report_options=None) -> bool:
         """Export the current project to a PDF report."""
+        project = self._project
+        if project is None or project.spectrum is None:
+            self.statusBar().showMessage("No spectrum loaded")
+            return False
         path, _ = QFileDialog.getSaveFileName(
             self,
             "Export PDF Report",
@@ -804,7 +904,7 @@ class MainWindow(QMainWindow):
 
         try:
             builder = ReportBuilder()
-            builder.build_with_options(self._project, Path(path), report_options)
+            builder.build_with_options(project, Path(path), report_options)
             self._remember_save_dir(path)
             self.statusBar().showMessage(f"PDF exported: {Path(path).name}")
             return True
@@ -814,6 +914,10 @@ class MainWindow(QMainWindow):
 
     def _export_csv(self, *, include_unassigned: bool = False) -> None:
         """Export peaks to a CSV file."""
+        project = self._project
+        if project is None or project.spectrum is None:
+            self.statusBar().showMessage("No spectrum loaded")
+            return
         path, _ = QFileDialog.getSaveFileName(
             self,
             "Export CSV",
@@ -828,13 +932,13 @@ class MainWindow(QMainWindow):
         from file_io.csv_exporter import CSVExporter  # noqa: PLC0415
 
         try:
-            spectrum = self._project.corrected_spectrum or self._project.spectrum
+            spectrum = project.corrected_spectrum or project.spectrum
             CSVExporter().export(
-                self._project.peaks,
+                project.peaks,
                 Path(path),
                 spectrum,
                 include_unassigned=include_unassigned,
-                project=self._project,
+                project=project,
             )
             self._remember_save_dir(path)
             self.statusBar().showMessage(f"CSV exported: {Path(path).name}")
@@ -843,6 +947,10 @@ class MainWindow(QMainWindow):
 
     def _export_xlsx(self, *, include_unassigned: bool = False) -> None:
         """Export peaks and spectrum to an Excel file."""
+        project = self._project
+        if project is None or project.spectrum is None:
+            self.statusBar().showMessage("No spectrum loaded")
+            return
         path, _ = QFileDialog.getSaveFileName(
             self,
             "Export Excel",
@@ -857,13 +965,13 @@ class MainWindow(QMainWindow):
         from file_io.xlsx_exporter import XLSXExporter  # noqa: PLC0415
 
         try:
-            spectrum = self._project.corrected_spectrum or self._project.spectrum
+            spectrum = project.corrected_spectrum or project.spectrum
             XLSXExporter().export(
-                self._project.peaks,
+                project.peaks,
                 Path(path),
                 spectrum,
                 include_unassigned=include_unassigned,
-                project=self._project,
+                project=project,
             )
             self._remember_save_dir(path)
             self.statusBar().showMessage(f"Excel exported: {Path(path).name}")
@@ -894,30 +1002,6 @@ class MainWindow(QMainWindow):
         self.statusBar().showMessage(
             f'Removed "{preset.name}" from peak at {peak.position:.1f} cm\u207b\u00b9'
         )
-
-    def _on_vibration_label_removed(self, peak: object, label_str: str) -> None:
-        """Remove a single vibration label that the user deleted from the peak table cell."""
-        if self._project is None:
-            return
-        from core.commands import RemovePresetCommand  # noqa: PLC0415
-        from core.peak import Peak as PeakType  # noqa: PLC0415
-        from core.vibration_presets import VibrationPreset  # noqa: PLC0415
-
-        p = peak  # type: ignore[assignment]
-        if not isinstance(p, PeakType):
-            return
-        if label_str not in p.vibration_labels:
-            return
-        idx = p.vibration_labels.index(label_str)
-        db_id = p.vibration_ids[idx] if idx < len(p.vibration_ids) else None
-        stub_preset = VibrationPreset(
-            name=label_str,
-            typical_range_min=0.0,
-            typical_range_max=0.0,
-            db_id=db_id,
-        )
-        self._undo_stack.push(RemovePresetCommand(p, stub_preset))
-        self._refresh_peak_views(p)
 
     def _on_edit_peak_vibration_requested(self, peak) -> None:
         """Open a dedicated dialog for manual vibration text editing."""
@@ -1091,6 +1175,9 @@ class MainWindow(QMainWindow):
 
     def _on_delete_peak(self) -> None:
         """Delete the currently selected peak."""
+        focus = QApplication.focusWidget()
+        if isinstance(focus, (QLineEdit, QTextEdit, QPlainTextEdit)):
+            return
         if self._project is None:
             return
         peak = self._peak_table.selected_peak()
@@ -1102,7 +1189,7 @@ class MainWindow(QMainWindow):
         self._refresh_peak_views()
         self.statusBar().showMessage(f"Deleted peak at {peak.position:.1f} cm\u207b\u00b9")
 
-    def _on_delete_peak_object(self, peak: object) -> None:
+    def _on_delete_peak_object(self, peak: Peak) -> None:
         """Delete a specific peak object (emitted from shift+click on label)."""
         if self._project is None:
             return
@@ -1110,6 +1197,13 @@ class MainWindow(QMainWindow):
 
         self._undo_stack.push(DeletePeakCommand(self._project, peak))
         self._refresh_peak_views()
+
+    def _on_peak_label_moved(self, peak: object) -> None:
+        """Track direct plot-label movement, which is intentionally not undoable."""
+        if self._project is None:
+            return
+        if any(existing is peak for existing in self._project.peaks):
+            self._mark_non_undo_dirty()
 
     def _on_match_spectrum(self) -> None:
         """Run spectral matching against the reference database."""
@@ -1141,8 +1235,17 @@ class MainWindow(QMainWindow):
         )
         thread = QThread(self)
         worker.moveToThread(thread)
-        worker.completed.connect(self._on_match_spectrum_completed)
-        worker.failed.connect(self._on_match_spectrum_failed)
+        context = self._current_match_context()
+        worker.completed.connect(
+            lambda outcome, search_context=context: self._on_match_spectrum_completed(
+                outcome, search_context
+            )
+        )
+        worker.failed.connect(
+            lambda message, search_context=context: self._on_match_spectrum_failed(
+                message, search_context
+            )
+        )
         worker.finished.connect(thread.quit)
         worker.finished.connect(worker.deleteLater)
         thread.finished.connect(thread.deleteLater)
@@ -1151,6 +1254,7 @@ class MainWindow(QMainWindow):
             lambda: QMetaObject.invokeMethod(worker, "run", Qt.ConnectionType.QueuedConnection)
         )
         self._reference_search_thread = thread
+        self._reference_search_context = context
         self._set_match_search_busy(True)
         thread.start()
 
@@ -1167,18 +1271,41 @@ class MainWindow(QMainWindow):
             return
         self._apply_match_spectrum_outcome(outcome)
 
-    def _on_match_spectrum_completed(self, outcome) -> None:
+    def _current_match_context(self) -> tuple[int, int, str]:
+        return (
+            id(self._project),
+            self._project_revision,
+            self._match_results_panel.name_filter(),
+        )
+
+    def _on_match_spectrum_completed(
+        self,
+        outcome,
+        search_context: tuple[int, int, str] | None = None,
+    ) -> None:
         """Apply background search results once the worker finishes."""
+        if search_context is not None and search_context != self._current_match_context():
+            self.statusBar().showMessage(
+                "Matching result ignored because the project or filter changed."
+            )
+            return
         self._apply_match_spectrum_outcome(outcome)
 
-    def _on_match_spectrum_failed(self, message: str) -> None:
+    def _on_match_spectrum_failed(
+        self,
+        message: str,
+        search_context: tuple[int, int, str] | None = None,
+    ) -> None:
         """Show a background search failure to the user."""
+        if search_context is not None and search_context != self._current_match_context():
+            return
         self.statusBar().showMessage("Matching failed")
         QMessageBox.critical(self, "Match Error", f"Matching failed:\n{message}")
 
     def _on_reference_search_thread_finished(self) -> None:
         """Reset UI state after a background reference search completes."""
         self._reference_search_thread = None
+        self._reference_search_context = None
         self._set_match_search_busy(False)
 
     def _apply_match_spectrum_outcome(self, outcome) -> None:
@@ -1195,7 +1322,6 @@ class MainWindow(QMainWindow):
             self._clear_match_results()
             return
 
-        self._last_search_refs = list(outcome.references)
         self._current_match_results = list(outcome.results)
         self._refresh_saved_project_names()
         self._match_results_panel.set_results(list(outcome.results))
@@ -1226,7 +1352,6 @@ class MainWindow(QMainWindow):
     def _on_auto_register_toggled(self, enabled: bool) -> None:
         """Persist the auto-registration preference."""
         self._settings.set("auto_register_saved_projects", bool(enabled))
-        self._settings.save()
         self.statusBar().showMessage(
             "Saved projects are added to the reference library"
             if enabled
@@ -1333,7 +1458,6 @@ class MainWindow(QMainWindow):
         if not chosen:
             return
         self._settings.set("annotated_projects_folder", chosen)
-        self._settings.save()
         self._refresh_saved_project_names()
         self.statusBar().showMessage(f"Annotated projects folder: {Path(chosen).name}")
 
@@ -1412,13 +1536,6 @@ class MainWindow(QMainWindow):
                 )
             )
         self._undo_stack.endMacro()
-
-        if copy_structure:
-            self._molecule_widget.set_structure(
-                self._project.smiles,
-                mol_block=getattr(self._project, "mol_block", ""),
-            )
-        self._refresh_peak_views()
 
         n_ref = sum(1 for p in reference_project.peaks if p.vibration_labels)
         struct_note = " and structure" if copy_structure else ""
@@ -1517,10 +1634,10 @@ class MainWindow(QMainWindow):
 
     def _clear_match_results(self) -> None:
         """Drop cached matching state for the current project."""
-        self._last_search_refs = []
         self._current_match_results = []
         self._match_results_panel.set_results([])
         self._match_results_panel.set_band_difference("")
+        self._spectrum_widget.set_overlay_spectra([])
         self._refresh_consensus_analysis()
 
     def _refresh_consensus_analysis(self) -> None:
@@ -1614,7 +1731,13 @@ class MainWindow(QMainWindow):
         ):
             active_peak = preferred_peak
         else:
-            active_peak = self._peak_table.selected_peak()
+            candidate = self._peak_table.selected_peak()
+            active_peak = (
+                candidate
+                if candidate is not None
+                and any(existing is candidate for existing in self._project.peaks)
+                else None
+            )
         self._spectrum_widget.set_selected_peak(active_peak, refresh=False)
 
         self._peak_table.set_peaks(self._project.peaks)
@@ -1746,3 +1869,23 @@ class MainWindow(QMainWindow):
         from ui.dialogs.about_dialog import AboutDialog  # noqa: PLC0415
 
         AboutDialog(self).exec()
+
+    def closeEvent(self, event) -> None:  # noqa: N802
+        """Prevent data loss and avoid destroying a running search thread."""
+        # A headless/offscreen session has no user who could answer a modal
+        # prompt. Interactive hidden windows still go through the data-loss guard.
+        if not self.isVisible() and QApplication.platformName().casefold() == "offscreen":
+            event.accept()
+            return
+        if self._reference_search_thread is not None:
+            QMessageBox.information(
+                self,
+                "Operation in Progress",
+                "Reference matching is still running. Please wait for it to finish before closing.",
+            )
+            event.ignore()
+            return
+        if self._confirm_project_replacement():
+            event.accept()
+        else:
+            event.ignore()

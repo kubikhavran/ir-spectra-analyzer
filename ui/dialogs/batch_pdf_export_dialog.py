@@ -24,10 +24,11 @@ from app.batch_pdf_export import BatchPDFExporter, BatchPDFSummary
 from app.output_path_policy import OVERWRITE_MODE_OPTIONS
 from app.report_presets import ReportPresetManager
 from reporting.pdf_generator import ReportOptions
+from ui.dialogs.background_task_dialog import BackgroundTaskDialogMixin
 from ui.report_options_widget import ReportOptionsWidget
 
 
-class BatchPDFExportDialog(QDialog):
+class BatchPDFExportDialog(BackgroundTaskDialogMixin, QDialog):
     """Dialog for exporting PDF reports in bulk from a folder of spectra."""
 
     def __init__(
@@ -41,6 +42,7 @@ class BatchPDFExportDialog(QDialog):
         self._exporter = exporter or BatchPDFExporter()
         self._preset_manager = preset_manager
         self._export_thread: QThread | None = None
+        self._background_thread_attribute = "_export_thread"
         self.setWindowTitle("Batch Export PDF Reports")
         self.setMinimumSize(820, 540)
         self._setup_ui()
@@ -72,6 +74,7 @@ class BatchPDFExportDialog(QDialog):
         root_layout.addLayout(output_layout)
 
         self._summary_label = QLabel("Choose input and output folders, then click Export.")
+        self._summary_label.setTextFormat(Qt.TextFormat.PlainText)
         self._summary_label.setWordWrap(True)
         root_layout.addWidget(self._summary_label)
 
@@ -242,9 +245,9 @@ class BatchPDFExportDialog(QDialog):
         worker.completed.connect(self._on_background_export_completed)
         worker.failed.connect(self._on_background_export_failed)
         worker.finished.connect(thread.quit)
-        worker.finished.connect(self._on_export_worker_finished)
         worker.finished.connect(worker.deleteLater)
         thread.finished.connect(thread.deleteLater)
+        thread.finished.connect(self._on_export_worker_finished)
         thread.started.connect(
             lambda: QMetaObject.invokeMethod(worker, "run", Qt.ConnectionType.QueuedConnection)
         )

@@ -69,7 +69,7 @@ class ExportDialog(QDialog):
     @property
     def include_unassigned(self) -> bool:
         """Return True when the user wants unassigned peaks included."""
-        return self._include_unassigned_checkbox.isChecked()
+        return bool(self._include_unassigned_checkbox.isChecked())
 
     @property
     def selected_format(self) -> str:

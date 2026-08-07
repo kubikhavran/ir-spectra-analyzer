@@ -251,17 +251,17 @@ class ReferenceLibraryFilterProxyModel(QSortFilterProxyModel):
                 if self._date_to is not None and created > self._date_to:
                     return False
 
-        return super().filterAcceptsRow(source_row, source_parent)
+        return bool(super().filterAcceptsRow(source_row, source_parent))
 
     def lessThan(self, left: QModelIndex, right: QModelIndex) -> bool:  # noqa: N802
         model = self.sourceModel()
         if not isinstance(model, ReferenceLibraryTableModel):
-            return super().lessThan(left, right)
+            return bool(super().lessThan(left, right))
 
         left_row = model.row_dict(left.row())
         right_row = model.row_dict(right.row())
         if left_row is None or right_row is None:
-            return super().lessThan(left, right)
+            return bool(super().lessThan(left, right))
 
         column = left.column()
         left_key = model._sort_key(left_row, column)
@@ -270,7 +270,7 @@ class ReferenceLibraryFilterProxyModel(QSortFilterProxyModel):
             left_name = str(left_row.get("name", "")).casefold()
             right_name = str(right_row.get("name", "")).casefold()
             return left_name < right_name
-        return left_key < right_key
+        return bool(left_key < right_key)
 
     @staticmethod
     def _parse_created_at(value: str) -> datetime | None:
@@ -326,7 +326,7 @@ class ReferenceLibraryTableView(QTableView):
 
     def rowCount(self) -> int:  # noqa: N802
         model = self.model()
-        return 0 if model is None else model.rowCount()
+        return 0 if model is None else int(model.rowCount())
 
     def item(self, row: int, column: int) -> _TableCellProxy | None:
         model = self.model()
@@ -338,4 +338,4 @@ class ReferenceLibraryTableView(QTableView):
 
     def currentRow(self) -> int:  # noqa: N802
         index = self.currentIndex()
-        return index.row() if index.isValid() else -1
+        return int(index.row()) if index.isValid() else -1

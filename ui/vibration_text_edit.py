@@ -170,7 +170,7 @@ class VibrationTextEdit(QWidget):
         return menu
 
     def text(self) -> str:
-        return self.line_edit.text()
+        return str(self.line_edit.text())
 
     def set_text(self, text: str) -> None:
         self.line_edit.setText(text)

@@ -726,3 +726,110 @@ def test_pdf_very_large_assignment_table_splits_across_pages(tmp_path: Path) -> 
     )
     assert out.read_bytes().startswith(b"%PDF")
     assert _pdf_page_count(out) >= 3
+
+
+def test_pdf_uses_corrected_spectrum_when_available(tmp_path: Path, monkeypatch) -> None:
+    from reporting.pdf_generator import PDFGenerator
+
+    project = _make_project()
+    project.corrected_spectrum = Spectrum(
+        wavenumbers=project.spectrum.wavenumbers.copy(),
+        intensities=np.full_like(project.spectrum.intensities, 7.0),
+        y_unit=SpectralUnit.BASELINE_CORRECTED,
+    )
+    captured: dict[str, Spectrum] = {}
+    original = PDFGenerator._build_full_bleed_first_page
+
+    def _spy(self, project_arg, spectrum_arg, *args, **kwargs):
+        captured["spectrum"] = spectrum_arg
+        return original(self, project_arg, spectrum_arg, *args, **kwargs)
+
+    monkeypatch.setattr(PDFGenerator, "_build_full_bleed_first_page", _spy)
+
+    PDFGenerator().generate(project, tmp_path / "corrected.pdf")
+
+    assert captured["spectrum"] is project.corrected_spectrum
+
+
+def test_pdf_default_x_range_expands_to_full_spectrum_data(tmp_path: Path, monkeypatch) -> None:
+    from reporting.pdf_generator import PDFGenerator
+    from reporting.spectrum_renderer import SpectrumRenderer
+
+    project = _make_project()
+    captured: dict[str, float] = {}
+    original = SpectrumRenderer.render_with_annotation_box
+
+    def _spy(self, *args, **kwargs):
+        captured["x_min"] = kwargs["x_min"]
+        captured["x_max"] = kwargs["x_max"]
+        return original(self, *args, **kwargs)
+
+    monkeypatch.setattr(SpectrumRenderer, "render_with_annotation_box", _spy)
+
+    PDFGenerator().generate(project, tmp_path / "full-range.pdf")
+
+    assert captured == {"x_min": 400.0, "x_max": 4000.0}
+
+
+def test_pdf_escapes_dynamic_paragraph_text(tmp_path: Path) -> None:
+    from reporting.pdf_generator import PDFGenerator
+
+    project = _make_project()
+    project.metadata.file_name = "sample <broken"
+    project.metadata.title = "<b>literal title</b> & comparison"
+    project.metadata.comments = "A < B & C > D"
+    project.peaks.append(
+        Peak(
+            position=1700.0,
+            intensity=20.0,
+            vibration_ids=[None],
+            vibration_labels=["<b>literal assignment</b> & note"],
+        )
+    )
+
+    output_path = tmp_path / "escaped.pdf"
+    PDFGenerator().generate(project, output_path)
+
+    assert output_path.read_bytes().startswith(b"%PDF")
+
+
+def test_pdf_failed_build_preserves_existing_file(tmp_path: Path, monkeypatch) -> None:
+    from reporting.pdf_generator import BaseDocTemplate, PDFGenerator
+
+    output_path = tmp_path / "existing.pdf"
+    output_path.write_bytes(b"known-good")
+
+    def _failing_build(self, _story) -> None:
+        Path(self.filename).write_bytes(b"partial")
+        raise OSError("simulated disk failure")
+
+    monkeypatch.setattr(BaseDocTemplate, "build", _failing_build)
+
+    with pytest.raises(OSError, match="simulated disk failure"):
+        PDFGenerator().generate(_make_project(), output_path)
+
+    assert output_path.read_bytes() == b"known-good"
+
+
+def test_spectrum_renderer_closes_figure_when_savefig_fails(monkeypatch) -> None:
+    import matplotlib.pyplot as plt
+    from matplotlib.figure import Figure
+
+    from reporting.spectrum_renderer import SpectrumRenderer
+
+    before = set(plt.get_fignums())
+
+    def _failing_savefig(self, *args, **kwargs) -> None:
+        raise OSError("simulated render failure")
+
+    monkeypatch.setattr(Figure, "savefig", _failing_savefig)
+
+    with pytest.raises(OSError, match="simulated render failure"):
+        SpectrumRenderer().render_to_bytes(
+            np.array([400.0, 1000.0, 2000.0]),
+            np.array([0.1, 0.2, 0.15]),
+            [],
+            split_at=None,
+        )
+
+    assert set(plt.get_fignums()) == before

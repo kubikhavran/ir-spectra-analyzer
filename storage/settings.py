@@ -8,10 +8,12 @@ Zodpovědnost:
 
 from __future__ import annotations
 
+import copy
 import json
 from pathlib import Path
 
 from app.config import SETTINGS_PATH
+from file_io.atomic_output import atomic_output_path
 
 
 class Settings:
@@ -31,7 +33,7 @@ class Settings:
 
     def __init__(self, settings_path: Path = SETTINGS_PATH) -> None:
         self._path = settings_path
-        self._data: dict = dict(self._DEFAULTS)
+        self._data: dict = copy.deepcopy(self._DEFAULTS)
 
     def load(self) -> None:
         """Load settings from JSON file, falling back to defaults."""
@@ -39,15 +41,18 @@ class Settings:
             try:
                 with self._path.open(encoding="utf-8") as f:
                     loaded = json.load(f)
-                self._data.update(loaded)
+                if isinstance(loaded, dict):
+                    self._data.update(loaded)
             except (json.JSONDecodeError, OSError):
                 pass
 
     def save(self) -> None:
         """Persist current settings to JSON file."""
         self._path.parent.mkdir(parents=True, exist_ok=True)
-        with self._path.open("w", encoding="utf-8") as f:
-            json.dump(self._data, f, indent=2)
+        with atomic_output_path(self._path) as temp_path:
+            with temp_path.open("w", encoding="utf-8") as f:
+                json.dump(self._data, f, indent=2)
+                f.flush()
 
     def get(self, key: str, default=None):
         """Get a settings value by key."""

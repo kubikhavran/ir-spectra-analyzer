@@ -17,7 +17,8 @@ import struct
 from collections.abc import Callable
 from dataclasses import dataclass
 from pathlib import Path
-from typing import TYPE_CHECKING
+from typing import TYPE_CHECKING, Any
+from xml.sax.saxutils import escape as xml_escape
 
 import matplotlib
 from reportlab.lib import colors
@@ -47,6 +48,7 @@ from core.peak_assignments import (
     peak_assignment_text,
 )
 from core.project import Project
+from file_io.atomic_output import atomic_output_path
 from reporting.spectrum_renderer import SpectrumRenderer
 
 if TYPE_CHECKING:
@@ -157,10 +159,10 @@ class ReportOptions:
     layout: str = LAYOUT_FULL_BLEED
     # id(peak) -> (label_x, label_y) in data coordinates, captured from the live
     # viewer so exported labels reproduce the on-screen layout exactly.
-    peak_label_placements: dict = None  # type: ignore[assignment]
+    peak_label_placements: dict[int, tuple[float, float]] | None = None
 
 
-def _footer(canvas, doc) -> None:  # type: ignore[no-untyped-def]
+def _footer(canvas: Any, doc: Any) -> None:
     """Draw footer on every page — adapts to actual page size."""
     _f, _, _ = _ensure_fonts()
     canvas.saveState()
@@ -202,7 +204,7 @@ class PDFGenerator:
 
         font_r, font_b, font_o = _ensure_fonts()
 
-        spectrum = project.spectrum
+        spectrum = project.corrected_spectrum or project.spectrum
         styles = getSampleStyleSheet()
 
         title_style = ParagraphStyle(
@@ -270,8 +272,9 @@ class PDFGenerator:
 
         story = []
 
-        # Resolve view range — use what the viewer was showing, or the default 400–3800 window
-        _x_min, _x_max = options.view_x_range if options.view_x_range else (400.0, 3800.0)
+        # Use the viewer range when supplied; batch reports otherwise include the
+        # complete data while retaining the conventional 400–3800 minimum window.
+        _x_min, _x_max = self._resolve_x_range(options, spectrum)
 
         # Page 1: full-page spectrum (no header — maximum graph area)
         full_bleed_painter = None
@@ -402,16 +405,17 @@ class PDFGenerator:
         else:
             first_template = land_template
 
-        doc = BaseDocTemplate(
-            str(output_path),
-            pagesize=landscape(A4),
-            leftMargin=_MARGIN,
-            rightMargin=_MARGIN,
-            topMargin=_MARGIN,
-            bottomMargin=_MARGIN + 0.5 * cm,
-        )
-        doc.addPageTemplates([first_template, port_template])
-        doc.build(story)
+        with atomic_output_path(output_path) as temp_path:
+            doc = BaseDocTemplate(
+                str(temp_path),
+                pagesize=landscape(A4),
+                leftMargin=_MARGIN,
+                rightMargin=_MARGIN,
+                topMargin=_MARGIN,
+                bottomMargin=_MARGIN + 0.5 * cm,
+            )
+            doc.addPageTemplates([first_template, port_template])
+            doc.build(story)
 
     # ------------------------------------------------------------------
     # Full-bleed first page
@@ -790,8 +794,8 @@ class PDFGenerator:
             spaceAfter=0,
         )
         spectrum_title, file_name = self._header_identifiers(project, spectrum)
-        left_para = Paragraph(file_name, title_style)
-        right_para = Paragraph(spectrum_title, title_right_style)
+        left_para = Paragraph(self._paragraph_text(file_name), title_style)
+        right_para = Paragraph(self._paragraph_text(spectrum_title), title_right_style)
         header_row = Table(
             [[left_para, right_para]],
             colWidths=[_PORT_TEXT_W * 0.6, _PORT_TEXT_W * 0.4],
@@ -914,7 +918,7 @@ class PDFGenerator:
                 [
                     Paragraph(str(int(round(peak.position))), table_cell_right),
                     Paragraph(cls_str, table_cell_right),
-                    Paragraph(peak_assignment_text(peak), table_cell_style),
+                    Paragraph(self._paragraph_text(peak_assignment_text(peak)), table_cell_style),
                 ]
             )
 
@@ -1011,7 +1015,12 @@ class PDFGenerator:
 
         def _add_row(key: str, value: str | None) -> None:
             if value:
-                meta_rows.append([Paragraph(key, key_style), Paragraph(value, val_style)])
+                meta_rows.append(
+                    [
+                        Paragraph(self._paragraph_text(key), key_style),
+                        Paragraph(self._paragraph_text(value), val_style),
+                    ]
+                )
 
         # The sample designation is the spectrum title — the same value the
         # header prints top-right.
@@ -1054,7 +1063,7 @@ class PDFGenerator:
         if comment or spectrum.extra_metadata.get("omnic_comment"):
             _add_row("Comment", comment or spectrum.extra_metadata.get("omnic_comment"))
         _add_row("Y unit", spectrum.y_unit.value)
-        _x_lo, _x_hi = options.view_x_range if options.view_x_range else (400.0, 3800.0)
+        _x_lo, _x_hi = self._resolve_x_range(options, spectrum)
         _add_row(
             "X range",
             f"{max(_x_lo, _x_hi):.0f} \u2013 {min(_x_lo, _x_hi):.0f} cm\u207b\u00b9",
@@ -1125,3 +1134,17 @@ class PDFGenerator:
             story.append(meta_subtable)
 
         story.append(Spacer(1, 0.4 * cm))
+
+    @staticmethod
+    def _paragraph_text(value: object) -> str:
+        """Escape dynamic text before passing it to ReportLab's markup parser."""
+        return xml_escape(str(value))
+
+    @staticmethod
+    def _resolve_x_range(options: ReportOptions, spectrum: Spectrum) -> tuple[float, float]:
+        """Return the requested view or a default widened to all available data."""
+        if options.view_x_range is not None:
+            return (float(options.view_x_range[0]), float(options.view_x_range[1]))
+        data_min = float(min(spectrum.wavenumbers))
+        data_max = float(max(spectrum.wavenumbers))
+        return (min(400.0, data_min), max(3800.0, data_max))

@@ -191,6 +191,7 @@ def test_batch_import_dialog_renders_summary_results(qtbot, db, monkeypatch, tmp
                 path=tmp_path / "ok.spa",
                 status=BatchImportStatus.IMPORTED,
                 reference_name="ok",
+                detected_peaks=(Peak(position=1000.0, intensity=0.5),),
             ),
             BatchImportResult(
                 path=tmp_path / "skip.spa",
@@ -209,6 +210,7 @@ def test_batch_import_dialog_renders_summary_results(qtbot, db, monkeypatch, tmp
 
     monkeypatch.setattr(dlg._service, "batch_import_folder", lambda *args, **kwargs: summary)
     dlg._folder_edit.setText(str(tmp_path))
+    dlg._detect_peaks_checkbox.setChecked(True)
 
     dlg._on_import()
 
@@ -216,8 +218,10 @@ def test_batch_import_dialog_renders_summary_results(qtbot, db, monkeypatch, tmp
     assert dlg._results_table.item(0, 0).text() == "ok.spa"
     assert dlg._results_table.item(1, 1).text() == "skipped"
     assert dlg._results_table.item(2, 3).text() == "Parse failure"
-    assert "Total .spa files found: 3" in dlg._summary_label.text()
+    assert dlg._results_table.item(0, 4).text() == "1"
+    assert "Total spectrum files found: 3" in dlg._summary_label.text()
     assert "Imported: 1 | Skipped: 1 | Failed: 1" in dlg._summary_label.text()
+    assert "Peaks: 1" in dlg._summary_label.text()
 
 
 def test_batch_import_dialog_passes_detect_peaks_option(qtbot, db, monkeypatch, tmp_path):

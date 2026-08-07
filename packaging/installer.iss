@@ -17,7 +17,7 @@
 ; automatically whenever a vX.Y.Z tag is pushed.
 
 #define MyAppName "IR Spectra Analyzer"
-#define MyAppVersion "0.22.0"
+#define MyAppVersion "0.24.0"
 #define MyAppPublisher "IRSpectra"
 #define MyAppURL "https://github.com/kubikhavran/ir-spectra-analyzer"
 #define MyAppExeName "IR Spectra Analyzer.exe"
@@ -51,13 +51,14 @@ LicenseFile=..\LICENSE
 WizardSmallImageFile=
 DisableWelcomePage=no
 ShowLanguageDialog=no
+ChangesAssociations=yes
 
 [Languages]
 Name: "english"; MessagesFile: "compiler:Default.isl"
 
 [Tasks]
 Name: "desktopicon"; Description: "{cm:CreateDesktopIcon}"; GroupDescription: "{cm:AdditionalIcons}"; Flags: unchecked
-Name: "associateSpa"; Description: "Associate .spa files with {#MyAppName}"; GroupDescription: "File associations:"
+Name: "associateSpa"; Description: "Add {#MyAppName} to 'Open with' for .spa files"; GroupDescription: "File associations:"
 Name: "associateIrproj"; Description: "Associate .irproj files with {#MyAppName}"; GroupDescription: "File associations:"
 
 [Files]
@@ -73,17 +74,18 @@ Name: "{group}\{cm:UninstallProgram,{#MyAppName}}"; Filename: "{uninstallexe}"
 Name: "{autodesktop}\{#MyAppName}"; Filename: "{app}\{#MyAppExeName}"; IconFilename: "{app}\icon.ico"; Tasks: desktopicon
 
 [Registry]
-; .spa file association (scoped under IRSpectraAnalyzer.spa to avoid clobbering OMNIC)
-Root: HKCR; Subkey: ".spa"; ValueType: string; ValueName: ""; ValueData: "IRSpectraAnalyzer.spa"; Flags: uninsdeletevalue; Tasks: associateSpa
-Root: HKCR; Subkey: "IRSpectraAnalyzer.spa"; ValueType: string; ValueName: ""; ValueData: "IR Spectrum (.spa)"; Flags: uninsdeletekey; Tasks: associateSpa
-Root: HKCR; Subkey: "IRSpectraAnalyzer.spa\DefaultIcon"; ValueType: string; ValueName: ""; ValueData: "{app}\icon.ico"; Tasks: associateSpa
-Root: HKCR; Subkey: "IRSpectraAnalyzer.spa\shell\open\command"; ValueType: string; ValueName: ""; ValueData: """{app}\{#MyAppExeName}"" ""%1"""; Tasks: associateSpa
+; Register as an Open With option without replacing an existing OMNIC default.
+; HKA maps to HKLM for an administrative install and HKCU for a per-user install.
+Root: HKA; Subkey: "Software\Classes\.spa\OpenWithProgids"; ValueType: string; ValueName: "IRSpectraAnalyzer.spa"; ValueData: ""; Flags: uninsdeletevalue; Tasks: associateSpa
+Root: HKA; Subkey: "Software\Classes\IRSpectraAnalyzer.spa"; ValueType: string; ValueName: ""; ValueData: "IR Spectrum (.spa)"; Flags: uninsdeletekey; Tasks: associateSpa
+Root: HKA; Subkey: "Software\Classes\IRSpectraAnalyzer.spa\DefaultIcon"; ValueType: string; ValueName: ""; ValueData: "{app}\icon.ico"; Tasks: associateSpa
+Root: HKA; Subkey: "Software\Classes\IRSpectraAnalyzer.spa\shell\open\command"; ValueType: string; ValueName: ""; ValueData: """{app}\{#MyAppExeName}"" ""%1"""; Tasks: associateSpa
 
 ; .irproj file association (native project format)
-Root: HKCR; Subkey: ".irproj"; ValueType: string; ValueName: ""; ValueData: "IRSpectraAnalyzer.Project"; Flags: uninsdeletevalue; Tasks: associateIrproj
-Root: HKCR; Subkey: "IRSpectraAnalyzer.Project"; ValueType: string; ValueName: ""; ValueData: "IR Spectra Analyzer Project"; Flags: uninsdeletekey; Tasks: associateIrproj
-Root: HKCR; Subkey: "IRSpectraAnalyzer.Project\DefaultIcon"; ValueType: string; ValueName: ""; ValueData: "{app}\icon.ico"; Tasks: associateIrproj
-Root: HKCR; Subkey: "IRSpectraAnalyzer.Project\shell\open\command"; ValueType: string; ValueName: ""; ValueData: """{app}\{#MyAppExeName}"" ""%1"""; Tasks: associateIrproj
+Root: HKA; Subkey: "Software\Classes\.irproj"; ValueType: string; ValueName: ""; ValueData: "IRSpectraAnalyzer.Project"; Flags: uninsdeletevalue; Tasks: associateIrproj
+Root: HKA; Subkey: "Software\Classes\IRSpectraAnalyzer.Project"; ValueType: string; ValueName: ""; ValueData: "IR Spectra Analyzer Project"; Flags: uninsdeletekey; Tasks: associateIrproj
+Root: HKA; Subkey: "Software\Classes\IRSpectraAnalyzer.Project\DefaultIcon"; ValueType: string; ValueName: ""; ValueData: "{app}\icon.ico"; Tasks: associateIrproj
+Root: HKA; Subkey: "Software\Classes\IRSpectraAnalyzer.Project\shell\open\command"; ValueType: string; ValueName: ""; ValueData: """{app}\{#MyAppExeName}"" ""%1"""; Tasks: associateIrproj
 
 [Run]
 Filename: "{app}\{#MyAppExeName}"; Description: "{cm:LaunchProgram,{#MyAppName}}"; Flags: nowait postinstall skipifsilent

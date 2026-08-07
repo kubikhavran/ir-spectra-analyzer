@@ -81,4 +81,42 @@ def test_detect_peaks_invert_intensity_is_original() -> None:
     assert peaks[0].intensity == pytest.approx(60.0, abs=2.0)
 
 
+def test_default_prominence_distinguishes_corrected_absorbance_from_corrected_transmittance() -> (
+    None
+):
+    """A small corrected absorbance band must not inherit the percent-scale cutoff."""
+    from core.spectrum import SpectralUnit, Spectrum
+    from processing.peak_detection import default_prominence, detect_peaks
+
+    wavenumbers = np.linspace(400.0, 4000.0, 3601)
+    absorbance = 0.30 * np.exp(-((wavenumbers - 1700.0) ** 2) / (2 * 20.0**2))
+    corrected_absorbance = Spectrum(
+        wavenumbers=wavenumbers,
+        intensities=absorbance,
+        y_unit=SpectralUnit.BASELINE_CORRECTED,
+    )
+
+    absorbance_prominence = default_prominence(corrected_absorbance)
+    assert absorbance_prominence == pytest.approx(0.05)
+    assert (
+        len(
+            detect_peaks(
+                wavenumbers,
+                absorbance,
+                prominence=absorbance_prominence,
+                invert=corrected_absorbance.is_dip_spectrum,
+            )
+        )
+        == 1
+    )
+
+    corrected_transmittance = Spectrum(
+        wavenumbers=wavenumbers,
+        intensities=-30.0 * np.exp(-((wavenumbers - 1700.0) ** 2) / (2 * 20.0**2)),
+        y_unit=SpectralUnit.BASELINE_CORRECTED,
+    )
+    assert corrected_transmittance.is_dip_spectrum
+    assert default_prominence(corrected_transmittance) == pytest.approx(1.0)
+
+
 import pytest  # noqa: E402

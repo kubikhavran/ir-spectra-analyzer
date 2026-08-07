@@ -10,6 +10,8 @@ Zodpovědnost:
 
 from __future__ import annotations
 
+from typing import TYPE_CHECKING
+
 from PySide6.QtCore import Qt, Signal
 from PySide6.QtGui import QBrush, QColor
 from PySide6.QtWidgets import (
@@ -31,6 +33,9 @@ from PySide6.QtWidgets import (
 from core.vibration_presets import VibrationPreset
 from ui.vibration_text_edit import VibrationTextEdit
 
+if TYPE_CHECKING:
+    from core.peak import Peak
+
 # Preset categories grouped into the panel's "Protecting groups" section.
 _PG_CATEGORIES = {"silyl"}
 
@@ -48,7 +53,7 @@ class VibrationPanel(QWidget):
         super().__init__(parent)
         self._presets: list[VibrationPreset] = []
         self._db = db
-        self._active_peak = None
+        self._active_peak: Peak | None = None
         # (group name, preset names) pairs provided by MainWindow from the
         # functional-group knowledge base — used as quick tag filters.
         self._group_tags: list[tuple[str, frozenset[str]]] = []
@@ -65,6 +70,7 @@ class VibrationPanel(QWidget):
             "Show only vibrations diagnostic for one functional group "
             "(e.g. when you already know the molecule contains an acid)"
         )
+        self._filter_edit: QLineEdit
         self._tag_combo.currentIndexChanged.connect(
             lambda _index: self._rebuild_list(self._filter_edit.text())
         )
@@ -95,7 +101,7 @@ class VibrationPanel(QWidget):
         """Set the database reference (for saving custom presets)."""
         self._db = db
 
-    def set_active_peak(self, peak) -> None:
+    def set_active_peak(self, peak: Peak | None) -> None:
         """Track the currently active peak for context menu remove action."""
         self._active_peak = peak
 
@@ -121,7 +127,7 @@ class VibrationPanel(QWidget):
 
     def _active_tag_preset_names(self) -> frozenset[str] | None:
         """Return the preset-name set of the selected tag, or None for 'All'."""
-        index = self._tag_combo.currentIndex() - 1
+        index = int(self._tag_combo.currentIndex()) - 1
         if 0 <= index < len(self._group_tags):
             return self._group_tags[index][1]
         return None
@@ -302,6 +308,11 @@ class _AddVibrationDialog(QDialog):
         self._rmax_spin.setSuffix(" cm\u207b\u00b9")
         self._rmax_spin.setValue(1200.0)
         form.addRow("Range max:", self._rmax_spin)
+
+        # Keep the interval valid while it is edited instead of accepting an
+        # inverted range that can never match a peak.
+        self._rmin_spin.valueChanged.connect(self._rmax_spin.setMinimum)
+        self._rmax_spin.valueChanged.connect(self._rmin_spin.setMaximum)
 
         layout.addLayout(form)
 

@@ -18,7 +18,7 @@ from __future__ import annotations
 
 from pathlib import Path
 
-from core.spectrum import Spectrum
+from core.spectrum import SpectralUnit, Spectrum
 
 
 class SPAReadError(Exception):
@@ -95,14 +95,14 @@ class SPAReader:
         import numpy as np  # noqa: PLC0415
         import spectrochempy as scp  # noqa: PLC0415
 
-        from core.spectrum import SpectralUnit, XAxisUnit  # noqa: PLC0415
+        from core.spectrum import XAxisUnit  # noqa: PLC0415
 
         dataset = scp.read_omnic(str(filepath))
 
         wavenumbers = np.array(dataset.x.data, dtype=np.float64)
         intensities = np.array(dataset.data.squeeze(), dtype=np.float64)
 
-        y_unit = SpectralUnit.ABSORBANCE
+        y_unit = self._spectral_unit_from_dataset(dataset)
         title = str(dataset.name) if dataset.name else filepath.stem
 
         return Spectrum(
@@ -113,3 +113,27 @@ class SPAReader:
             y_unit=y_unit,
             x_unit=XAxisUnit.WAVENUMBER,
         )
+
+    @staticmethod
+    def _spectral_unit_from_dataset(dataset) -> SpectralUnit:
+        """Map an explicit SpectroChemPy signal description to the app enum."""
+        descriptors = " ".join(
+            str(value)
+            for value in (
+                getattr(dataset, "title", ""),
+                getattr(dataset, "units", ""),
+            )
+            if value is not None
+        ).lower()
+        if "transmittance" in descriptors or "transmission" in descriptors or "%t" in descriptors:
+            return SpectralUnit.TRANSMITTANCE
+        if "reflect" in descriptors:
+            return SpectralUnit.REFLECTANCE
+        if "single beam" in descriptors or "single-beam" in descriptors:
+            return SpectralUnit.SINGLE_BEAM
+        if "absorb" in descriptors:
+            return SpectralUnit.ABSORBANCE
+        # Preserve the historical fallback when the source carries no explicit
+        # signal description; Spectrum.is_dip_spectrum still applies its own
+        # conservative polarity heuristic to mislabeled percent-like curves.
+        return SpectralUnit.ABSORBANCE

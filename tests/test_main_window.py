@@ -615,6 +615,19 @@ def test_add_vibration_dialog_supports_symbol_editing(qtbot):
     assert dialog.get_values()[0] == "ν(CH₃) cm⁻¹"
 
 
+def test_add_vibration_dialog_keeps_range_ordered(qtbot):
+    from ui.vibration_panel import _AddVibrationDialog
+
+    dialog = _AddVibrationDialog()
+    qtbot.addWidget(dialog)
+
+    dialog._rmin_spin.setValue(1500.0)
+    assert dialog._rmax_spin.value() >= dialog._rmin_spin.value()
+
+    dialog._rmax_spin.setValue(900.0)
+    assert dialog._rmin_spin.value() <= dialog._rmax_spin.value()
+
+
 def test_preset_assigned_to_peak_updates_label(qtbot):
     """Assigning a preset updates peak label and is reflected in PeakTableWidget."""
     from core.peak import Peak

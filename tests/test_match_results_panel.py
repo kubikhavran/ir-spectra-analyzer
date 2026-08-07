@@ -185,9 +185,11 @@ def test_panel_shows_the_skeleton_score_and_flags_a_substituent_swap(qtbot):
     )
 
     replicate, swapped = panel._list.item(0).text(), panel._list.item(1).text()
-    assert "93.0%" in replicate and "fp 86%" in replicate
+    assert "93.0%" in replicate
+    assert "fp 86%" in replicate
     assert SKELETON_MARKER not in replicate  # skeleton does not lead here
-    assert "72.0%" in swapped and "fp 92%" in swapped
+    assert "72.0%" in swapped
+    assert "fp 92%" in swapped
     assert SKELETON_MARKER in swapped
 
 

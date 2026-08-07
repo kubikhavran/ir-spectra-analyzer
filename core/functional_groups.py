@@ -94,7 +94,11 @@ class DiagnosticBandMatch:
 
     @property
     def is_assignable(self) -> bool:
-        return self.confidence >= 35.0 and bool(self.suggested_preset_names)
+        return (
+            self.role != "exclusion"
+            and self.confidence >= 35.0
+            and bool(self.suggested_preset_names)
+        )
 
     @property
     def is_missing_required(self) -> bool:
@@ -102,10 +106,16 @@ class DiagnosticBandMatch:
 
     @property
     def is_confirmed(self) -> bool:
-        return self.confidence >= 55.0
+        return self.role != "exclusion" and self.confidence >= 55.0
 
     @property
     def evidence_label(self) -> str:
+        if self.role == "exclusion":
+            if self.confidence >= 55.0:
+                return "Conflict"
+            if self.confidence >= 35.0:
+                return "Possible conflict"
+            return "Clear"
         if self.is_missing_required:
             return "Missing"
         if self.is_confirmed:
@@ -132,7 +142,9 @@ class FunctionalGroupScore:
     @property
     def suggested_bands(self) -> tuple[DiagnosticBandMatch, ...]:
         return tuple(
-            band for band in self.bands if band.confidence >= 35.0 and band.suggested_preset_names
+            band
+            for band in self.bands
+            if band.role != "exclusion" and band.confidence >= 35.0 and band.suggested_preset_names
         )
 
     @property
@@ -148,7 +160,10 @@ class FunctionalGroupScore:
         return tuple(
             band
             for band in self.bands
-            if not band.is_missing_required and not band.is_confirmed and band.confidence >= 35.0
+            if band.role != "exclusion"
+            and not band.is_missing_required
+            and not band.is_confirmed
+            and band.confidence >= 35.0
         )
 
 

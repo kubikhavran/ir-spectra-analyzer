@@ -42,6 +42,7 @@ class JCAMPReader:
         metadata = dict(records)
 
         x_values, intensities = self._extract_xy_arrays(records)
+        self._validate_declared_point_count(metadata, len(x_values))
         x_values = self._normalize_x_axis(x_values, metadata.get("XUNITS", "1/CM"))
 
         order = np.argsort(x_values)
@@ -85,8 +86,9 @@ class JCAMPReader:
         current_lines: list[str] = []
 
         for raw_line in text.splitlines():
-            line = raw_line.strip()
-            if not line or line.startswith("$$"):
+            # JCAMP ``$$`` starts a comment even after data on the same line.
+            line = raw_line.split("$$", 1)[0].strip()
+            if not line:
                 continue
             if line.startswith("##"):
                 if current_key is not None:
@@ -151,7 +153,7 @@ class JCAMPReader:
         x_values: list[float] = []
         y_values: list[float] = []
         for line in data_lines:
-            numbers = [float(token) for token in _NUMBER_RE.findall(line)]
+            numbers = self._parse_affn_numbers(line)
             if len(numbers) < 2:
                 continue
             base_x = numbers[0]
@@ -174,13 +176,37 @@ class JCAMPReader:
         if lines and lines[0].startswith("("):
             lines = lines[1:]
 
-        numbers = [float(token) for token in _NUMBER_RE.findall(" ".join(lines))]
+        numbers = [number for line in lines for number in self._parse_affn_numbers(line)]
         if len(numbers) < 2 or len(numbers) % 2 != 0:
             raise JCAMPReadError("XYPOINTS / PEAK TABLE requires paired X/Y numeric values.")
 
         x_values = np.asarray(numbers[0::2], dtype=np.float64) * x_factor
         y_values = np.asarray(numbers[1::2], dtype=np.float64) * y_factor
         return x_values, y_values
+
+    @staticmethod
+    def _parse_affn_numbers(line: str) -> list[float]:
+        """Parse plain numeric data and reject unsupported compressed encodings."""
+        residual = _NUMBER_RE.sub("", line)
+        if residual.strip(" \t,;()"):
+            raise JCAMPReadError(
+                "Unsupported compressed or non-AFFN JCAMP data encoding; "
+                "only plain numeric values are supported."
+            )
+        return [float(token) for token in _NUMBER_RE.findall(line)]
+
+    def _validate_declared_point_count(self, metadata: dict[str, str], actual: int) -> None:
+        raw_value = metadata.get("NPOINTS", "").strip()
+        if not raw_value:
+            return
+        declared_float = self._parse_float(raw_value, default=np.nan)
+        if not np.isfinite(declared_float) or declared_float < 0 or not declared_float.is_integer():
+            raise JCAMPReadError(f"Invalid JCAMP NPOINTS value: {raw_value}")
+        declared = int(declared_float)
+        if declared != actual:
+            raise JCAMPReadError(
+                f"JCAMP NPOINTS declares {declared} samples, but {actual} were parsed."
+            )
 
     def _normalize_x_axis(self, x_values: np.ndarray, x_units: str) -> np.ndarray:
         unit = x_units.strip().upper().replace(" ", "")
@@ -253,7 +279,7 @@ class JCAMPReader:
             "DATE": "date",
             "TIME": "time",
         }
-        extra = {
+        extra: dict[str, object] = {
             target_key: metadata[source_key]
             for source_key, target_key in interesting_keys.items()
             if metadata.get(source_key)

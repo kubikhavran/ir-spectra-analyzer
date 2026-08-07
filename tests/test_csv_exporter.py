@@ -6,6 +6,7 @@ import csv
 from pathlib import Path
 
 import numpy as np
+import pytest
 
 from core.peak import Peak
 from core.project import Project
@@ -102,3 +103,45 @@ def test_csv_export_can_omit_spectrum_data(tmp_path: Path) -> None:
     header = _read(output_path)[0]
     assert "Wavenumber (cm⁻¹)" not in header
     assert "Position (cm⁻¹)" in header
+
+
+def test_csv_export_neutralizes_spreadsheet_formulas(tmp_path: Path) -> None:
+    spectrum = _make_spectrum(SpectralUnit.ABSORBANCE)
+    project = Project(name="Formula", spectrum=spectrum)
+    project.metadata.title = "=1+1"
+    peak = Peak(
+        position=1700.0,
+        intensity=0.8,
+        vibration_ids=[None],
+        vibration_labels=['=HYPERLINK("https://example.invalid","x")'],
+    )
+    output_path = tmp_path / "safe.csv"
+
+    CSVExporter().export([peak], output_path, spectrum, project=project)
+
+    rows = _read(output_path)
+    assert rows[1][1] == "'=1+1"
+    assert rows[1][6].startswith("'=HYPERLINK(")
+
+
+def test_csv_failed_export_preserves_existing_file(tmp_path: Path, monkeypatch) -> None:
+    output_path = tmp_path / "existing.csv"
+    output_path.write_bytes(b"known-good")
+
+    class _FailingWriter:
+        def __init__(self, handle) -> None:
+            self._handle = handle
+
+        def writerow(self, _row) -> None:
+            self._handle.write("partial")
+            raise OSError("simulated disk failure")
+
+    monkeypatch.setattr(
+        "file_io.csv_exporter.csv.writer",
+        lambda handle, delimiter: _FailingWriter(handle),
+    )
+
+    with pytest.raises(OSError, match="simulated disk failure"):
+        CSVExporter().export([], output_path, _make_spectrum())
+
+    assert output_path.read_bytes() == b"known-good"

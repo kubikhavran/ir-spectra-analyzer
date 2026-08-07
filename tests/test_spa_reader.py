@@ -19,6 +19,29 @@ def test_spa_reader_raises_on_missing_file() -> None:
         reader.read(Path("/nonexistent/file.spa"))
 
 
+def test_spectrochempy_reader_uses_explicit_transmittance_unit(tmp_path, monkeypatch) -> None:
+    """Stage-one fallback must not label explicitly declared %T data as absorbance."""
+    import sys
+    from types import SimpleNamespace
+
+    from core.spectrum import SpectralUnit
+    from file_io.spa_reader import SPAReader
+
+    dataset = SimpleNamespace(
+        x=SimpleNamespace(data=np.array([1000.0, 1100.0, 1200.0])),
+        data=np.array([[90.0, 70.0, 85.0]]),
+        name="Transmittance sample",
+        units="% transmittance",
+        meta={},
+    )
+    fake_module = SimpleNamespace(read_omnic=lambda _path: dataset)
+    monkeypatch.setitem(sys.modules, "spectrochempy", fake_module)
+
+    spectrum = SPAReader()._read_spectrochempy(tmp_path / "sample.spa")
+
+    assert spectrum.y_unit == SpectralUnit.TRANSMITTANCE
+
+
 def _build_synthetic_spa() -> bytes:
     """Build a minimal valid SPA binary blob in memory.
 

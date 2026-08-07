@@ -3,7 +3,9 @@
 from __future__ import annotations
 
 import os
+import threading
 from pathlib import Path
+from unittest.mock import MagicMock
 
 from PySide6.QtCore import Qt
 
@@ -76,6 +78,7 @@ def test_web_reference_import_dialog_previews_and_imports(qtbot, tmp_path: Path)
     dlg._url_edit.setText(page_url)
     qtbot.mouseClick(dlg._preview_btn, Qt.MouseButton.LeftButton)
     qtbot.waitUntil(lambda: "Triethanolamine" in dlg._preview_label.text())
+    qtbot.waitUntil(lambda: dlg._preview_thread is None)
 
     assert "State: LIQUID (NEAT)" in dlg._preview_label.text()
     assert "Sampling: TRANSMISSION" in dlg._preview_label.text()
@@ -91,3 +94,30 @@ def test_web_reference_import_dialog_previews_and_imports(qtbot, tmp_path: Path)
     assert rows[0]["sample_state"] == "LIQUID (NEAT)"
     assert rows[0]["sampling_procedure"] == "TRANSMISSION"
     db.close()
+
+
+def test_web_reference_preview_does_not_block_gui_thread(qtbot):
+    from ui.dialogs.web_reference_import_dialog import WebReferenceImportDialog
+
+    started = threading.Event()
+    release = threading.Event()
+
+    class BlockingClient:
+        def fetch_reference(self, _url: str):
+            started.set()
+            release.wait(timeout=5)
+            raise ValueError("expected test failure")
+
+    dlg = WebReferenceImportDialog(MagicMock(), preview_client=BlockingClient())
+    qtbot.addWidget(dlg)
+    dlg._url_edit.setText("https://webbook.nist.gov/cgi/cbook.cgi?ID=C102716&Index=0&Type=IR-SPEC")
+
+    qtbot.mouseClick(dlg._preview_btn, Qt.MouseButton.LeftButton)
+    qtbot.waitUntil(started.is_set)
+
+    assert dlg._preview_thread is not None
+    assert not dlg._preview_btn.isEnabled()
+
+    release.set()
+    qtbot.waitUntil(lambda: dlg._preview_thread is None)
+    assert "expected test failure" in dlg._status_label.text()

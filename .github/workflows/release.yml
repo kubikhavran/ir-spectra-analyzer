@@ -7,7 +7,7 @@ on:
   workflow_dispatch:
 
 permissions:
-  contents: write
+  contents: read
 
 # ─────────────────────────────────────────────────────────────────────────────
 # Shared version-extraction step (referenced via needs: extract-version)
@@ -19,22 +19,69 @@ jobs:
     outputs:
       version: ${{ steps.ver.outputs.version }}
     steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+
       - id: ver
         run: |
+          SOURCE_VERSION=$(python -c 'import tomllib; print(tomllib.load(open("pyproject.toml", "rb"))["project"]["version"])')
+          RUNTIME_VERSION=$(python -c 'from app.config import APP_VERSION; print(APP_VERSION)')
+          if [[ "$SOURCE_VERSION" != "$RUNTIME_VERSION" ]]; then
+            echo "pyproject version $SOURCE_VERSION does not match runtime version $RUNTIME_VERSION" >&2
+            exit 1
+          fi
           if [[ "${GITHUB_REF}" == refs/tags/v* ]]; then
             VERSION="${GITHUB_REF#refs/tags/v}"
           else
-            VERSION="0.0.0-dev"
+            VERSION="$SOURCE_VERSION"
+          fi
+          if [[ ! "$VERSION" =~ ^[0-9]+\.[0-9]+\.[0-9]+$ ]]; then
+            echo "Invalid release version: $VERSION" >&2
+            exit 1
+          fi
+          if [[ "${GITHUB_REF}" == refs/tags/v* && "$VERSION" != "$SOURCE_VERSION" ]]; then
+            echo "Release tag $VERSION does not match source version $SOURCE_VERSION" >&2
+            exit 1
           fi
           echo "version=$VERSION" >> "$GITHUB_OUTPUT"
           echo "Version: $VERSION"
+
+  test:
+    name: Test release source
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+          cache: "pip"
+
+      - name: Install test dependencies
+        run: python -m pip install ".[dev]"
+
+      - name: Run static checks
+        run: |
+          python -m ruff check .
+          git ls-files -z '*.py' '*.pyi' | xargs -0 python -m ruff format --check
+          # Run the same isolated mypy version and file selection as developers.
+          python -m pre_commit run mypy --all-files
+
+      - name: Run tests
+        env:
+          QT_QPA_PLATFORM: offscreen
+          PYTHONDONTWRITEBYTECODE: "1"
+        run: python -m pytest -p no:cacheprovider -q
 
   # ───────────────────────────────────────────────────────────────────────────
   # Windows — Inno Setup installer (.exe)
   # ───────────────────────────────────────────────────────────────────────────
   build-windows:
     name: Windows installer
-    needs: extract-version
+    needs: [extract-version, test]
     runs-on: windows-latest
 
     steps:
@@ -57,8 +104,10 @@ jobs:
 
       - name: Patch installer version
         shell: pwsh
+        env:
+          IR_SPECTRA_VERSION: ${{ needs.extract-version.outputs.version }}
         run: |
-          $v = "${{ needs.extract-version.outputs.version }}"
+          $v = $env:IR_SPECTRA_VERSION
           $p = "packaging/installer.iss"
           (Get-Content $p) -replace '#define MyAppVersion ".*"', "#define MyAppVersion `"$v`"" | Set-Content $p
 
@@ -83,19 +132,12 @@ jobs:
           path: dist/installer/*.exe
           if-no-files-found: error
 
-      - name: Attach to GitHub Release
-        if: startsWith(github.ref, 'refs/tags/v')
-        uses: softprops/action-gh-release@v2
-        with:
-          files: dist/installer/*.exe
-          generate_release_notes: true
-
   # ───────────────────────────────────────────────────────────────────────────
   # macOS Apple Silicon (arm64) — .dmg
   # ───────────────────────────────────────────────────────────────────────────
   build-macos-arm64:
     name: macOS DMG (Apple Silicon)
-    needs: extract-version
+    needs: [extract-version, test]
     runs-on: macos-14
 
     steps:
@@ -115,18 +157,21 @@ jobs:
         run: python scripts/build_icon.py
 
       - name: PyInstaller
+        env:
+          IR_SPECTRA_VERSION: ${{ needs.extract-version.outputs.version }}
         run: pyinstaller packaging/ir-spectra-analyzer-mac.spec --clean --noconfirm
 
       - name: Build DMG
+        env:
+          IR_SPECTRA_VERSION: ${{ needs.extract-version.outputs.version }}
         run: |
-          VERSION="${{ needs.extract-version.outputs.version }}"
           mkdir -p dist
           dmgbuild \
             -s packaging/dmg_settings.py \
-            -D version="${VERSION}" \
+            -D version="${IR_SPECTRA_VERSION}" \
             -D arch="arm64" \
             "IR Spectra Analyzer" \
-            "dist/IR-Spectra-Analyzer-${VERSION}-arm64.dmg"
+            "dist/IR-Spectra-Analyzer-${IR_SPECTRA_VERSION}-arm64.dmg"
 
       - name: Upload artifact
         uses: actions/upload-artifact@v4
@@ -135,11 +180,31 @@ jobs:
           path: dist/*.dmg
           if-no-files-found: error
 
-      - name: Attach to GitHub Release
-        if: startsWith(github.ref, 'refs/tags/v')
-        uses: softprops/action-gh-release@v2
-        with:
-          files: dist/*.dmg
-
   # macOS Intel (x86_64) build omitted: macos-13 runners have chronic queue
   # exhaustion on GitHub's free tier. Add back when runner availability improves.
+
+  publish-release:
+    name: Publish complete GitHub Release
+    if: startsWith(github.ref, 'refs/tags/v')
+    needs: [build-windows, build-macos-arm64]
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/download-artifact@v4
+        with:
+          name: windows-installer
+          path: release-assets/windows
+
+      - uses: actions/download-artifact@v4
+        with:
+          name: macos-arm64-dmg
+          path: release-assets/macos
+
+      - name: Attach verified build set to GitHub Release
+        uses: softprops/action-gh-release@v2
+        with:
+          files: |
+            release-assets/windows/*.exe
+            release-assets/macos/*.dmg
+          generate_release_notes: true

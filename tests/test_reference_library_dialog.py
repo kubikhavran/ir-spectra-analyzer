@@ -815,7 +815,7 @@ def test_find_similar_to_selected_runs_search(qtbot, db, monkeypatch):
 
 
 def test_drag_drop_path_extraction_lists_spa_files(tmp_path):
-    """The static mime-data extractor finds .spa files and recurses folders."""
+    """The drag-data extractor finds supported files, recurses, and deduplicates."""
     from PySide6.QtCore import QMimeData, QUrl
 
     spa_root = tmp_path / "a.spa"
@@ -824,6 +824,8 @@ def test_drag_drop_path_extraction_lists_spa_files(tmp_path):
     nested.mkdir()
     spa_nested = nested / "b.SPA"
     spa_nested.write_bytes(b"stub")
+    jcamp_nested = nested / "c.jdx"
+    jcamp_nested.write_text("##TITLE=stub", encoding="utf-8")
     non_spa = tmp_path / "note.txt"
     non_spa.write_text("ignore")
 
@@ -839,6 +841,8 @@ def test_drag_drop_path_extraction_lists_spa_files(tmp_path):
     names = sorted(p.name.lower() for p in found)
     assert "a.spa" in names
     assert "b.spa" in names
+    assert "c.jdx" in names
+    assert names.count("a.spa") == 1
     assert "note.txt" not in names
 
 

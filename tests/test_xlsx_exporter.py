@@ -8,6 +8,7 @@ import tempfile
 from pathlib import Path
 
 import numpy as np
+import pytest
 
 from core.peak import Peak
 from core.project import Project
@@ -136,3 +137,52 @@ class TestXLSXExporter:
             assert peaks_ws.cell(4, 1).value is None  # unassigned peak omitted
         finally:
             tmp_path.unlink(missing_ok=True)
+
+
+def test_xlsx_export_neutralizes_spreadsheet_formulas(tmp_path: Path) -> None:
+    import openpyxl
+
+    spectrum = Spectrum(
+        wavenumbers=np.array([1000.0, 1100.0]),
+        intensities=np.array([0.1, 0.2]),
+    )
+    project = Project(name="Formula", spectrum=spectrum)
+    project.metadata.title = "=1+1"
+    peak = Peak(
+        position=1000.0,
+        intensity=0.1,
+        vibration_ids=[None],
+        vibration_labels=['=HYPERLINK("https://example.invalid","x")'],
+    )
+    output_path = tmp_path / "safe.xlsx"
+
+    XLSXExporter().export([peak], output_path, spectrum, project=project)
+
+    workbook = openpyxl.load_workbook(output_path, data_only=False)
+    try:
+        metadata_cell = workbook["Metadata"]["B4"]
+        assignment_cell = workbook["Peaks"]["D2"]
+        assert metadata_cell.value == "'=1+1"
+        assert metadata_cell.data_type == "s"
+        assert assignment_cell.value.startswith("'=HYPERLINK(")
+        assert assignment_cell.data_type == "s"
+    finally:
+        workbook.close()
+
+
+def test_xlsx_failed_export_preserves_existing_file(tmp_path: Path, monkeypatch) -> None:
+    import openpyxl
+
+    output_path = tmp_path / "existing.xlsx"
+    output_path.write_bytes(b"known-good")
+
+    def _failing_save(_workbook, path) -> None:
+        Path(path).write_bytes(b"partial")
+        raise OSError("simulated disk failure")
+
+    monkeypatch.setattr(openpyxl.Workbook, "save", _failing_save)
+
+    with pytest.raises(OSError, match="simulated disk failure"):
+        XLSXExporter().export([], output_path)
+
+    assert output_path.read_bytes() == b"known-good"

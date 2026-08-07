@@ -52,7 +52,7 @@ class BatchImportSummary:
 
     @property
     def total_found(self) -> int:
-        """Total number of `.spa` files discovered in the selected folder."""
+        """Total number of supported spectrum files discovered in the selected folder."""
         return len(self.results)
 
     @property
@@ -133,31 +133,33 @@ class ReferenceImportService:
         )
         if used_names is not None:
             reference_name = self._unique_name(reference_name, used_names)
-            used_names.add(reference_name.casefold())
         detected_peaks = detect_peaks_for_spectrum(spectrum) if detect_peaks else ()
         description = spectrum.comments.strip()
         stat = path.stat()
-        ref_id = self._db.add_reference_spectrum(
-            name=reference_name,
-            wavenumbers=spectrum.wavenumbers,
-            intensities=spectrum.intensities,
-            description=description,
-            source=str(path),
-            y_unit=spectrum.y_unit.value,
-            source_mtime_ns=stat.st_mtime_ns,
-            source_size=stat.st_size,
-            commit=False,
-        )
-        self._db.upsert_reference_feature(
-            ref_id,
-            feature_version=MATCH_FEATURE_VERSION,
-            feature_vector=compute_search_vector(
-                spectrum.wavenumbers,
-                spectrum.intensities,
-                y_unit=spectrum.y_unit,
-            ),
-            commit=False,
-        )
+        with self._db.savepoint():
+            ref_id = self._db.add_reference_spectrum(
+                name=reference_name,
+                wavenumbers=spectrum.wavenumbers,
+                intensities=spectrum.intensities,
+                description=description,
+                source=str(path),
+                y_unit=spectrum.y_unit.value,
+                source_mtime_ns=stat.st_mtime_ns,
+                source_size=stat.st_size,
+                commit=False,
+            )
+            self._db.upsert_reference_feature(
+                ref_id,
+                feature_version=MATCH_FEATURE_VERSION,
+                feature_vector=compute_search_vector(
+                    spectrum.wavenumbers,
+                    spectrum.intensities,
+                    y_unit=spectrum.y_unit,
+                ),
+                commit=False,
+            )
+        if used_names is not None:
+            used_names.add(reference_name.casefold())
         if commit:
             self._db.commit()
         return ImportedReference(
@@ -175,7 +177,7 @@ class ReferenceImportService:
         detect_peaks: bool = False,
         prefer_filename: bool = False,
     ) -> BatchImportSummary:
-        """Import all `.spa` files from a folder and return a structured summary."""
+        """Import all supported spectrum files from a folder and return a summary."""
         files = self.scan_folder(folder)
         existing_names: set[str] = set()
         existing_sources: dict[str, dict] = {}
@@ -192,8 +194,19 @@ class ReferenceImportService:
         # silently skipped, so a large library only partially imported.
         used_names = existing_names if skip_duplicates_by_filename else None
         for path in files:
-            normalized_source = normalize_source_path(path)
-            stat = path.stat()
+            try:
+                normalized_source = normalize_source_path(path)
+                stat = path.stat()
+            except Exception as exc:  # noqa: BLE001
+                results.append(
+                    BatchImportResult(
+                        path=path,
+                        status=BatchImportStatus.FAILED,
+                        reference_name=path.stem,
+                        reason=self._format_error(exc),
+                    )
+                )
+                continue
             existing_source_row = existing_sources.get(normalized_source)
 
             if skip_duplicates_by_filename and existing_source_row is not None:
@@ -327,28 +340,29 @@ class ReferenceImportService:
         )
         detected_peaks = detect_peaks_for_spectrum(spectrum) if detect_peaks else ()
         stat = path.stat()
-        self._db.update_reference_spectrum(
-            ref_id,
-            name=reference_name,
-            wavenumbers=spectrum.wavenumbers,
-            intensities=spectrum.intensities,
-            description=spectrum.comments.strip(),
-            source=str(path),
-            y_unit=spectrum.y_unit.value,
-            source_mtime_ns=stat.st_mtime_ns,
-            source_size=stat.st_size,
-            commit=False,
-        )
-        self._db.upsert_reference_feature(
-            ref_id,
-            feature_version=MATCH_FEATURE_VERSION,
-            feature_vector=compute_search_vector(
-                spectrum.wavenumbers,
-                spectrum.intensities,
-                y_unit=spectrum.y_unit,
-            ),
-            commit=False,
-        )
+        with self._db.savepoint():
+            self._db.update_reference_spectrum(
+                ref_id,
+                name=reference_name,
+                wavenumbers=spectrum.wavenumbers,
+                intensities=spectrum.intensities,
+                description=spectrum.comments.strip(),
+                source=str(path),
+                y_unit=spectrum.y_unit.value,
+                source_mtime_ns=stat.st_mtime_ns,
+                source_size=stat.st_size,
+                commit=False,
+            )
+            self._db.upsert_reference_feature(
+                ref_id,
+                feature_version=MATCH_FEATURE_VERSION,
+                feature_vector=compute_search_vector(
+                    spectrum.wavenumbers,
+                    spectrum.intensities,
+                    y_unit=spectrum.y_unit,
+                ),
+                commit=False,
+            )
         return ImportedReference(
             ref_id=ref_id,
             name=reference_name,
@@ -367,6 +381,13 @@ class ReferenceImportService:
 
 def detect_peaks_for_spectrum(spectrum: Spectrum) -> tuple[Peak, ...]:
     """Run the application's standard peak detection on a Spectrum."""
-    from processing.peak_detection import detect_peaks  # noqa: PLC0415
+    from processing.peak_detection import default_prominence, detect_peaks  # noqa: PLC0415
 
-    return tuple(detect_peaks(spectrum.wavenumbers, spectrum.intensities))
+    return tuple(
+        detect_peaks(
+            spectrum.wavenumbers,
+            spectrum.intensities,
+            prominence=default_prominence(spectrum),
+            invert=spectrum.is_dip_spectrum,
+        )
+    )

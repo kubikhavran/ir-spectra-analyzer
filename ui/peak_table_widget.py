@@ -3,9 +3,8 @@ PeakTableWidget — Tabulka detekovaných peaků.
 
 Zodpovědnost:
 - Zobrazení peaků ve formátu QTableWidget
-- Editace labelu a přiřazené vibrace inline
+- Otevření dedikovaného editoru vibrací dvojklikem
 - Synchronizace s SpectrumWidget (výběr v tabulce = highlight v grafu)
-- Signály pro přidání/odebrání peaku
 """
 
 from __future__ import annotations
@@ -54,11 +53,10 @@ class _CopyableTable(QTableWidget):
 
 
 class PeakTableWidget(QWidget):
-    """Editable table displaying detected/assigned IR peaks."""
+    """Read-only peak overview; assignments are edited through the dedicated dialog."""
 
     peak_selected = Signal(object)  # emits Peak on row selection
     peak_deleted = Signal(object)  # emits Peak on delete action
-    vibration_label_removed = Signal(object, str)  # emits (Peak, label_str) on removal
     vibration_edit_requested = Signal(object)  # emits Peak when vibration text should be edited
 
     def __init__(self, parent=None) -> None:
@@ -84,8 +82,11 @@ class PeakTableWidget(QWidget):
         self._table.setHorizontalHeaderLabels(_HEADERS)
         self._table.horizontalHeader().setStretchLastSection(True)
         self._table.setSelectionBehavior(self._table.SelectionBehavior.SelectRows)
+        # Position/intensity/label edits were previously accepted visually but
+        # never propagated to the Project model.  Keep the table honest and use
+        # the existing double-click assignment dialog for actual edits.
+        self._table.setEditTriggers(QTableWidget.EditTrigger.NoEditTriggers)
         self._table.itemSelectionChanged.connect(self._on_selection_changed)
-        self._table.itemChanged.connect(self._on_item_changed)
         self._table.cellDoubleClicked.connect(self._on_cell_double_clicked)
         layout.addWidget(self._table)
 
@@ -101,25 +102,9 @@ class PeakTableWidget(QWidget):
         QApplication.clipboard().setText("\n".join(lines))
 
     def _on_selection_changed(self) -> None:
-        row = self._table.currentRow()
+        row = int(self._table.currentRow())
         if 0 <= row < len(self._peaks):
             self.peak_selected.emit(self._peaks[row])
-
-    def _on_item_changed(self, item: QTableWidgetItem) -> None:
-        """Detect when user clears/edits the Vibration column and emit removed labels."""
-        if item.column() != 3:
-            return
-        row = item.row()
-        if not (0 <= row < len(self._peaks)):
-            return
-        peak = self._peaks[row]
-        if not peak.vibration_labels:
-            return
-        new_text = item.text().strip()
-        new_labels = [lb.strip() for lb in new_text.split("/") if lb.strip()] if new_text else []
-        for label in list(peak.vibration_labels):
-            if label not in new_labels:
-                self.vibration_label_removed.emit(peak, label)
 
     def _on_cell_double_clicked(self, row: int, column: int) -> None:
         if column != 3:
@@ -144,7 +129,7 @@ class PeakTableWidget(QWidget):
 
     def selected_peak(self) -> Peak | None:
         """Return the currently selected Peak, or None."""
-        row = self._table.currentRow()
+        row = int(self._table.currentRow())
         if 0 <= row < len(self._peaks):
             return self._peaks[row]
         return None

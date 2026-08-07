@@ -28,7 +28,19 @@ def resample(
         kind: Interpolation kind ("linear", "cubic").
 
     Returns:
-        Intensities resampled to new_wavenumbers.
+        Intensities resampled to new_wavenumbers. Points outside the measured
+        range continue the nearest measured edge value; introducing a numeric
+        zero there would create an artificial absorption edge in percent
+        transmittance spectra.
     """
-    f = interp1d(wavenumbers, intensities, kind=kind, bounds_error=False, fill_value=0.0)
+    min_index = int(np.argmin(wavenumbers))
+    max_index = int(np.argmax(wavenumbers))
+    edge_values = (intensities[min_index], intensities[max_index])
+    f = interp1d(
+        wavenumbers,
+        intensities,
+        kind=kind,
+        bounds_error=False,
+        fill_value=edge_values,
+    )
     return f(new_wavenumbers)

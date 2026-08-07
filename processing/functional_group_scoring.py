@@ -236,7 +236,7 @@ def _intensity_score(metric: float, expected_intensity: str) -> float:
     if metric >= target:
         overshoot = min((metric - target) / max(target, 1e-6), 1.0)
         return max(0.65, 1.0 - overshoot * 0.25)
-    return np.clip(metric / max(target, 1e-6), 0.0, 1.0)
+    return float(np.clip(metric / max(target, 1e-6), 0.0, 1.0))
 
 
 def _local_floor(signal: np.ndarray, shape: str) -> float:
@@ -284,7 +284,7 @@ def _width_fraction(
         return 0.0
     selected = wavenumbers[above]
     width = float(selected[-1] - selected[0]) if selected.size > 1 else 0.0
-    return np.clip(width / span, 0.0, 1.0)
+    return float(np.clip(width / span, 0.0, 1.0))
 
 
 def _count_local_peaks(signal: np.ndarray, span: float) -> int:

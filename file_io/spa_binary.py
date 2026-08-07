@@ -257,23 +257,25 @@ class SPABinaryReader:
             and params_size >= 24
             and params_offset + params_size <= len(data)
         ):
-            n_points = struct.unpack_from("<I", data, params_offset + 4)[0]
-            wn_max = struct.unpack_from("<f", data, params_offset + 16)[0]
-            wn_min = struct.unpack_from("<f", data, params_offset + 20)[0]
-            if n_points == 0 or n_points > 1_000_000:
+            parsed_n_points = struct.unpack_from("<I", data, params_offset + 4)[0]
+            parsed_wn_max = struct.unpack_from("<f", data, params_offset + 16)[0]
+            parsed_wn_min = struct.unpack_from("<f", data, params_offset + 20)[0]
+            if parsed_n_points == 0 or parsed_n_points > 1_000_000:
                 logger.warning(
                     "OMNIC SPA type-2 block: implausible n_points=%d; falling back to fixed offset.",
-                    n_points,
+                    parsed_n_points,
                 )
-                n_points = None
-            if wn_max is not None and wn_min is not None and not self._wn_plausible(wn_max, wn_min):
+            else:
+                n_points = parsed_n_points
+            if not self._wn_plausible(parsed_wn_max, parsed_wn_min):
                 logger.warning(
                     "OMNIC SPA type-2 block: implausible wn range [%.2f, %.2f]; falling back to fixed offset.",
-                    wn_max,
-                    wn_min,
+                    parsed_wn_max,
+                    parsed_wn_min,
                 )
-                wn_max = None
-                wn_min = None
+            else:
+                wn_max = parsed_wn_max
+                wn_min = parsed_wn_min
 
         # --- Fallback: fixed offsets ---
         if n_points is None:
@@ -282,11 +284,13 @@ class SPABinaryReader:
                     f"OMNIC SPA file too short ({len(data)} bytes) to contain n_points "
                     f"at fallback offset {_OMNIC_N_POINTS_OFFSET}."
                 )
-            (n_points,) = struct.unpack_from("<I", data, _OMNIC_N_POINTS_OFFSET)
-            if n_points == 0 or n_points > 1_000_000:
+            (fallback_n_points,) = struct.unpack_from("<I", data, _OMNIC_N_POINTS_OFFSET)
+            if fallback_n_points == 0 or fallback_n_points > 1_000_000:
                 raise ValueError(
-                    f"OMNIC SPA: implausible n_points={n_points} at fallback offset {_OMNIC_N_POINTS_OFFSET}."
+                    f"OMNIC SPA: implausible n_points={fallback_n_points} "
+                    f"at fallback offset {_OMNIC_N_POINTS_OFFSET}."
                 )
+            n_points = fallback_n_points
             logger.warning("OMNIC SPA: using fallback fixed offset for n_points.")
 
         if wn_max is None or wn_min is None:
@@ -294,9 +298,14 @@ class SPABinaryReader:
                 raise ValueError(
                     f"OMNIC SPA file too short to contain wavenumber params at fallback offset {_OMNIC_WN_MAX_OFFSET}."
                 )
-            wn_max = struct.unpack_from("<f", data, _OMNIC_WN_MAX_OFFSET)[0]
-            wn_min = struct.unpack_from("<f", data, _OMNIC_WN_MIN_OFFSET)[0]
+            fallback_wn_max = struct.unpack_from("<f", data, _OMNIC_WN_MAX_OFFSET)[0]
+            fallback_wn_min = struct.unpack_from("<f", data, _OMNIC_WN_MIN_OFFSET)[0]
+            wn_max = fallback_wn_max
+            wn_min = fallback_wn_min
             logger.warning("OMNIC SPA: using fallback fixed offsets for wn_max/wn_min.")
+
+        if n_points is None or wn_max is None or wn_min is None:
+            raise ValueError("OMNIC SPA: incomplete spectral parameters")
 
         if not self._wn_plausible(wn_max, wn_min):
             logger.warning(

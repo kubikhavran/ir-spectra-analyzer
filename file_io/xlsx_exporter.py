@@ -17,6 +17,8 @@ from typing import TYPE_CHECKING
 from core.peak import Peak
 from core.peak_assignments import build_peak_assignment_rows, collect_export_metadata
 from core.spectrum import Spectrum
+from file_io.atomic_output import atomic_output_path
+from file_io.spreadsheet_safety import neutralize_spreadsheet_formula
 
 if TYPE_CHECKING:
     from core.project import Project
@@ -79,7 +81,11 @@ class XLSXExporter:
             collect_export_metadata(project, spectrum), start=4
         ):
             meta_ws.cell(row=offset, column=1, value=label).font = Font(bold=True)
-            meta_ws.cell(row=offset, column=2, value=value)
+            meta_ws.cell(
+                row=offset,
+                column=2,
+                value=neutralize_spreadsheet_formula(value),
+            )
         _autosize(meta_ws)
 
         # ── Peaks sheet (assigned peaks unless explicitly asked otherwise) ──
@@ -103,7 +109,11 @@ class XLSXExporter:
             peaks_ws.cell(row=row, column=1, value=assignment_row.position)
             peaks_ws.cell(row=row, column=2, value=round(assignment_row.intensity, 4))
             peaks_ws.cell(row=row, column=3, value=assignment_row.intensity_label)
-            peaks_ws.cell(row=row, column=4, value=assignment_row.assignment)
+            peaks_ws.cell(
+                row=row,
+                column=4,
+                value=neutralize_spreadsheet_formula(assignment_row.assignment),
+            )
         peaks_ws.freeze_panes = "A2"
         _autosize(peaks_ws)
 
@@ -111,7 +121,8 @@ class XLSXExporter:
         if spectrum is not None:
             self._write_spectrum_sheet(wb, spectrum, y_unit_label)
 
-        wb.save(output_path)
+        with atomic_output_path(output_path) as temp_path:
+            wb.save(temp_path)
 
     @staticmethod
     def _write_spectrum_sheet(wb, spectrum: Spectrum, y_unit_label: str) -> None:

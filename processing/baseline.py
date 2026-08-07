@@ -81,8 +81,9 @@ def _convex_hull_baseline(
 
     # Monotone-chain lower convex hull.
     def _cross(o: int, a: int, b: int) -> float:
-        return (wn_sorted[a] - wn_sorted[o]) * (y_work[b] - y_work[o]) - (y_work[a] - y_work[o]) * (
-            wn_sorted[b] - wn_sorted[o]
+        return float(
+            (wn_sorted[a] - wn_sorted[o]) * (y_work[b] - y_work[o])
+            - (y_work[a] - y_work[o]) * (wn_sorted[b] - wn_sorted[o])
         )
 
     hull: list[int] = []

@@ -152,17 +152,19 @@ class _DraggableLabel(pg.TextItem):
         label_y: float,
         click_callback=None,
         shift_click_callback=None,
+        drag_finished_callback=None,
         **kwargs,
     ) -> None:
         super().__init__(**kwargs)
         self._peak = peak
         self._peak_x = peak_x
         self._peak_y = peak_y
-        self._label_offset = label_offset  # signed: + above apex, - below apex
         self._data_x = label_x  # current label x in data coordinates
         self._data_y = label_y  # current label y in data coordinates
         self._click_callback = click_callback
         self._shift_click_callback = shift_click_callback
+        self._drag_finished_callback = drag_finished_callback
+        self._drag_changed = False
         self._leader: pg.PlotCurveItem | None = None
 
     def set_leader(self, leader: pg.PlotCurveItem) -> None:
@@ -235,6 +237,8 @@ class _DraggableLabel(pg.TextItem):
         # mapToParent() is reliable once the item has a ViewBox parent (set via addItem).
         # The delta in parent (ViewBox data) coordinates gives the correct movement.
         delta = self.mapToParent(ev.pos()) - self.mapToParent(ev.lastPos())
+        if delta.x() != 0.0 or delta.y() != 0.0:
+            self._drag_changed = True
         self._data_x += delta.x()
         self._data_y += delta.y()
         self.setPos(self._data_x, self._data_y)
@@ -242,6 +246,10 @@ class _DraggableLabel(pg.TextItem):
         self._peak.label_offset_y = self._data_y - self._peak_y
         self._peak.manual_placement = True
         self._update_leader()
+        if ev.isFinish() and self._drag_changed:
+            self._drag_changed = False
+            if self._drag_finished_callback is not None:
+                self._drag_finished_callback(self._peak)
 
 
 class SpectrumWidget(QWidget):
@@ -251,6 +259,7 @@ class SpectrumWidget(QWidget):
     cursor_moved = Signal(float, float)  # (wavenumber, intensity_at_cursor)
     peak_selected_in_viewer = Signal(object)  # emits Peak instance
     peak_delete_requested = Signal(object)  # emits Peak instance on Shift+click
+    peak_label_moved = Signal(object)  # emits Peak after a completed label drag
 
     def __init__(self, parent=None) -> None:
         super().__init__(parent)
@@ -294,6 +303,7 @@ class SpectrumWidget(QWidget):
 
         self._overlay_name_label = QLabel("")
         self._overlay_name_label.setObjectName("overlayName")
+        self._overlay_name_label.setTextFormat(Qt.TextFormat.PlainText)
         overlay_row.addWidget(self._overlay_name_label)
 
         overlay_row.addWidget(QLabel("Opacity:"))
@@ -485,6 +495,7 @@ class SpectrumWidget(QWidget):
                 label_y=ly,
                 click_callback=self._on_label_clicked,
                 shift_click_callback=self._on_label_shift_clicked,
+                drag_finished_callback=self.peak_label_moved.emit,
                 text=label_text,
                 color=label_color,
                 angle=90,
@@ -857,29 +868,6 @@ class SpectrumWidget(QWidget):
 
         return placements
 
-    def _cluster_labels_for_auto_layout(
-        self,
-        labels: list[_DraggableLabel],
-        *,
-        gap_threshold: float,
-        max_cluster_size: int,
-    ) -> list[list[_DraggableLabel]]:
-        """Split labels into local x-clusters so distant regions arrange independently."""
-        if not labels:
-            return []
-
-        clusters: list[list[_DraggableLabel]] = [[labels[0]]]
-        for label in labels[1:]:
-            current_cluster = clusters[-1]
-            previous = current_cluster[-1]
-            gap = abs(previous._peak_x - label._peak_x)
-            if gap > gap_threshold or len(current_cluster) >= max_cluster_size:
-                clusters.append([label])
-                continue
-            current_cluster.append(label)
-
-        return clusters
-
     def set_overlay_spectra(self, spectra: list) -> None:
         """Overlay additional spectra (e.g. reference candidates) with colored lines.
 
@@ -1049,30 +1037,6 @@ class SpectrumWidget(QWidget):
         label.setPos(old_x, old_y)
         return x0, x1, y0, y1
 
-    def _clamp_label_position_to_view(
-        self,
-        label: _DraggableLabel,
-        x_pos: float,
-        y_pos: float,
-        *,
-        x_min: float,
-        x_max: float,
-        y_min: float,
-        y_max: float,
-    ) -> tuple[float, float]:
-        rect = self._data_rect_for_label_position(label, x_pos, y_pos)
-        if rect[0] < x_min:
-            x_pos += x_min - rect[0]
-        elif rect[1] > x_max:
-            x_pos -= rect[1] - x_max
-
-        rect = self._data_rect_for_label_position(label, x_pos, y_pos)
-        if rect[2] < y_min:
-            y_pos += y_min - rect[2]
-        elif rect[3] > y_max:
-            y_pos -= rect[3] - y_max
-        return x_pos, y_pos
-
     @staticmethod
     def _label_rect_overlaps_any(
         rect: tuple[float, float, float, float],
@@ -1106,338 +1070,6 @@ class SpectrumWidget(QWidget):
         if peaks_are_dips:
             return y1 >= float(np.min(curve_y)) - clearance
         return y0 <= float(np.max(curve_y)) + clearance
-
-    def _find_best_label_candidate(
-        self,
-        *,
-        label: _DraggableLabel,
-        lane_origin_y: float,
-        direction: float,
-        x_min: float,
-        x_max: float,
-        y_min: float,
-        y_max: float,
-        x_span: float,
-        view_y_span: float,
-        peaks_are_dips: bool,
-        x_clearance: float,
-        y_clearance: float,
-        view_padding_x: float,
-        view_padding_y: float,
-        placed_rects: list[tuple[float, float, float, float]],
-        placed_leaders: list[tuple[tuple[float, float], tuple[float, float], tuple[float, float]]],
-        row_last_rects: dict[int, tuple[float, float, float, float]],
-        last_anchor_x: float | None,
-        allow_left_shifts: bool,
-        min_candidate_x: float | None = None,
-    ) -> (
-        tuple[
-            float,
-            float,
-            float,
-            float,
-            float,
-            float,
-            float,
-            int,
-            tuple[tuple[float, float], tuple[float, float], tuple[float, float]],
-        ]
-        | None
-    ):
-        natural_rect = self._data_rect_for_label_position(
-            label,
-            label._peak_x,
-            label._peak_y
-            + (direction * (float(np.ptp(self._spectrum.intensities)) or 1.0) * 0.065),
-        )
-        rect_width = max(natural_rect[1] - natural_rect[0], x_span * 0.01)
-        rect_height = max(natural_rect[3] - natural_rect[2], view_y_span * 0.04)
-        horizontal_step = rect_width + x_clearance
-        vertical_step = rect_height + y_clearance
-        best_candidate: (
-            tuple[
-                float,
-                float,
-                float,
-                float,
-                float,
-                float,
-                float,
-                int,
-                tuple[tuple[float, float], tuple[float, float], tuple[float, float]],
-            ]
-            | None
-        ) = None
-
-        if allow_left_shifts:
-            shift_multipliers = (
-                [-1, 0, 1, -2, 2, -3, 3, -4, 4]
-                if last_anchor_x is None
-                else [0, -1, 1, -2, 2, -3, 3, -4, 4]
-            )
-        else:
-            shift_multipliers = [0, 1, 2, 3, 4, 5]
-
-        for level in range(12):
-            candidate_y = lane_origin_y + (direction * (level * vertical_step))
-            for shift_multiplier in shift_multipliers:
-                candidate_x = label._peak_x - (shift_multiplier * horizontal_step)
-                candidate_x, candidate_y = self._clamp_label_position_to_view(
-                    label,
-                    candidate_x,
-                    candidate_y,
-                    x_min=x_min + view_padding_x,
-                    x_max=x_max - view_padding_x,
-                    y_min=y_min + view_padding_y,
-                    y_max=y_max - view_padding_y,
-                )
-                rect = self._data_rect_for_label_position(label, candidate_x, candidate_y)
-
-                last_rect_in_row = row_last_rects.get(level)
-                if last_rect_in_row is not None:
-                    max_right_edge = last_rect_in_row[0] - x_clearance
-                    if rect[1] > max_right_edge:
-                        candidate_x += max_right_edge - rect[1]
-                        rect = self._data_rect_for_label_position(label, candidate_x, candidate_y)
-
-                if last_anchor_x is not None:
-                    max_anchor_x = last_anchor_x - max(x_clearance, rect_width * 0.15)
-                    if candidate_x > max_anchor_x:
-                        candidate_x = max_anchor_x
-                        rect = self._data_rect_for_label_position(label, candidate_x, candidate_y)
-
-                if min_candidate_x is not None and candidate_x < min_candidate_x:
-                    candidate_x = min_candidate_x
-                    rect = self._data_rect_for_label_position(label, candidate_x, candidate_y)
-
-                actual_shift_steps = int(
-                    np.ceil(
-                        max(0.0, label._peak_x - candidate_x) / max(horizontal_step, 1e-6) - 1e-9
-                    )
-                )
-                if level < actual_shift_steps:
-                    continue
-
-                if rect[0] < x_min + view_padding_x or rect[1] > x_max - view_padding_x:
-                    continue
-
-                leader = self._leader_polyline_for_label_position(label, candidate_x, candidate_y)
-                has_conflict = self._label_candidate_has_conflict(
-                    label,
-                    candidate_x,
-                    candidate_y,
-                    peaks_are_dips=peaks_are_dips,
-                    x_clearance=x_clearance,
-                    y_clearance=y_clearance,
-                    placed_rects=placed_rects,
-                    placed_leaders=placed_leaders,
-                    rect=rect,
-                    leader=leader,
-                )
-                cost = (
-                    (1000.0 if has_conflict else 0.0)
-                    + (abs(shift_multiplier) * 2.5)
-                    + (level * 0.4)
-                    + (abs(candidate_x - label._peak_x) / max(rect_width, 1e-6))
-                    + (abs(candidate_y - label._peak_y) / max(rect_height, 1e-6))
-                )
-                if best_candidate is None or cost < best_candidate[0]:
-                    best_candidate = (
-                        cost,
-                        candidate_x,
-                        candidate_y,
-                        rect[0],
-                        rect[1],
-                        rect[2],
-                        rect[3],
-                        level,
-                        leader,
-                    )
-                if not has_conflict:
-                    return best_candidate
-
-        return best_candidate
-
-    def _label_candidate_has_conflict(
-        self,
-        label: _DraggableLabel,
-        candidate_x: float,
-        candidate_y: float,
-        *,
-        peaks_are_dips: bool,
-        x_clearance: float,
-        y_clearance: float,
-        placed_rects: list[tuple[float, float, float, float]],
-        placed_leaders: list[tuple[tuple[float, float], tuple[float, float], tuple[float, float]]],
-        rect: tuple[float, float, float, float] | None = None,
-        leader: tuple[tuple[float, float], tuple[float, float], tuple[float, float]] | None = None,
-    ) -> bool:
-        rect = rect or self._data_rect_for_label_position(label, candidate_x, candidate_y)
-        leader = leader or self._leader_polyline_for_label_position(label, candidate_x, candidate_y)
-        rect_overlap = self._label_rect_overlaps_any(
-            rect,
-            placed_rects,
-            x_padding=x_clearance * 0.5,
-            y_padding=y_clearance * 0.4,
-        )
-        curve_overlap = self._label_rect_hits_curve(
-            rect,
-            peaks_are_dips=peaks_are_dips,
-            clearance=y_clearance,
-        )
-        wrong_side = (
-            candidate_y <= label._peak_y + (y_clearance * 0.25)
-            if not peaks_are_dips
-            else candidate_y >= label._peak_y - (y_clearance * 0.25)
-        )
-        leader_overlap = self._leader_polyline_overlaps_any(
-            leader,
-            placed_leaders,
-        )
-        leader_hits_rect = self._leader_polyline_hits_rects(
-            leader,
-            placed_rects,
-            x_padding=x_clearance * 0.2,
-            y_padding=y_clearance * 0.15,
-        )
-        incoming_leader_hits = any(
-            self._leader_polyline_hits_rects(
-                other_leader,
-                [rect],
-                x_padding=x_clearance * 0.2,
-                y_padding=y_clearance * 0.15,
-            )
-            for other_leader in placed_leaders
-        )
-        return (
-            rect_overlap
-            or curve_overlap
-            or wrong_side
-            or leader_overlap
-            or leader_hits_rect
-            or incoming_leader_hits
-        )
-
-    @classmethod
-    def _leader_polyline_overlaps_any(
-        cls,
-        leader: tuple[tuple[float, float], tuple[float, float], tuple[float, float]],
-        placed_leaders: list[tuple[tuple[float, float], tuple[float, float], tuple[float, float]]],
-    ) -> bool:
-        leader_segments = cls._polyline_segments(leader)
-        for other in placed_leaders:
-            other_segments = cls._polyline_segments(other)
-            for segment in leader_segments:
-                for other_segment in other_segments:
-                    if cls._segments_intersect(segment, other_segment):
-                        return True
-        return False
-
-    @classmethod
-    def _leader_polyline_hits_rects(
-        cls,
-        leader: tuple[tuple[float, float], tuple[float, float], tuple[float, float]],
-        rects: list[tuple[float, float, float, float]],
-        *,
-        x_padding: float,
-        y_padding: float,
-    ) -> bool:
-        for segment in cls._polyline_segments(leader):
-            for rect in rects:
-                if cls._segment_hits_rect(
-                    segment,
-                    rect,
-                    x_padding=x_padding,
-                    y_padding=y_padding,
-                ):
-                    return True
-        return False
-
-    @staticmethod
-    def _polyline_segments(
-        polyline: tuple[tuple[float, float], tuple[float, float], tuple[float, float]],
-    ) -> tuple[tuple[tuple[float, float], tuple[float, float]], ...]:
-        return ((polyline[0], polyline[1]), (polyline[1], polyline[2]))
-
-    @classmethod
-    def _segment_hits_rect(
-        cls,
-        segment: tuple[tuple[float, float], tuple[float, float]],
-        rect: tuple[float, float, float, float],
-        *,
-        x_padding: float,
-        y_padding: float,
-    ) -> bool:
-        x0, x1, y0, y1 = rect
-        expanded_rect = (x0 - x_padding, x1 + x_padding, y0 - y_padding, y1 + y_padding)
-        p0, p1 = segment
-        if cls._point_in_rect(p0, expanded_rect) or cls._point_in_rect(p1, expanded_rect):
-            return True
-
-        rx0, rx1, ry0, ry1 = expanded_rect
-        rect_edges = (
-            ((rx0, ry0), (rx1, ry0)),
-            ((rx1, ry0), (rx1, ry1)),
-            ((rx1, ry1), (rx0, ry1)),
-            ((rx0, ry1), (rx0, ry0)),
-        )
-        return any(cls._segments_intersect(segment, edge) for edge in rect_edges)
-
-    @staticmethod
-    def _point_in_rect(
-        point: tuple[float, float],
-        rect: tuple[float, float, float, float],
-    ) -> bool:
-        x, y = point
-        x0, x1, y0, y1 = rect
-        return x0 <= x <= x1 and y0 <= y <= y1
-
-    @classmethod
-    def _segments_intersect(
-        cls,
-        first: tuple[tuple[float, float], tuple[float, float]],
-        second: tuple[tuple[float, float], tuple[float, float]],
-    ) -> bool:
-        p1, q1 = first
-        p2, q2 = second
-        o1 = cls._orientation(p1, q1, p2)
-        o2 = cls._orientation(p1, q1, q2)
-        o3 = cls._orientation(p2, q2, p1)
-        o4 = cls._orientation(p2, q2, q1)
-
-        if o1 != o2 and o3 != o4:
-            return True
-
-        return (
-            (o1 == 0 and cls._point_on_segment(p2, p1, q1))
-            or (o2 == 0 and cls._point_on_segment(q2, p1, q1))
-            or (o3 == 0 and cls._point_on_segment(p1, p2, q2))
-            or (o4 == 0 and cls._point_on_segment(q1, p2, q2))
-        )
-
-    @staticmethod
-    def _orientation(
-        first: tuple[float, float],
-        second: tuple[float, float],
-        third: tuple[float, float],
-    ) -> int:
-        determinant = (second[1] - first[1]) * (third[0] - second[0]) - (second[0] - first[0]) * (
-            third[1] - second[1]
-        )
-        if abs(determinant) <= 1e-9:
-            return 0
-        return 1 if determinant > 0 else 2
-
-    @staticmethod
-    def _point_on_segment(
-        point: tuple[float, float],
-        start: tuple[float, float],
-        end: tuple[float, float],
-    ) -> bool:
-        return (
-            min(start[0], end[0]) - 1e-9 <= point[0] <= max(start[0], end[0]) + 1e-9
-            and min(start[1], end[1]) - 1e-9 <= point[1] <= max(start[1], end[1]) + 1e-9
-        )
 
     def _on_label_shift_clicked(self, peak_x: float) -> None:
         """Called on Shift+click of a label; delete peak in any tool mode."""

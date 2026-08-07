@@ -17,6 +17,7 @@ def build_consensus_analysis(
     match_results: Sequence[MatchResult] = (),
 ) -> ConsensusAnalysis:
     """Combine current chemistry evidence into one ranked interpretation summary."""
+    match_results = tuple(sorted(match_results, key=_effective_match_score, reverse=True))
     peaks = [] if project is None else list(project.peaks)
     top_groups = _select_top_groups(functional_group_results)
     hypotheses = tuple(
@@ -50,7 +51,7 @@ def build_consensus_analysis(
         ConsensusEvidence(
             kind="library_match",
             label=match.name,
-            score=match.score * 100.0,
+            score=_effective_match_score(match) * 100.0,
             details=_match_details(match),
             target_id=int(match.ref_id),
         )
@@ -114,12 +115,12 @@ def _build_hypothesis(
         for band in result.matched_bands[:3]
     ]
     supporting.extend(assignment_evidence[:2])
-    if top_match is not None and top_match.score >= 0.55:
+    if top_match is not None and _effective_match_score(top_match) >= 0.55:
         supporting.append(
             ConsensusEvidence(
                 kind="library_match",
                 label=f"Library hit: {top_match.name}",
-                score=top_match.score * 100.0,
+                score=_effective_match_score(top_match) * 100.0,
                 details=_match_details(top_match),
                 target_id=int(top_match.ref_id),
             )
@@ -232,13 +233,15 @@ def _aggregate_conflicts(
                 )
             )
     if len(match_results) >= 2:
-        gap = (match_results[0].score - match_results[1].score) * 100.0
+        gap = (
+            _effective_match_score(match_results[0]) - _effective_match_score(match_results[1])
+        ) * 100.0
         if gap < 5.0:
             conflicts.append(
                 ConsensusEvidence(
                     kind="conflict",
                     label="Top library matches are close",
-                    score=100.0 - gap * 10.0,
+                    score=max(0.0, min(100.0 - gap * 10.0, 100.0)),
                     details=f"{match_results[0].name} vs {match_results[1].name}",
                     target_id=int(match_results[0].ref_id),
                 )
@@ -254,7 +257,7 @@ def _overall_score(
     hypotheses: Sequence[ConsensusHypothesis],
 ) -> float:
     fg_component = functional_group_results[0].score if functional_group_results else 0.0
-    match_component = match_results[0].score * 100.0 if match_results else 0.0
+    match_component = _effective_match_score(match_results[0]) * 100.0 if match_results else 0.0
     peaks = [] if project is None else list(project.peaks)
     assigned_peak_count = sum(1 for peak in peaks if getattr(peak, "vibration_labels", ()))
     assignment_component = (assigned_peak_count / len(peaks) * 100.0) if peaks else 0.0
@@ -267,7 +270,11 @@ def _overall_score(
         and functional_group_results[0].score - functional_group_results[1].score < 8.0
     ):
         score -= 6.0
-    if len(match_results) >= 2 and (match_results[0].score - match_results[1].score) < 0.05:
+    if (
+        len(match_results) >= 2
+        and _effective_match_score(match_results[0]) - _effective_match_score(match_results[1])
+        < 0.05
+    ):
         score -= 6.0
     return max(0.0, min(score, 100.0))
 
@@ -307,7 +314,9 @@ def _build_summary(
     if top_group is not None:
         parts.append(f"Top chemistry evidence: {top_group.group_name} ({top_group.score:.1f}%).")
     if top_match is not None:
-        parts.append(f"Top library hit: {top_match.name} ({top_match.score * 100.0:.1f}%).")
+        parts.append(
+            f"Top library hit: {top_match.name} ({_effective_match_score(top_match) * 100.0:.1f}%)."
+        )
     if peak_count:
         parts.append(f"Assigned peaks: {assigned_peak_count}/{peak_count}.")
     return " ".join(parts)
@@ -322,7 +331,12 @@ def _feature_summary(result: FunctionalGroupScore) -> str:
 
 
 def _match_details(match: MatchResult) -> str:
-    quality = match_quality_label(match.score)
+    quality = match_quality_label(_effective_match_score(match))
     if match.description:
         return f"{quality} spectral match. {match.description}"
     return f"{quality} spectral match."
+
+
+def _effective_match_score(match: MatchResult) -> float:
+    """Return the same score SearchEngine uses to rank whole/fingerprint views."""
+    return max(0.0, min(float(match.ranking_score), 1.0))

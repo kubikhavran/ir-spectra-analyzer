@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+from html import escape
+
 from PySide6.QtCore import QSignalBlocker, Qt, Signal
 from PySide6.QtGui import QColor
 from PySide6.QtWidgets import QLabel, QListWidget, QListWidgetItem, QVBoxLayout, QWidget
@@ -17,7 +19,6 @@ class ConsensusPanel(QWidget):
 
     def __init__(self, parent=None) -> None:
         super().__init__(parent)
-        self._analysis = None
         self._setup_ui()
 
     def _setup_ui(self) -> None:
@@ -36,6 +37,7 @@ class ConsensusPanel(QWidget):
         self._headline_label = QLabel(
             "Run matching or inspect functional groups to build consensus."
         )
+        self._headline_label.setTextFormat(Qt.TextFormat.PlainText)
         self._headline_label.setWordWrap(True)
         self._headline_label.setStyleSheet(
             "font-size: 10pt; font-weight: 600; color: #2C3E50; "
@@ -44,6 +46,7 @@ class ConsensusPanel(QWidget):
         layout.addWidget(self._headline_label)
 
         self._overview_label = QLabel()
+        self._overview_label.setTextFormat(Qt.TextFormat.RichText)
         self._overview_label.setWordWrap(True)
         self._overview_label.setStyleSheet(
             "font-size: 9pt; color: #444; background: #FAFAFA; border: 1px solid #E0E0E0; "
@@ -63,6 +66,7 @@ class ConsensusPanel(QWidget):
         layout.addWidget(self._hypothesis_list, stretch=3)
 
         self._detail_label = QLabel()
+        self._detail_label.setTextFormat(Qt.TextFormat.RichText)
         self._detail_label.setWordWrap(True)
         self._detail_label.setStyleSheet(
             "font-size: 9pt; color: #444; background: #FAFAFA; border: 1px solid #E0E0E0; "
@@ -80,7 +84,6 @@ class ConsensusPanel(QWidget):
         layout.addWidget(self._match_list, stretch=2)
 
     def clear(self) -> None:
-        self._analysis = None
         self._hypothesis_list.clear()
         self._match_list.clear()
         self._status_label.setText("No consensus analysis")
@@ -95,7 +98,6 @@ class ConsensusPanel(QWidget):
     def set_analysis(self, analysis) -> None:
         previous_hypothesis_id = self.current_hypothesis_id()
         previous_match_id = self.current_match_id()
-        self._analysis = analysis
         self._hypothesis_list.clear()
         self._match_list.clear()
 
@@ -217,14 +219,18 @@ class ConsensusPanel(QWidget):
 
     def _format_overview(self, analysis) -> str:
         confirmed = (
-            ", ".join(evidence.label for evidence in analysis.confirmed_features[:4]) or "none"
+            ", ".join(escape(str(evidence.label)) for evidence in analysis.confirmed_features[:4])
+            or "none"
         )
         uncertain = (
-            ", ".join(evidence.label for evidence in analysis.uncertain_features[:4]) or "none"
+            ", ".join(escape(str(evidence.label)) for evidence in analysis.uncertain_features[:4])
+            or "none"
         )
-        conflicts = ", ".join(evidence.label for evidence in analysis.conflicts[:3]) or "none"
+        conflicts = (
+            ", ".join(escape(str(evidence.label)) for evidence in analysis.conflicts[:3]) or "none"
+        )
         return (
-            f"{analysis.summary}<br><br>"
+            f"{escape(str(analysis.summary))}<br><br>"
             f"<b>Confirmed:</b> {confirmed}<br>"
             f"<b>Uncertain:</b> {uncertain}<br>"
             f"<b>Conflicts:</b> {conflicts}"
@@ -233,28 +239,29 @@ class ConsensusPanel(QWidget):
     def _format_hypothesis_detail(self, hypothesis) -> str:
         supporting = (
             "<br>".join(
-                f"• {evidence.label} ({evidence.score:.0f}%) — {evidence.details}"
+                f"• {escape(str(evidence.label))} ({evidence.score:.0f}%) — "
+                f"{escape(str(evidence.details))}"
                 for evidence in hypothesis.supporting_evidence[:4]
             )
             or "• none"
         )
         conflicts = (
             "<br>".join(
-                f"• {evidence.label} — {evidence.details}"
+                f"• {escape(str(evidence.label))} — {escape(str(evidence.details))}"
                 for evidence in hypothesis.conflicting_evidence[:3]
             )
             or "• none"
         )
         checks = (
             "<br>".join(
-                f"• {evidence.label} — {evidence.details}"
+                f"• {escape(str(evidence.label))} — {escape(str(evidence.details))}"
                 for evidence in hypothesis.recommended_checks[:3]
             )
             or "• none"
         )
         return (
-            f"<b>{hypothesis.title}</b><br>"
-            f"{hypothesis.summary}<br><br>"
+            f"<b>{escape(str(hypothesis.title))}</b><br>"
+            f"{escape(str(hypothesis.summary))}<br><br>"
             f"<b>Supporting evidence</b><br>{supporting}<br><br>"
             f"<b>Conflicts</b><br>{conflicts}<br><br>"
             f"<b>Next checks</b><br>{checks}"

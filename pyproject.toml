@@ -1,6 +1,6 @@
 [project]
 name = "ir-spectra-analyzer"
-version = "0.7.0"
+version = "0.24.0"
 description = "Professional desktop software for IR spectrum analysis and interpretation"
 requires-python = ">=3.11"
 
@@ -20,14 +20,14 @@ dependencies = [
 dev = [
     "pytest>=8.0.0",
     "pytest-qt>=4.4.0",
-    "ruff>=0.5.0",
-    "mypy>=1.10.0",
+    "ruff==0.16.1",
+    "mypy==1.10.0",
     "pre-commit>=3.7.0",
     "Pillow>=10.0.0",
     "pyinstaller>=6.0.0",
 ]
 
-[project.scripts]
+[project.gui-scripts]
 ir-spectra = "main:main"
 
 [build-system]
@@ -37,6 +37,10 @@ build-backend = "hatchling.build"
 [tool.hatch.build.targets.wheel]
 # Flat multi-module layout — tell hatchling which top-level dirs are packages.
 packages = ["app", "core", "file_io", "processing", "matching", "chemistry", "reporting", "ui", "storage", "utils"]
+
+[tool.hatch.build.targets.wheel.force-include]
+"main.py" = "main.py"
+"assets" = "assets"
 
 [tool.ruff]
 target-version = "py311"
@@ -49,14 +53,23 @@ ignore = ["E501"]
 [tool.ruff.lint.per-file-ignores]
 "tests/**" = ["S", "ANN"]
 "file_io/__init__.py" = ["A005"]
+"packaging/dmg_settings.py" = ["A001"]  # dmgbuild requires a module-level `format` setting
 # PyInstaller .spec files rely on runtime-injected globals (Analysis, PYZ, EXE,
 # COLLECT, SPECPATH). They are not valid Python modules on their own.
 "packaging/*.spec" = ["F821"]
 
 [tool.mypy]
+# Gradual but enforced baseline for the dynamic Qt/RDKit codebase. Tighten
+# individual rules only after their current findings have been resolved.
 python_version = "3.11"
-strict = true
 ignore_missing_imports = true
+check_untyped_defs = true
+no_implicit_optional = true
+strict_equality = true
+warn_redundant_casts = true
+warn_return_any = true
+warn_unused_configs = true
+warn_unused_ignores = true
 
 [tool.pytest.ini_options]
 testpaths = ["tests"]

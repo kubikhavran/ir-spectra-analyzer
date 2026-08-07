@@ -17,11 +17,23 @@ class SetProjectSMILESCommand(QUndoCommand):
         self._new_mol_block = new_mol_block
         self._old_smiles = project.smiles
         self._old_mol_block = project.mol_block
+        self._old_structure_image = project.structure_image
 
     def redo(self) -> None:
+        if (
+            self._project.smiles == self._new_smiles
+            and self._project.mol_block == self._new_mol_block
+            and not self._project.structure_image
+        ):
+            self.setObsolete(True)
+            return
         self._project.smiles = self._new_smiles
         self._project.mol_block = self._new_mol_block
+        # A legacy screenshot represents the previous structure and must not be
+        # exported after the user accepts a newly rendered SMILES/MOL block.
+        self._project.structure_image = b""
 
     def undo(self) -> None:
         self._project.smiles = self._old_smiles
         self._project.mol_block = self._old_mol_block
+        self._project.structure_image = self._old_structure_image

@@ -22,12 +22,12 @@ sys.path.insert(0, str(PROJECT_ROOT))
 
 os.environ.setdefault("QT_QPA_PLATFORM", "xcb" if sys.platform == "linux" else "")
 
-from PySide6.QtCore import Qt, QTimer
-from PySide6.QtTest import QTest
-from PySide6.QtWidgets import QApplication
+from PySide6.QtCore import Qt, QTimer  # noqa: E402
+from PySide6.QtTest import QTest  # noqa: E402
+from PySide6.QtWidgets import QApplication  # noqa: E402
 
 # ── Bootstrap so app-level imports work ──────────────────────────────────────
-from app.runtime_imports import install_project_imports
+from app.runtime_imports import install_project_imports  # noqa: E402
 
 install_project_imports()
 
@@ -135,8 +135,6 @@ def run_qa() -> None:
     print("\n[5] Detect Peaks on FER60-SE.SPA")
     win._load_spectrum(str(LIBRARY / "FER60-SE.SPA"))
     app.processEvents()
-    before = len(win._project.peaks) if win._project else 0
-
     win._on_detect_peaks()
     app.processEvents()
     after = len(win._project.peaks) if win._project else 0
@@ -200,7 +198,6 @@ def run_qa() -> None:
 
     # ── Step 8: Undo (Ctrl+Z) ─────────────────────────────────────────────────
     print("\n[8] Undo last action (Ctrl+Z)")
-    count_before_undo = len(win._project.peaks) if win._project else 0
     QTest.keyClick(win, Qt.Key.Key_Z, Qt.KeyboardModifier.ControlModifier)
     app.processEvents()
     shot(app, "08_after_undo", win)

@@ -34,7 +34,7 @@ class _AspectSvgWidget(QWidget):
     def load(self, data: QByteArray) -> bool:
         ok = self._renderer.load(data)
         self.update()
-        return ok
+        return bool(ok)
 
     def paintEvent(self, event) -> None:  # noqa: N802
         if not self._renderer.isValid():
@@ -68,6 +68,7 @@ class MoleculeWidget(QWidget):
         self._current_smiles: str = ""
         self._current_mol_block: str = ""
         self._current_svg: str = ""
+        self._current_image_bytes: bytes = b""
 
         layout = QVBoxLayout(self)
         layout.setContentsMargins(4, 4, 4, 4)
@@ -78,7 +79,7 @@ class MoleculeWidget(QWidget):
         self._svg_widget.setMinimumSize(200, 160)
         self._svg_widget.setSizePolicy(QSizePolicy.Policy.Expanding, QSizePolicy.Policy.Expanding)
         self._svg_widget.setStyleSheet("background: white; border: 1px solid #ccc;")
-        self._svg_widget.mouseDoubleClickEvent = lambda _e: self._open_editor()  # type: ignore[method-assign]
+        self._svg_widget.mouseDoubleClickEvent = lambda _e: self._open_editor()
         layout.addWidget(self._svg_widget)
 
         # Placeholder — shown when no structure is set or structure is invalid
@@ -99,6 +100,7 @@ class MoleculeWidget(QWidget):
     def set_smiles(self, smiles: str) -> None:
         self._current_smiles = smiles
         self._current_mol_block = ""
+        self._current_image_bytes = b""
         if not smiles:
             self._show_placeholder("No structure assigned")
             return
@@ -111,23 +113,29 @@ class MoleculeWidget(QWidget):
     def set_structure(self, smiles: str, mol_block: str = "", image_bytes: bytes = b"") -> None:
         self._current_smiles = smiles
         self._current_mol_block = mol_block
+        self._current_image_bytes = bytes(image_bytes or b"")
         if not smiles and not mol_block:
+            if self._display_legacy_image(self._current_image_bytes):
+                return
             self._show_placeholder("No structure assigned")
             return
         svg = render_to_svg(smiles=smiles, mol_block=mol_block)
         if svg:
             self._display_svg(svg)
+        elif self._display_legacy_image(self._current_image_bytes):
+            return
         else:
             self._show_placeholder("No structure assigned")
 
     def text(self) -> str:
         if not self._current_svg:
-            return self._placeholder.text()
+            return str(self._placeholder.text())
         return ""
 
     def pixmap(self) -> QPixmap:
         if not self._current_svg:
-            return QPixmap()
+            legacy = self._placeholder.pixmap()
+            return QPixmap(legacy) if legacy is not None else QPixmap()
         renderer = QSvgRenderer(QByteArray(self._current_svg.encode()))
         if not renderer.isValid():
             return QPixmap()
@@ -141,15 +149,38 @@ class MoleculeWidget(QWidget):
 
     def _display_svg(self, svg_str: str) -> None:
         self._current_svg = svg_str
+        self._placeholder.setPixmap(QPixmap())
         self._svg_widget.load(QByteArray(svg_str.encode()))
         self._svg_widget.setVisible(True)
         self._placeholder.setVisible(False)
 
     def _show_placeholder(self, text: str) -> None:
         self._current_svg = ""
+        self._current_image_bytes = b""
+        self._placeholder.setPixmap(QPixmap())
         self._placeholder.setText(text)
         self._svg_widget.setVisible(False)
         self._placeholder.setVisible(True)
+
+    def _display_legacy_image(self, image_bytes: bytes) -> bool:
+        """Display a PNG/JPEG stored by older project versions as a fallback."""
+        if not image_bytes:
+            return False
+        image = QImage.fromData(image_bytes)
+        if image.isNull():
+            return False
+        self._current_svg = ""
+        self._svg_widget.setVisible(False)
+        self._placeholder.setText("")
+        self._placeholder.setPixmap(
+            QPixmap.fromImage(image).scaled(
+                self._placeholder.size(),
+                Qt.AspectRatioMode.KeepAspectRatio,
+                Qt.TransformationMode.SmoothTransformation,
+            )
+        )
+        self._placeholder.setVisible(True)
+        return True
 
     def _open_editor(self) -> None:
         from ui.dialogs.molecule_editor_dialog import MoleculeEditorDialog  # noqa: PLC0415
@@ -166,6 +197,7 @@ class MoleculeWidget(QWidget):
             if changed:
                 self._current_smiles = new_smiles
                 self._current_mol_block = new_mol_block
+                self._current_image_bytes = b""
                 if new_smiles or new_mol_block:
                     svg = render_to_svg(smiles=new_smiles, mol_block=new_mol_block)
                     if svg:

@@ -44,10 +44,13 @@ class MetadataPanel(QWidget):
         self._instrument_edit.textChanged.connect(self._on_editable_fields_changed)
         self._date_label = QLabel()
         self._client_label = QLabel()
+        self._client_label.setTextFormat(Qt.TextFormat.PlainText)
         self._client_label.setTextInteractionFlags(Qt.TextInteractionFlag.TextSelectableByMouse)
         self._order_label = QLabel()
+        self._order_label.setTextFormat(Qt.TextFormat.PlainText)
         self._order_label.setTextInteractionFlags(Qt.TextInteractionFlag.TextSelectableByMouse)
         self._comment_label = QLabel()
+        self._comment_label.setTextFormat(Qt.TextFormat.PlainText)
         self._comment_label.setWordWrap(True)
         self._comment_label.setTextInteractionFlags(Qt.TextInteractionFlag.TextSelectableByMouse)
 

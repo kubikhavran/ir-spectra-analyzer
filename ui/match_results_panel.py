@@ -36,7 +36,6 @@ SKELETON_LEAD_PP = 10.0
 
 # Hover preview size in logical pixels, and the device ratio its PNG is drawn at.
 PREVIEW_DISPLAY_PX = 220
-PREVIEW_DEVICE_RATIO = 2
 
 
 class MatchResultsPanel(QWidget):
@@ -73,7 +72,7 @@ class MatchResultsPanel(QWidget):
 
     def name_filter(self) -> str:
         """Return the current name-substring filter for scoping the library search."""
-        return self._name_filter_edit.text().strip()
+        return str(self._name_filter_edit.text()).strip()
 
     def selected_result(self):
         """Return the currently selected MatchResult, or None."""
@@ -109,6 +108,7 @@ class MatchResultsPanel(QWidget):
 
         header = QHBoxLayout()
         self._status_label = QLabel("No results")
+        self._status_label.setTextFormat(Qt.TextFormat.PlainText)
         self._status_label.setStyleSheet("color: gray; font-size: 9pt;")
         self._status_label.setToolTip(
             "Similarity score is an internal spectral metric "
@@ -157,6 +157,7 @@ class MatchResultsPanel(QWidget):
         # Which bands the sample and the selected reference do not share — the
         # evidence behind a "same skeleton, different group" reading.
         self._difference_label = QLabel("")
+        self._difference_label.setTextFormat(Qt.TextFormat.PlainText)
         self._difference_label.setWordWrap(True)
         self._difference_label.setStyleSheet("color: #444; font-size: 9pt;")
         self._difference_label.setToolTip(
@@ -298,7 +299,7 @@ class MatchResultsPanel(QWidget):
         """Hide the preview as soon as the pointer leaves the list."""
         if event.type() == QEvent.Type.Leave and watched is self._list.viewport():
             self._hide_structure_preview()
-        return super().eventFilter(watched, event)
+        return bool(super().eventFilter(watched, event))
 
     def hideEvent(self, event: QHideEvent) -> None:  # noqa: N802
         """Never leave a preview floating over the app when the panel goes away."""
@@ -330,8 +331,8 @@ class MatchResultsPanel(QWidget):
         popup = self._ensure_preview_popup()
         popup.setPixmap(
             pixmap.scaled(
-                220,
-                220,
+                PREVIEW_DISPLAY_PX,
+                PREVIEW_DISPLAY_PX,
                 Qt.AspectRatioMode.KeepAspectRatio,
                 Qt.TransformationMode.SmoothTransformation,
             )
@@ -340,24 +341,6 @@ class MatchResultsPanel(QWidget):
         self._preview_name = name
         self._move_preview_to_cursor()
         popup.show()
-
-    @staticmethod
-    def _fit_preview(pixmap: QPixmap) -> QPixmap:
-        """Cap the preview at its display size and mark it as a 2x HiDPI image.
-
-        The provider already rasterises at exactly this size, so the scale step
-        normally does nothing — it only guards against an oversized image.
-        """
-        pixels = PREVIEW_DISPLAY_PX * PREVIEW_DEVICE_RATIO
-        if pixmap.width() > pixels or pixmap.height() > pixels:
-            pixmap = pixmap.scaled(
-                pixels,
-                pixels,
-                Qt.AspectRatioMode.KeepAspectRatio,
-                Qt.TransformationMode.SmoothTransformation,
-            )
-        pixmap.setDevicePixelRatio(float(PREVIEW_DEVICE_RATIO))
-        return pixmap
 
     def _ensure_preview_popup(self) -> QLabel:
         """Create the floating preview window on first use."""
