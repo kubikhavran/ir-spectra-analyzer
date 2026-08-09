@@ -124,6 +124,16 @@ def _sorted_absorption_signal(spectrum: Spectrum) -> tuple[np.ndarray, np.ndarra
         wn = wn[::-1]
         signal = signal[::-1]
 
+    # Blanked regions (NaN) would propagate through every percentile and through
+    # the Savitzky-Golay filter. Bridge them linearly: a straight segment cannot
+    # invent a band, so the affected ranges simply score as "nothing detected",
+    # which is the honest reading of data the instrument never recorded.
+    if not np.all(np.isfinite(signal)):
+        finite = np.isfinite(signal)
+        if finite.sum() < 2:
+            return wn, np.zeros_like(signal)
+        signal = np.interp(wn, wn[finite], signal[finite])
+
     if spectrum.is_dip_spectrum:
         baseline = float(np.percentile(signal, 95))
         signal = baseline - signal

@@ -566,6 +566,12 @@ def test_real_substituent_pair_reaches_the_top_of_the_hit_list():
     names = [result.name for result in results]
     assert "PAR1507-MK" in names[:3], f"expected the pair near the top, got {names[:5]}"
     target = next(result for result in results if result.name == "PAR1507-MK")
-    # The skeleton agrees far better than the whole spectrum — the swap signature.
+    # The skeleton agrees better than the whole spectrum — the swap signature.
     assert target.fingerprint_score > 0.85
-    assert target.fingerprint_score - target.score > 0.10
+    # The margin used to read ~0.20 only because out-of-range grid points were
+    # filled with a numeric zero: PAR1706-HA stops at 3800 cm^-1 while
+    # PAR1507-MK reaches 4000, so the whole-spectrum score was pushed down by
+    # that artificial edge rather than by chemistry.  With the edge-hold fill
+    # the whole-spectrum score is no longer penalised and the honest margin is
+    # around 0.08.
+    assert target.fingerprint_score - target.score > 0.05

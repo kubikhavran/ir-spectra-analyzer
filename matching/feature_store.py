@@ -13,7 +13,13 @@ SEARCH_GRID = np.arange(400.0, 4001.0, 8.0, dtype=np.float64)
 RERANK_GRID = STANDARD_GRID
 # Bumped to 2 in v0.22.0: compressed intensities, broadened bands, and no
 # derivative channel. Stored vectors from version 1 are simply recomputed.
-MATCH_FEATURE_VERSION = 2
+# Bumped to 3 when resampling stopped filling out-of-range points with a
+# numeric zero. Every spectrum is affected — the shared grid starts at
+# 400 cm^-1 and instruments start just above it — so a version-2 vector cached
+# by an older build is not comparable with one computed now. Without this bump
+# those cached vectors would keep being reused against freshly preprocessed
+# queries.
+MATCH_FEATURE_VERSION = 3
 
 
 def compute_search_vector(

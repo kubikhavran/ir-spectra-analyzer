@@ -13,6 +13,7 @@ from __future__ import annotations
 
 import os
 import sys
+import tempfile
 import time
 from pathlib import Path
 
@@ -83,7 +84,10 @@ def run_qa() -> None:
     app = QApplication.instance() or QApplication(sys.argv)
     db = Database(":memory:")
     db.initialize()
-    settings = Settings()
+    # Settings() defaults to the real ~/.ir-spectra-analyzer/settings.json, and
+    # the QA run opens files — without an isolated path it would rewrite the
+    # user's own recent-files list.
+    settings = Settings(Path(tempfile.mkdtemp(prefix="ir-qa-")) / "settings.json")
     win = MainWindow(db=db, settings=settings)
     win.resize(1400, 850)
     win.show()
@@ -151,7 +155,9 @@ def run_qa() -> None:
         mid_wn = float((spectrum.wavenumbers[0] + spectrum.wavenumbers[-1]) / 2)
         mid_intensity = float(np.interp(mid_wn, spectrum.wavenumbers, spectrum.intensities))
         peaks_before = len(win._project.peaks)
-        win._on_peak_clicked(mid_wn, mid_intensity)
+        # click_y is the cursor's y position; clicking exactly on the trace
+        # means the label keeps a zero vertical offset.
+        win._on_peak_clicked(mid_wn, mid_intensity, mid_intensity)
         app.processEvents()
         peaks_after = len(win._project.peaks)
         check(

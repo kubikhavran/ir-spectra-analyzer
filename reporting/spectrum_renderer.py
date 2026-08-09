@@ -68,6 +68,18 @@ _ANNOTATION_TARGET = (0.26, 0.40)
 _ANNOTATION_Y_EXPANSIONS = (1.0, 1.15, 1.30)
 
 
+def _finite_y_span(intensities: np.ndarray) -> float:
+    """Peak-to-peak height of the measured points.
+
+    Blanked regions arrive as NaN, and a plain ``np.ptp`` would return NaN,
+    which then poisons every label placement derived from the span.
+    """
+    finite = intensities[np.isfinite(intensities)]
+    if finite.size == 0:
+        return 1.0
+    return float(np.ptp(finite)) or 1.0
+
+
 class SpectrumRenderer:
     """Renders IR spectrum as a static Matplotlib figure for PDF embedding."""
 
@@ -326,9 +338,7 @@ class SpectrumRenderer:
         # For dip-type spectra (%T) the line goes DOWN from the apex and the
         # label sits below, matching the live PyQtGraph viewer behaviour.
         if peaks:
-            data_y_span = float(np.ptp(intensities))
-            if data_y_span == 0:
-                data_y_span = 1.0
+            data_y_span = _finite_y_span(intensities)
 
             for peak in peaks:
                 label_x, label_y = self._resolve_label_position(
@@ -568,9 +578,7 @@ class SpectrumRenderer:
 
         # --- Peak annotations distributed to correct panel ---
         if peaks:
-            data_y_span = float(np.ptp(intensities))
-            if data_y_span == 0:
-                data_y_span = 1.0
+            data_y_span = _finite_y_span(intensities)
 
             for peak in peaks:
                 target_ax = ax_hi if peak.position > split_at else ax_lo
@@ -757,8 +765,13 @@ class SpectrumRenderer:
 
         visible_mask = (wavenumbers >= x_min) & (wavenumbers <= x_max)
         visible_y = intensities[visible_mask] if visible_mask.any() else intensities
-        y_min = float(np.min(visible_y))
-        y_max = float(np.max(visible_y))
+        # Blanked regions arrive as NaN; matplotlib renders them as gaps but
+        # cannot be given NaN axis limits.
+        finite_y = visible_y[np.isfinite(visible_y)]
+        if len(finite_y) == 0:
+            return (0.0, 1.0)
+        y_min = float(np.min(finite_y))
+        y_max = float(np.max(finite_y))
         data_y_span = max(y_max - y_min, 1e-9)
 
         visible_peaks = [peak for peak in peaks if x_min <= peak.position <= x_max]
@@ -972,7 +985,7 @@ class SpectrumRenderer:
 
         fig_w_pt = fig.get_figwidth() * 72.0
         fig_h_pt = fig.get_figheight() * 72.0
-        data_y_span = float(np.ptp(intensities)) or 1.0
+        data_y_span = _finite_y_span(intensities)
 
         def _col(fx: float) -> int:
             return int(np.clip((fx - reg_x0) / cell_w, 0, _GRID_NX - 1))
@@ -989,7 +1002,9 @@ class SpectrumRenderer:
             x_geometry = (float(pos.x0), float(pos.width), x_lo, x_hi)
             y_geometry = (float(pos.y0), float(pos.height), y_lo, y_hi)
 
-            in_panel = (wavenumbers >= x_lo) & (wavenumbers <= x_hi)
+            # Blanked points carry no curve to avoid, and casting their NaN to a
+            # grid index would mark an arbitrary cell as occupied.
+            in_panel = (wavenumbers >= x_lo) & (wavenumbers <= x_hi) & np.isfinite(intensities)
             if in_panel.any():
                 cols = np.clip(
                     (

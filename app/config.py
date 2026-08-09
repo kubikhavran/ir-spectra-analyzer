@@ -12,7 +12,7 @@ from __future__ import annotations
 from pathlib import Path
 
 APP_NAME = "IR Spectra Analyzer"
-APP_VERSION = "0.24.0"
+APP_VERSION = "0.25.0"
 ORG_NAME = "IRSpectra"
 
 # Default spectrometer model pre-filled into the editable "Instrument" metadata

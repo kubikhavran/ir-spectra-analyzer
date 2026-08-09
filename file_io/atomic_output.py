@@ -9,6 +9,24 @@ from contextlib import contextmanager
 from pathlib import Path
 
 
+def _default_file_mode() -> int:
+    """Permissions a normally created file would get under the process umask.
+
+    ``tempfile.mkstemp`` deliberately creates its file as 0600, and
+    ``os.replace`` carries that mode onto the destination.  Exports are meant to
+    be opened and shared like any other document, so the umask default is
+    restored rather than silently narrowed.  Read once at import: querying the
+    umask means temporarily clearing it, which must not race with file creation
+    on the worker threads that run exports.
+    """
+    current = os.umask(0)
+    os.umask(current)
+    return 0o666 & ~current
+
+
+_DEFAULT_FILE_MODE = _default_file_mode()
+
+
 @contextmanager
 def atomic_output_path(output_path: str | Path) -> Iterator[Path]:
     """Yield a temporary sibling and replace ``output_path`` only after success.
@@ -25,6 +43,18 @@ def atomic_output_path(output_path: str | Path) -> Iterator[Path]:
     )
     os.close(fd)
     temp_path = Path(raw_temp_path)
+    # Overwriting keeps whatever the user set on the existing file; a new file
+    # gets the usual umask default instead of mkstemp's private 0600.
+    try:
+        replacement_mode = destination.stat().st_mode & 0o777
+    except OSError:
+        replacement_mode = _DEFAULT_FILE_MODE
+    try:
+        os.chmod(temp_path, replacement_mode)
+    except OSError:
+        # Windows exposes only the read-only bit; a failure here must not stop
+        # the export.
+        pass
     try:
         yield temp_path
         # Windows requires a writable descriptor for ``fsync``.

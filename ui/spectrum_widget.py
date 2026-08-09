@@ -125,6 +125,19 @@ _SPLIT_HI_FRAC = 35  # width fraction for hi-wavenumber panel (2000–3800)
 _SPLIT_LO_FRAC = 65  # width fraction for fingerprint panel (400–2000)
 
 
+def _finite_y_span(intensities: np.ndarray) -> float:
+    """Peak-to-peak height of the measured points.
+
+    Blanked regions arrive as NaN. A plain ``np.ptp`` would return NaN, and
+    every label offset derived from it would land at NaN coordinates — the
+    labels then silently vanish from the plot.
+    """
+    finite = intensities[np.isfinite(intensities)]
+    if finite.size == 0:
+        return 1.0
+    return float(np.ptp(finite)) or 1.0
+
+
 class _DraggableLabel(pg.TextItem):
     """TextItem with a live OMNIC-style leader line.
 
@@ -429,6 +442,7 @@ class SpectrumWidget(QWidget):
                 self._spectrum_curve_fp.setData(
                     x=self._spectrum.wavenumbers,
                     y=self._spectrum.intensities,
+                    connect="finite",
                 )
             self.set_peaks(self._peaks)
             self._redraw_overlays()
@@ -586,14 +600,20 @@ class SpectrumWidget(QWidget):
                 while zoomed in does not snap the graph back to the full range.
         """
         self._spectrum = spectrum
-        self._spectrum_curve.setData(x=spectrum.wavenumbers, y=spectrum.intensities)
+        # "finite" leaves a gap wherever the source blanked a region instead of
+        # drawing a straight line across the missing data.
+        self._spectrum_curve.setData(
+            x=spectrum.wavenumbers, y=spectrum.intensities, connect="finite"
+        )
 
         # Update Y-axis label from spectrum unit
         label_style = {"color": "#000000", "font-size": "10pt"}
         self._plot_widget.setLabel("left", spectrum.display_y_unit.value, **label_style)
 
         if self._split_mode and self._spectrum_curve_fp is not None:
-            self._spectrum_curve_fp.setData(x=spectrum.wavenumbers, y=spectrum.intensities)
+            self._spectrum_curve_fp.setData(
+                x=spectrum.wavenumbers, y=spectrum.intensities, connect="finite"
+            )
 
         if not preserve_view:
             self.reset_view()
@@ -629,6 +649,9 @@ class SpectrumWidget(QWidget):
         # Fit Y only to data within the visible x window
         mask = (wn >= x_lo) & (wn <= x_hi)
         visible_y = iy[mask] if mask.any() else iy
+        # OMNIC blanks the regions where a solvent absorbs completely and writes
+        # them as NaN; those points must not decide the axis range.
+        visible_y = visible_y[np.isfinite(visible_y)]
         if len(visible_y) == 0:
             return
 
@@ -726,10 +749,8 @@ class SpectrumWidget(QWidget):
 
         # Initial label offset: 6 % of y-range, direction depends on peak orientation
         if self._spectrum is not None:
-            y_span = float(np.ptp(self._spectrum.intensities))
+            y_span = _finite_y_span(self._spectrum.intensities)
         else:
-            y_span = 1.0
-        if y_span == 0:
             y_span = 1.0
 
         if self._split_mode and self._fp_plot_widget is not None:
@@ -767,7 +788,7 @@ class SpectrumWidget(QWidget):
         x_range, y_range = vb.viewRange()
         x_min, x_max = float(min(x_range)), float(max(x_range))
         y_min, y_max = float(min(y_range)), float(max(y_range))
-        spectrum_y_span = float(np.ptp(self._spectrum.intensities)) or 1.0
+        spectrum_y_span = _finite_y_span(self._spectrum.intensities)
         peaks_are_dips = self._spectrum.is_dip_spectrum
         direction = -1.0 if peaks_are_dips else 1.0
         view_y_span = max(y_max - y_min, 1e-6)
@@ -1067,6 +1088,9 @@ class SpectrumWidget(QWidget):
         x0, x1, y0, y1 = rect
         sample_x = np.linspace(x0, x1, 12)
         curve_y = np.array([self._intensity_at(x) for x in sample_x], dtype=float)
+        curve_y = curve_y[np.isfinite(curve_y)]
+        if len(curve_y) == 0:
+            return False
         if peaks_are_dips:
             return y1 >= float(np.min(curve_y)) - clearance
         return y0 <= float(np.max(curve_y)) + clearance

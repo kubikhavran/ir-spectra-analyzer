@@ -11,6 +11,11 @@ from __future__ import annotations
 
 import numpy as np
 
+# NumPy removed ``np.trapz`` in 2.0 and the project's floor still allows 1.26,
+# so integrate through SciPy, which spells it the same way on every supported
+# version.
+from scipy.integrate import trapezoid
+
 
 def minmax_normalize(intensities: np.ndarray) -> np.ndarray:
     """Normalize intensities to [0, 1] range."""
@@ -30,7 +35,7 @@ def peak_normalize(intensities: np.ndarray) -> np.ndarray:
 
 def area_normalize(wavenumbers: np.ndarray, intensities: np.ndarray) -> np.ndarray:
     """Normalize so that spectral area (trapezoid integral) = 1."""
-    area = float(np.trapz(intensities, wavenumbers))
+    area = float(trapezoid(intensities, wavenumbers))
     if area == 0:
         return intensities.copy()
     return intensities / abs(area)

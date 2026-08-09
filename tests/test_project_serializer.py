@@ -313,13 +313,18 @@ def test_project_serializer_failed_save_preserves_existing_file(tmp_path, monkey
     assert not list(tmp_path.glob("*.tmp*"))
 
 
-def test_project_serializer_rejects_nonfinite_values_during_atomic_save(tmp_path):
+def test_project_serializer_rejects_infinite_values_during_atomic_save(tmp_path):
+    """Infinity is corrupt data and must not overwrite a good file.
+
+    NaN is deliberately *not* covered here: it marks a blanked region and is
+    written as JSON ``null`` — see tests/test_blanked_regions.py.
+    """
     project = _make_project()
     serializer = ProjectSerializer()
     file_path = tmp_path / "finite.irproj"
     serializer.save(project, file_path)
     original = file_path.read_bytes()
-    project.spectrum.intensities[0] = float("nan")
+    project.spectrum.intensities[0] = float("inf")
 
     with pytest.raises(ValueError, match="JSON compliant"):
         serializer.save(project, file_path)

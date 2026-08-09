@@ -156,15 +156,17 @@ def test_rubber_band_upper_vs_lower_direction():
 # ---------------------------------------------------------------------------
 
 
-def test_on_correct_baseline_uses_upper_hull_for_transmittance(qtbot):
+def test_on_correct_baseline_uses_upper_hull_for_transmittance(qtbot, tmp_path):
     """_on_correct_baseline selects upper=True automatically for %T spectra."""
     from storage.database import Database
     from storage.settings import Settings
     from ui.main_window import MainWindow
 
-    db = Database()
+    # Never touch the real ~/.ir-spectra-analyzer data — Database() and
+    # Settings() both default to the user's own files.
+    db = Database(tmp_path / "projects.db")
     db.initialize()
-    settings = Settings()
+    settings = Settings(tmp_path / "settings.json")
     settings.load()
     win = MainWindow(db=db, settings=settings)
     qtbot.addWidget(win)
@@ -196,7 +198,7 @@ def test_on_correct_baseline_uses_upper_hull_for_transmittance(qtbot):
     assert win._project.corrected_spectrum.y_unit == SpectralUnit.BASELINE_CORRECTED
 
 
-def test_on_correct_baseline_absorbance_also_gets_baseline_corrected_unit(qtbot):
+def test_on_correct_baseline_absorbance_also_gets_baseline_corrected_unit(qtbot, tmp_path):
     """Baseline-corrected Absorbance spectrum also carries BASELINE_CORRECTED unit."""
     from core.project import Project
     from core.spectrum import SpectralUnit, Spectrum
@@ -204,9 +206,11 @@ def test_on_correct_baseline_absorbance_also_gets_baseline_corrected_unit(qtbot)
     from storage.settings import Settings
     from ui.main_window import MainWindow
 
-    db = Database()
+    # Never touch the real ~/.ir-spectra-analyzer data — Database() and
+    # Settings() both default to the user's own files.
+    db = Database(tmp_path / "projects.db")
     db.initialize()
-    settings = Settings()
+    settings = Settings(tmp_path / "settings.json")
     settings.load()
     win = MainWindow(db=db, settings=settings)
     qtbot.addWidget(win)
@@ -296,7 +300,7 @@ def test_spectrum_widget_label_changes_to_baseline_corrected(qtbot):
     assert "Baseline Corrected" in label_text
 
 
-def test_detect_peaks_uses_high_prominence_for_baseline_corrected(qtbot):
+def test_detect_peaks_uses_high_prominence_for_baseline_corrected(qtbot, tmp_path):
     """Peak detection uses prominence=1.0 for BASELINE_CORRECTED spectra (not 0.01).
 
     A corrected %T signal spans 0–100, so prominence=0.01 would return thousands
@@ -306,9 +310,11 @@ def test_detect_peaks_uses_high_prominence_for_baseline_corrected(qtbot):
     from storage.settings import Settings
     from ui.main_window import MainWindow
 
-    db = Database()
+    # Never touch the real ~/.ir-spectra-analyzer data — Database() and
+    # Settings() both default to the user's own files.
+    db = Database(tmp_path / "projects.db")
     db.initialize()
-    settings = Settings()
+    settings = Settings(tmp_path / "settings.json")
     settings.load()
     win = MainWindow(db=db, settings=settings)
     qtbot.addWidget(win)

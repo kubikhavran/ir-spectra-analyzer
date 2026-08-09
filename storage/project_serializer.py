@@ -5,6 +5,7 @@ from __future__ import annotations
 import base64
 import binascii
 import json
+import math
 from datetime import datetime
 from pathlib import Path
 from typing import Any
@@ -126,10 +127,23 @@ class ProjectSerializer:
         return project
 
     @staticmethod
+    def _intensities_to_json(intensities: np.ndarray) -> list[Any]:
+        """Serialise intensities, mapping blanked points to JSON ``null``.
+
+        OMNIC writes NaN where a region was blanked because the solvent absorbs
+        completely. JSON has no NaN literal and the writer runs with
+        ``allow_nan=False`` to keep the file standards-compliant, so those points
+        travel as ``null`` and come back as NaN. Infinities are left untouched so
+        that genuinely corrupt data still fails the write.
+        """
+        values = intensities.tolist()
+        return [None if isinstance(v, float) and math.isnan(v) else v for v in values]
+
+    @staticmethod
     def _spectrum_to_dict(spectrum: Spectrum) -> dict[str, Any]:
         return {
             "wavenumbers": spectrum.wavenumbers.tolist(),
-            "intensities": spectrum.intensities.tolist(),
+            "intensities": ProjectSerializer._intensities_to_json(spectrum.intensities),
             "title": spectrum.title,
             "source_path": str(spectrum.source_path) if spectrum.source_path is not None else None,
             "acquired_at": spectrum.acquired_at.isoformat() if spectrum.acquired_at else None,
@@ -156,8 +170,12 @@ class ProjectSerializer:
             raise ValueError("Spectrum wavenumbers and intensities shape mismatch")
         if wavenumbers.ndim != 1:
             raise ValueError("Spectrum arrays must be one-dimensional")
-        if not np.all(np.isfinite(wavenumbers)) or not np.all(np.isfinite(intensities)):
-            raise ValueError("Spectrum arrays must contain only finite values")
+        if not np.all(np.isfinite(wavenumbers)):
+            raise ValueError("Spectrum wavenumbers must contain only finite values")
+        # NaN intensities are legitimate — they mark blanked regions, and JSON
+        # ``null`` decodes straight to NaN here. Infinities remain a hard error.
+        if np.isinf(intensities).any():
+            raise ValueError("Spectrum intensities must not contain infinite values")
 
         extra_metadata = data.get("extra_metadata", {})
         if extra_metadata is None:
