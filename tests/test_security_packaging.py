@@ -45,12 +45,14 @@ def test_application_open_path_routes_through_controller_api() -> None:
     opened: list[str] = []
 
     class _Window:
+        _project = None  # an empty window is reused instead of spawning another
+
         @staticmethod
         def _open_recent_path(path: str) -> None:
             opened.append(path)
 
     controller = Application()
-    controller._main_window = _Window()
+    controller._windows.append(_Window())
     controller.open_path(ROOT / "sample.irproj")
 
     assert opened == [str(ROOT / "sample.irproj")]

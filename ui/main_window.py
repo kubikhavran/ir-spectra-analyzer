@@ -18,7 +18,7 @@ from datetime import datetime
 from pathlib import Path
 from typing import TYPE_CHECKING
 
-from PySide6.QtCore import QMetaObject, Qt, QThread
+from PySide6.QtCore import QMetaObject, Qt, QThread, Signal
 from PySide6.QtGui import QKeySequence, QShortcut, QUndoStack
 from PySide6.QtWidgets import (
     QApplication,
@@ -54,7 +54,17 @@ if TYPE_CHECKING:
 
 
 class MainWindow(QMainWindow):
-    """Main application window with dockable analysis panels."""
+    """Main application window with dockable analysis panels.
+
+    One window owns exactly one project. Several windows may run side by side —
+    they share the database and the settings object, but every piece of document
+    state (project, file path, undo stack, unsaved-change flag, match results)
+    belongs to the window, so saving in one never touches another.
+    """
+
+    #: Asks the controller for another independent window. MainWindow does not
+    #: create windows itself — Application owns their lifetime.
+    new_window_requested = Signal()
 
     _MATCH_RESULTS_LIMIT = 20
     _ASSIGNMENT_TRANSFER_TOLERANCE = 8.0  # cm⁻¹ window for copying assignments
@@ -110,6 +120,14 @@ class MainWindow(QMainWindow):
         menu_bar = self.menuBar()
 
         file_menu = menu_bar.addMenu("&File")
+        new_window_action = file_menu.addAction("New &Window")
+        new_window_action.setShortcut("Ctrl+Shift+N")
+        new_window_action.setToolTip(
+            "Open a second workspace so another spectrum or project can stay open alongside this one"
+        )
+        new_window_action.triggered.connect(self.new_window_requested)
+        file_menu.addSeparator()
+
         open_action = file_menu.addAction("&Open SPA...")
         open_action.setShortcut("Ctrl+O")
         open_action.triggered.connect(self._on_open_file)
@@ -122,6 +140,9 @@ class MainWindow(QMainWindow):
         save_project_action.triggered.connect(self._on_save_project)
 
         self._recent_menu = file_menu.addMenu("Open &Recent")
+        # Rebuilt on every open: the list lives in the shared settings, so a file
+        # opened in another window has to show up here too.
+        self._recent_menu.aboutToShow.connect(self._rebuild_recent_menu)
         self._rebuild_recent_menu()
         file_menu.addSeparator()
         exit_action = file_menu.addAction("E&xit")

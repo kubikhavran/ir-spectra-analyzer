@@ -286,6 +286,7 @@ class PDFGenerator:
                 x_min=_x_min,
                 x_max=_x_max,
                 font_bold=font_b,
+                font_regular=font_r,
             )
             # The page is painted entirely by the template callback; the frame
             # only needs to exist so ReportLab emits the page.
@@ -430,6 +431,7 @@ class PDFGenerator:
         x_min: float,
         x_max: float,
         font_bold: str,
+        font_regular: str,
     ) -> Callable[[Canvas, object], None]:
         """Render the edge-to-edge spectrum page and return its canvas painter.
 
@@ -439,6 +441,7 @@ class PDFGenerator:
         """
         sample_name, file_name = self._header_identifiers(project, spectrum)
         file_name = self._without_spectrum_suffix(file_name)
+        method = self._measurement_method(project, spectrum)
         structure_png = self._structure_png_bytes(project, options, trim=True)
         # %T curves leave their gap under the baseline, absorbance above it.
         anchor_bottom = spectrum.is_dip_spectrum
@@ -483,9 +486,11 @@ class PDFGenerator:
                 height=(box[3] - box[1]) * page_h,
                 sample_name=sample_name,
                 file_name=file_name,
+                method=method,
                 structure_png=structure_png,
                 anchor_bottom=anchor_bottom,
                 font_bold=font_bold,
+                font_regular=font_regular,
             )
 
         return _paint
@@ -500,9 +505,11 @@ class PDFGenerator:
         height: float,
         sample_name: str,
         file_name: str,
+        method: str = "",
         structure_png: bytes | None,
         anchor_bottom: bool,
         font_bold: str,
+        font_regular: str,
     ) -> None:
         """Draw the identity lines above the structure inside a free area of the plot.
 
@@ -519,19 +526,31 @@ class PDFGenerator:
         lines = self._identity_lines(sample_name, file_name)
         text_h, text_w, text_size = self._identity_metrics(lines, avail_w, font_bold)
 
+        # The sampling description sits under the identifiers in a lighter,
+        # smaller style: it is context for the trace, not a second title.
+        method_size = method_h = method_w = 0.0
+        if method:
+            method_size = self._fit_font_size(
+                method, font_regular, text_size * self._METHOD_SIZE_RATIO, avail_w
+            )
+            method_h = method_size * 1.25 + self._METHOD_GAP
+            method_w = min(pdfmetrics.stringWidth(method, font_regular, method_size), avail_w)
+
+        header_h = text_h + method_h
+
         structure_w = structure_h = 0.0
         if structure_png is not None:
             img_w, img_h = self._png_size(structure_png)
             aspect = (img_h / img_w) if img_w else 1.0
-            structure_max_h = avail_h - text_h - pad
+            structure_max_h = avail_h - header_h - pad
             if structure_max_h > 24.0 and aspect > 0:
                 structure_w = min(avail_w, structure_max_h / aspect)
                 structure_h = structure_w * aspect
             else:
                 structure_png = None
 
-        content_w = max(structure_w, text_w)
-        content_h = text_h + (pad + structure_h if structure_png is not None else 0.0)
+        content_w = max(structure_w, text_w, method_w)
+        content_h = header_h + (pad + structure_h if structure_png is not None else 0.0)
         frame_w = content_w + 2 * pad
         frame_h = content_h + 2 * pad
         # Sit on the edge of the gap the renderer picked, so the block lands in
@@ -553,6 +572,14 @@ class PDFGenerator:
             size=text_size,
             font_name=font_bold,
         )
+        if method:
+            canvas.setFont(font_regular, method_size)
+            canvas.setFillColor(self._METHOD_COLOR)
+            canvas.drawString(
+                x + pad,
+                frame_y + frame_h - pad - text_h - method_size,
+                self._clip_text(method, font_regular, method_size, avail_w),
+            )
         if structure_png is not None:
             self._draw_structure(
                 canvas,
@@ -565,9 +592,10 @@ class PDFGenerator:
         canvas.restoreState()
 
     # Width the floating block asks for, as a fraction of the page, plus the
-    # vertical allowance for the two identity lines and the frame padding.
+    # vertical allowance for the two identity lines, the sampling-method line
+    # below them, and the frame padding.
     _BLOCK_TARGET_WIDTH = 0.26
-    _BLOCK_TEXT_ALLOWANCE = 40.0
+    _BLOCK_TEXT_ALLOWANCE = 52.0
 
     @classmethod
     def _annotation_target(cls, structure_png: bytes | None) -> tuple[float, float]:
@@ -622,11 +650,32 @@ class PDFGenerator:
     # uniform style so neither reads as more important than the other.
     _IDENTITY_FONT_SIZE = 11.5
     _MIN_FONT_SIZE = 6.0
+    # The sampling description is supporting information: smaller than the
+    # identifiers, set in the regular weight, grey rather than black.
+    _METHOD_SIZE_RATIO = 0.78
+    _METHOD_GAP = 3.0
+    _METHOD_COLOR = colors.HexColor("#4A4A4A")
 
     @staticmethod
     def _identity_lines(sample_name: str, file_name: str) -> list[str]:
         """Return the identity lines in display order, skipping empty values."""
         return [line for line in (file_name, sample_name) if line]
+
+    @staticmethod
+    def _measurement_method(project: Project, spectrum: Spectrum) -> str:
+        """How the sample was measured, e.g. ``CHCl3, film``.
+
+        OMNIC keeps the sampling description in the spectrum comment, and the
+        analyst may have overridden it in the metadata panel. Same source and
+        precedence as the Comment row of the portrait metadata table, so the two
+        pages can never disagree.
+        """
+        metadata = getattr(project, "metadata", None)
+        edited = (metadata.comments if metadata and metadata.comments else "") or ""
+        if edited.strip():
+            return " ".join(edited.split())
+        stored = str(spectrum.extra_metadata.get("omnic_comment", "") or "")
+        return " ".join(stored.split())
 
     @staticmethod
     def _without_spectrum_suffix(file_name: str) -> str:

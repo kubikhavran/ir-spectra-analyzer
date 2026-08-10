@@ -545,6 +545,7 @@ def test_full_bleed_page_draws_identity_and_structure() -> None:
         x_min=650.0,
         x_max=4000.0,
         font_bold="Helvetica-Bold",
+        font_regular="Helvetica",
     )
     canvas = _RecordingCanvas()
     canvas._pagesize = (841.89, 595.28)
@@ -557,6 +558,93 @@ def test_full_bleed_page_draws_identity_and_structure() -> None:
     assert len(drawn_images) == 2
     assert drawn_images[0] == pytest.approx((841.89, 595.28))
     assert 0 < drawn_images[1][0] < 841.89
+
+
+def test_measurement_method_prefers_the_analysts_edit_over_the_stored_comment() -> None:
+    """The metadata panel wins, exactly as it does for the Comment table row."""
+    from reporting.pdf_generator import PDFGenerator
+
+    spectrum = Spectrum(
+        wavenumbers=np.linspace(400.0, 4000.0, 10),
+        intensities=np.full(10, 99.0),
+        y_unit=SpectralUnit.TRANSMITTANCE,
+        extra_metadata={"omnic_comment": "CHCL3    0.095mm"},
+    )
+    project = Project(name="x", spectrum=spectrum)
+
+    # Nothing edited yet — the instrument's own description is used, with the
+    # padding OMNIC writes collapsed to single spaces.
+    assert PDFGenerator._measurement_method(project, spectrum) == "CHCL3 0.095mm"
+
+    project.metadata.comments = "CHCl3, film"
+    assert PDFGenerator._measurement_method(project, spectrum) == "CHCl3, film"
+
+
+def test_measurement_method_is_empty_when_nothing_recorded_it() -> None:
+    from reporting.pdf_generator import PDFGenerator
+
+    spectrum = Spectrum(
+        wavenumbers=np.linspace(400.0, 4000.0, 10),
+        intensities=np.full(10, 99.0),
+        y_unit=SpectralUnit.TRANSMITTANCE,
+    )
+
+    assert PDFGenerator._measurement_method(Project(name="x", spectrum=spectrum), spectrum) == ""
+
+
+def test_full_bleed_box_shows_the_sampling_method_below_the_identifiers() -> None:
+    """'CHCl3, film' belongs on the spectrum page, set apart from the two titles."""
+    from reporting.pdf_generator import LAYOUT_FULL_BLEED, PDFGenerator, ReportOptions
+
+    wn, ints, peaks = _banded_spectrum()
+    spectrum = Spectrum(
+        wavenumbers=wn,
+        intensities=ints,
+        y_unit=SpectralUnit.TRANSMITTANCE,
+        title="RAL01-Fi",
+        extra_metadata={"omnic_comment": "CHCl3, film"},
+    )
+    project = Project(name="RAL01-Fi", spectrum=spectrum)
+    project.peaks.extend(peaks)
+    project.metadata.title = "VR219FCH"
+    project.metadata.file_name = "RAL01-Fi.SPA"
+
+    drawn: list[tuple[str, tuple[str, float]]] = []
+
+    class _RecordingCanvas:
+        _pagesize = (841.89, 595.28)
+
+        def __init__(self) -> None:
+            self.font: tuple[str, float] = ("", 0.0)
+
+        def __getattr__(self, name):
+            def _noop(*args, **kwargs):
+                return None
+
+            return _noop
+
+        def setFont(self, name, size):  # noqa: N802
+            self.font = (name, size)
+
+        def drawString(self, x, y, text):  # noqa: N802
+            drawn.append((text, self.font))
+
+    painter = PDFGenerator()._build_full_bleed_first_page(
+        project,
+        spectrum,
+        ReportOptions(layout=LAYOUT_FULL_BLEED, dpi=72),
+        x_min=650.0,
+        x_max=4000.0,
+        font_bold="Helvetica-Bold",
+        font_regular="Helvetica",
+    )
+    painter(_RecordingCanvas(), None)
+
+    assert [entry[0] for entry in drawn] == ["RAL01-Fi", "VR219FCH", "CHCl3, film"]
+    identifier_font, identifier_size = drawn[0][1]
+    method_font, method_size = drawn[2][1]
+    assert method_font != identifier_font, "the method must not compete with the titles"
+    assert method_size < identifier_size
 
 
 def test_identity_line_only_strips_known_spectrum_extensions() -> None:
