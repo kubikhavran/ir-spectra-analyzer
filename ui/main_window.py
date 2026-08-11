@@ -14,6 +14,7 @@ Architektonické pravidlo:
 
 from __future__ import annotations
 
+import math
 from datetime import datetime
 from pathlib import Path
 from typing import TYPE_CHECKING
@@ -471,6 +472,10 @@ class MainWindow(QMainWindow):
         self._metadata_panel.metadata_changed.connect(self._on_metadata_changed)
         self._vibration_panel.preset_selected.connect(self._on_preset_selected)
         self._vibration_panel.preset_clicked_for_assign.connect(self._on_preset_clicked_for_assign)
+        self._vibration_panel.preset_range_requested.connect(self._on_preset_range_requested)
+        self._vibration_panel.range_visibility_changed.connect(
+            self._on_vibration_range_visibility_changed
+        )
         self._vibration_panel.preset_added.connect(self._on_vibration_preset_changed)
         self._vibration_panel.preset_deleted.connect(self._on_vibration_preset_changed)
         self._vibration_panel.preset_remove_requested.connect(self._on_remove_vibration)
@@ -1082,6 +1087,31 @@ class MainWindow(QMainWindow):
         if not text:
             return []
         return [label.strip() for label in text.split(" / ") if label.strip()]
+
+    def _on_preset_range_requested(self, preset) -> None:
+        """Outline where the clicked vibration can appear.
+
+        Works for custom entries too — they carry the same typical range as the
+        built-in presets. A preset without a usable range simply clears the
+        outline rather than drawing a degenerate one.
+        """
+        range_min = getattr(preset, "typical_range_min", None)
+        range_max = getattr(preset, "typical_range_max", None)
+        if range_min is None or range_max is None:
+            self._spectrum_widget.clear_vibration_range()
+            return
+        low, high = sorted((float(range_min), float(range_max)))
+        if not (math.isfinite(low) and math.isfinite(high)) or high - low <= 0.0:
+            self._spectrum_widget.clear_vibration_range()
+            return
+        self._spectrum_widget.set_vibration_range(low, high)
+        self.statusBar().showMessage(
+            f"{preset.name}: {low:.0f}–{high:.0f} cm⁻¹",
+        )
+
+    def _on_vibration_range_visibility_changed(self, visible: bool) -> None:
+        """Show or hide the vibration range outline in the spectrum view."""
+        self._spectrum_widget.set_vibration_range_visible(visible)
 
     def _on_preset_clicked_for_assign(self, preset) -> None:
         """Assign the clicked preset to the currently selected peak.
