@@ -286,6 +286,11 @@ class SpectrumWidget(QWidget):
         self._overlay_spectra_cache: list = []  # keep for redraw on slider change
         self._diagnostic_regions_cache: list = []
         self._diagnostic_regions_visible: bool = True
+        # Window a vibration from the presets panel can occupy. Kept apart from
+        # the functional-group regions so selecting one never clears the other.
+        self._vibration_range: tuple[float, float] | None = None
+        self._vibration_range_visible: bool = True
+        self._vibration_range_items: list = []
         # Split-view state
         self._split_mode: bool = False
         self._fp_plot_widget: pg.PlotWidget | None = None
@@ -293,6 +298,7 @@ class SpectrumWidget(QWidget):
         self._peak_items_fp: list = []
         self._overlay_curves_fp: list = []
         self._diagnostic_region_items_fp: list = []
+        self._vibration_range_items_fp: list = []
         self._setup_ui()
 
     def _setup_ui(self) -> None:
@@ -447,6 +453,7 @@ class SpectrumWidget(QWidget):
             self.set_peaks(self._peaks)
             self._redraw_overlays()
             self._redraw_diagnostic_regions()
+            self._redraw_vibration_range()
         else:
             if self._fp_plot_widget is not None:
                 self._fp_plot_widget.setVisible(False)
@@ -456,6 +463,7 @@ class SpectrumWidget(QWidget):
             self.reset_view()
             self._redraw_overlays()
             self._redraw_diagnostic_regions()
+            self._redraw_vibration_range()
 
     def _clear_fp_items(self) -> None:
         """Remove peak annotations added to the fingerprint panel.
@@ -914,6 +922,69 @@ class SpectrumWidget(QWidget):
         """Show or hide the currently selected functional-group region overlays."""
         self._diagnostic_regions_visible = bool(visible)
         self._redraw_diagnostic_regions()
+
+    def set_vibration_range(self, range_min: float, range_max: float) -> None:
+        """Outline the window a vibration selected in the presets panel can occupy."""
+        low, high = sorted((float(range_min), float(range_max)))
+        self._vibration_range = (low, high)
+        self._redraw_vibration_range()
+
+    def clear_vibration_range(self) -> None:
+        """Remove the vibration window outline."""
+        self._vibration_range = None
+        self._redraw_vibration_range()
+
+    def vibration_range(self) -> tuple[float, float] | None:
+        """Return the vibration window currently outlined, if any."""
+        return self._vibration_range
+
+    def vibration_range_visible(self) -> bool:
+        """Return whether the vibration window outline is currently drawn."""
+        return self._vibration_range_visible
+
+    def set_vibration_range_visible(self, visible: bool) -> None:
+        """Show or hide the vibration window outline without forgetting it."""
+        self._vibration_range_visible = bool(visible)
+        self._redraw_vibration_range()
+
+    def _redraw_vibration_range(self) -> None:
+        for item in self._vibration_range_items:
+            self._plot_widget.removeItem(item)
+        self._vibration_range_items.clear()
+        for item in self._vibration_range_items_fp:
+            if self._fp_plot_widget is not None:
+                self._fp_plot_widget.removeItem(item)
+        self._vibration_range_items_fp.clear()
+
+        if self._vibration_range is None or not self._vibration_range_visible:
+            return
+
+        low, high = self._vibration_range
+        # Deliberately fainter than the functional-group regions: this is a
+        # reading aid pointing at where to look, not a scored result.
+        brush = QColor("#4A90D9")
+        brush.setAlpha(20)
+        pen = pg.mkPen(color=QColor(74, 144, 217, 110), width=1.0, style=Qt.PenStyle.DashLine)
+
+        item = pg.LinearRegionItem(
+            values=(low, high), brush=brush, pen=pen, movable=False, swapMode="sort"
+        )
+        # Below the diagnostic regions so an overlapping scored band stays legible.
+        item.setZValue(-60)
+        self._plot_widget.addItem(item)
+        self._vibration_range_items.append(item)
+
+        if self._split_mode and self._fp_plot_widget is not None and low < _SPLIT_WN:
+            item_fp = pg.LinearRegionItem(
+                values=(low, min(high, _SPLIT_WN)),
+                brush=brush,
+                pen=pen,
+                movable=False,
+                swapMode="sort",
+            )
+            item_fp.setZValue(-60)
+            self._fp_plot_widget.addItem(item_fp)
+            self._vibration_range_items_fp.append(item_fp)
 
     def _redraw_overlays(self) -> None:
         """Remove and redraw all overlay curves using current alpha and color settings."""

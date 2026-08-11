@@ -15,6 +15,7 @@ from typing import TYPE_CHECKING
 from PySide6.QtCore import Qt, Signal
 from PySide6.QtGui import QBrush, QColor
 from PySide6.QtWidgets import (
+    QCheckBox,
     QComboBox,
     QDialog,
     QDialogButtonBox,
@@ -48,6 +49,11 @@ class VibrationPanel(QWidget):
     preset_added = Signal()  # emits when a custom preset is saved
     preset_deleted = Signal()  # emits when a custom preset is deleted
     preset_remove_requested = Signal(object)  # emits VibrationPreset to remove from active peak
+    #: Emits the clicked VibrationPreset so its typical window can be outlined in
+    #: the spectrum. Separate from the assignment signal: looking up where a
+    #: vibration may appear must not depend on a peak being selected.
+    preset_range_requested = Signal(object)
+    range_visibility_changed = Signal(bool)
 
     def __init__(self, db=None, parent=None) -> None:
         super().__init__(parent)
@@ -91,6 +97,15 @@ class VibrationPanel(QWidget):
         self._list.setContextMenuPolicy(Qt.ContextMenuPolicy.CustomContextMenu)
         self._list.customContextMenuRequested.connect(self._on_context_menu)
         layout.addWidget(self._list)
+
+        self._show_range_checkbox = QCheckBox("Show vibration range in spectrum")
+        self._show_range_checkbox.setChecked(True)
+        self._show_range_checkbox.setToolTip(
+            "Outline the wavenumber window a clicked vibration can occupy. "
+            "Turn off to keep the spectrum clear."
+        )
+        self._show_range_checkbox.toggled.connect(self.range_visibility_changed.emit)
+        layout.addWidget(self._show_range_checkbox)
 
         add_btn = QPushButton("Add custom vibration…")
         add_btn.setToolTip("Add a permanent custom vibration entry")
@@ -226,6 +241,9 @@ class VibrationPanel(QWidget):
     def _on_item_clicked(self, item: QListWidgetItem) -> None:
         preset = item.data(256)
         if preset is not None:
+            # Range first: it applies to every vibration, custom entries
+            # included, whether or not a peak is selected to assign to.
+            self.preset_range_requested.emit(preset)
             self.preset_clicked_for_assign.emit(preset)
 
     def _on_item_double_clicked(self, item: QListWidgetItem) -> None:
