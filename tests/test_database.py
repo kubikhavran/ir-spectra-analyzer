@@ -14,7 +14,7 @@ def test_database_seeds_expanded_builtin_vibration_presets():
     presets = database.get_vibration_presets()
     builtin_names = {preset["name"] for preset in presets if preset["is_builtin"] == 1}
 
-    assert len(builtin_names) == 168
+    assert len(builtin_names) == 204
     assert "ν(C=O) –COCl acid halide" in builtin_names
     assert "ν(C=O) anhydride asym." in builtin_names
     assert "ν(N₃) –N₃ azide" in builtin_names
@@ -30,6 +30,17 @@ def test_database_seeds_expanded_builtin_vibration_presets():
     assert "ν(ring) oxirane breathing" in builtin_names
     assert "δs(Si–CH₃) silicone" in builtin_names
     assert "νas(Si–O–Si) siloxane" in builtin_names
+    # Heteroaromatic and oxygen-heterocycle expansion
+    assert "ν(C=N) pyridin ~1600" in builtin_names
+    assert "γ(CH) pyridin 3-subst." in builtin_names
+    assert "ν(C=N) imidazol" in builtin_names
+    assert "ν(ring) triazol" in builtin_names
+    assert "ν(NH) tetrazol assoc." in builtin_names
+    assert "ν(ring) furan" in builtin_names
+    assert "γ(CH) thiofen" in builtin_names
+    assert "ν(NH) pyrrol/indol" in builtin_names
+    assert "νas(C–O–C) cykl. ether" in builtin_names
+    assert "ν(CH) O–CH₃" in builtin_names
     assert "ν(P=O) phosphoryl" in builtin_names
     assert "ν(P–O–C) aliph. phosphate" in builtin_names
     assert "δs(Si–CH₃) TMS/TBS" in builtin_names

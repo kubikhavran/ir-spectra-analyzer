@@ -319,12 +319,12 @@ class Database:
         count_builtin = cursor.execute(
             "SELECT COUNT(*) FROM vibration_presets WHERE is_builtin = 1"
         ).fetchone()[0]
-        has_silyl_wave = cursor.execute(
+        has_heteroaromatics = cursor.execute(
             "SELECT 1 FROM vibration_presets WHERE is_builtin = 1 AND name = ? LIMIT 1",
-            ("δs(Si–CH₃) TMS/TBS",),
+            ("ν(CH) O–CH₃",),
         ).fetchone()
         # Re-seed if the builtin library does not contain the current sourced expansion.
-        if count_builtin == 168 and has_silyl_wave:
+        if count_builtin == 204 and has_heteroaromatics:
             return
         cursor.execute("DELETE FROM vibration_presets WHERE is_builtin = 1")
 
@@ -527,6 +527,99 @@ class Database:
             ("νas(CCC) TIPS", 1060.0, 1085.0, "silyl", "", "#6D4C41"),
             ("δ(CH₃) iPr TIPS", 1458.0, 1472.0, "silyl", "", "#6D4C41"),
             ("ν(Si–Ph) TBDPS", 1100.0, 1120.0, "silyl", "", "#6D4C41"),
+            # Heteroaromatic and oxygen-heterocycle bands
+            (
+                "ν(NH) pyrrol/indol",
+                3380.0,
+                3450.0,
+                "stretch",
+                "Sharp N–H of a non-associated five-membered N-heterocycle",
+                "#8E44AD",
+            ),
+            (
+                "ν(NH) azol assoc.",
+                3050.0,
+                3200.0,
+                "stretch",
+                "Hydrogen-bonded N–H of imidazole/pyrazole/triazole",
+                "#8E44AD",
+            ),
+            (
+                "ν(NH) tetrazol assoc.",
+                2300.0,
+                3200.0,
+                "stretch",
+                "Very broad associated N–H of tetrazole",
+                "#8E44AD",
+            ),
+            ("ν(C=N) imidazol", 1540.0, 1600.0, "stretch", "", "#8E44AD"),
+            ("ν(C=N) oxazol", 1550.0, 1610.0, "stretch", "", "#8E44AD"),
+            ("ν(C=N) thiazol", 1480.0, 1530.0, "stretch", "", "#8E44AD"),
+            ("ν(C=N) pyrazol", 1510.0, 1570.0, "stretch", "", "#8E44AD"),
+            ("ν(ring) triazol", 1450.0, 1530.0, "stretch", "", "#8E44AD"),
+            ("ν(ring) tetrazol", 1500.0, 1560.0, "stretch", "", "#8E44AD"),
+            ("ν(ring) imidazol", 1470.0, 1520.0, "stretch", "", "#8E44AD"),
+            ("ν(ring) pyrazol", 1380.0, 1450.0, "stretch", "", "#8E44AD"),
+            (
+                "δ(ring) azol",
+                1050.0,
+                1130.0,
+                "bend",
+                "In-plane ring deformation of a five-membered azole",
+                "#8E44AD",
+            ),
+            (
+                "γ(CH) azol",
+                640.0,
+                790.0,
+                "bend",
+                "Out-of-plane C–H of a five-membered heteroaromatic",
+                "#8E44AD",
+            ),
+            ("ν(C=N) pyridin ~1600", 1580.0, 1615.0, "stretch", "", "#2E86C1"),
+            ("ν(C=C) pyridin ~1570", 1555.0, 1585.0, "stretch", "", "#2E86C1"),
+            ("ν(ring) pyridin ~1480", 1465.0, 1500.0, "stretch", "", "#2E86C1"),
+            ("ν(ring) pyridin ~1435", 1420.0, 1450.0, "stretch", "", "#2E86C1"),
+            (
+                "ν(ring) pyridin breathing",
+                985.0,
+                1010.0,
+                "stretch",
+                "Ring breathing, strong for 2- and 3-substituted pyridines",
+                "#2E86C1",
+            ),
+            ("γ(CH) pyridin 2-subst.", 740.0, 800.0, "bend", "", "#2E86C1"),
+            ("γ(CH) pyridin 3-subst.", 780.0, 815.0, "bend", "", "#2E86C1"),
+            ("γ(CH) pyridin 4-subst.", 790.0, 840.0, "bend", "", "#2E86C1"),
+            ("ν(ring) pyrimidin", 1540.0, 1590.0, "stretch", "", "#2E86C1"),
+            ("ν(ring) pyrazin", 1470.0, 1530.0, "stretch", "", "#2E86C1"),
+            ("ν(ring) chinolin", 1560.0, 1620.0, "stretch", "", "#2E86C1"),
+            ("ν(ring) furan", 1480.0, 1520.0, "stretch", "", "#CA6F1E"),
+            ("ν(C–O) furan", 1005.0, 1035.0, "stretch", "", "#CA6F1E"),
+            ("ν(ring) thiofen", 1490.0, 1545.0, "stretch", "", "#CA6F1E"),
+            ("γ(CH) thiofen", 680.0, 730.0, "bend", "", "#CA6F1E"),
+            ("ν(ring) pyrrol", 1520.0, 1580.0, "stretch", "", "#8E44AD"),
+            (
+                "νas(C–O–C) cykl. ether",
+                1060.0,
+                1150.0,
+                "stretch",
+                "THF / pyran / dioxane ring C–O–C",
+                "#16A085",
+            ),
+            ("νs(C–O–C) cykl. ether", 1000.0, 1060.0, "stretch", "", "#16A085"),
+            ("ν(ring) cykl. ether", 880.0, 930.0, "stretch", "", "#16A085"),
+            (
+                "ν(CH) O–CH₃",
+                2810.0,
+                2860.0,
+                "stretch",
+                "Diagnostic methoxy C–H, well below the usual CH stretches",
+                "#16A085",
+            ),
+            ("ν(C–O) O–CH₃", 1000.0, 1090.0, "stretch", "", "#16A085"),
+            ("ν(CH) O–CH₂–O acetal", 2760.0, 2830.0, "stretch", "", "#16A085"),
+            ("νas(C–O–C) acetal", 1140.0, 1205.0, "stretch", "", "#16A085"),
         ]
 
         cursor.executemany(

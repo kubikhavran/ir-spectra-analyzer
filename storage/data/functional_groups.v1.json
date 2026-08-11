@@ -890,6 +890,20 @@
           "source_refs": ["sigma", "msu", "ucla", "libretexts"]
         },
         {
+          "id": "phenol_arch",
+          "label": "ν(CH) aromatic",
+          "range_min": 3000.0,
+          "range_max": 3100.0,
+          "expected_intensity": "m",
+          "shape": "sharp",
+          "role": "required",
+          "weight": 0.85,
+          "reliability": 0.85,
+          "channel": "sharp_corrected",
+          "suggested_preset_names": ["ν(CH) Ar"],
+          "source_refs": ["sigma", "nist_chart"]
+        },
+        {
           "id": "phenol_ring",
           "label": "Aromatic ring stretches",
           "range_min": 1490.0,
@@ -3476,6 +3490,34 @@
           "source_refs": ["sigma"]
         },
         {
+          "id": "aliphatic_ether_co_sym",
+          "label": "νs(C-O-C) aliphatic ether",
+          "range_min": 1000.0,
+          "range_max": 1085.0,
+          "expected_intensity": "m",
+          "shape": "sharp",
+          "role": "supporting",
+          "weight": 0.85,
+          "reliability": 0.85,
+          "channel": "sharp_corrected",
+          "suggested_preset_names": ["ν(CO) R–O–R aliph. ether"],
+          "source_refs": ["sigma", "nist_chart"]
+        },
+        {
+          "id": "aliphatic_ether_ch",
+          "label": "ν(CH) O-CH₂",
+          "range_min": 2860.0,
+          "range_max": 2960.0,
+          "expected_intensity": "m",
+          "shape": "sharp",
+          "role": "supporting",
+          "weight": 0.6,
+          "reliability": 0.75,
+          "channel": "broad_raw",
+          "suggested_preset_names": ["νas(CH₂) –CH₂–"],
+          "source_refs": ["sigma"]
+        },
+        {
           "id": "aliphatic_ether_oh_exclusion",
           "label": "Alcohol O-H exclusion",
           "range_min": 3200.0,
@@ -3686,6 +3728,20 @@
             "νs(NH₂) –NH₂"
           ],
           "source_refs": ["sigma", "msu"]
+        },
+        {
+          "id": "aromatic_amine_arch",
+          "label": "ν(CH) aromatic",
+          "range_min": 3000.0,
+          "range_max": 3100.0,
+          "expected_intensity": "m",
+          "shape": "sharp",
+          "role": "required",
+          "weight": 0.85,
+          "reliability": 0.85,
+          "channel": "sharp_corrected",
+          "suggested_preset_names": ["ν(CH) Ar"],
+          "source_refs": ["sigma", "nist_chart"]
         },
         {
           "id": "aromatic_amine_cn",
@@ -4861,6 +4917,1506 @@
           "bonus": 0.5,
           "threshold": 0.5,
           "label": "TBS δs(Si-CH₃) + Si-CH₃ rock pair"
+        }
+      ]
+    },
+    {
+      "id": "pyridine",
+      "name": "Pyridine ring",
+      "color": "#2E86C1",
+      "summary": "Four ring stretches plus the ring-breathing mode.",
+      "source_refs": ["socrates_biblio", "sigma", "nist_chart"],
+      "bands": [
+        {
+          "id": "pyridine_1600",
+          "label": "ν(C=N) ring ~1600",
+          "range_min": 1580.0,
+          "range_max": 1615.0,
+          "expected_intensity": "s",
+          "shape": "sharp",
+          "role": "required",
+          "weight": 1.2,
+          "reliability": 1.0,
+          "channel": "sharp_corrected",
+          "suggested_preset_names": ["ν(C=N) pyridin ~1600"],
+          "source_refs": ["socrates_biblio", "sigma", "nist_chart"]
+        },
+        {
+          "id": "pyridine_1570",
+          "label": "ν(C=C) ring ~1570",
+          "range_min": 1555.0,
+          "range_max": 1585.0,
+          "expected_intensity": "m",
+          "shape": "sharp",
+          "role": "supporting",
+          "weight": 0.8,
+          "reliability": 0.9,
+          "channel": "sharp_corrected",
+          "suggested_preset_names": ["ν(C=C) pyridin ~1570"],
+          "source_refs": ["socrates_biblio", "sigma", "nist_chart"]
+        },
+        {
+          "id": "pyridine_1480",
+          "label": "ν(ring) ~1480",
+          "range_min": 1465.0,
+          "range_max": 1500.0,
+          "expected_intensity": "m",
+          "shape": "sharp",
+          "role": "required",
+          "weight": 0.95,
+          "reliability": 0.95,
+          "channel": "sharp_corrected",
+          "suggested_preset_names": ["ν(ring) pyridin ~1480"],
+          "source_refs": ["socrates_biblio", "sigma", "nist_chart"]
+        },
+        {
+          "id": "pyridine_1435",
+          "label": "ν(ring) ~1435",
+          "range_min": 1420.0,
+          "range_max": 1450.0,
+          "expected_intensity": "s",
+          "shape": "sharp",
+          "role": "required",
+          "weight": 1.0,
+          "reliability": 0.95,
+          "channel": "sharp_corrected",
+          "suggested_preset_names": ["ν(ring) pyridin ~1435"],
+          "source_refs": ["socrates_biblio", "sigma", "nist_chart"]
+        },
+        {
+          "id": "pyridine_breath",
+          "label": "ring breathing",
+          "range_min": 985.0,
+          "range_max": 1010.0,
+          "expected_intensity": "m",
+          "shape": "sharp",
+          "role": "supporting",
+          "weight": 0.8,
+          "reliability": 0.9,
+          "channel": "sharp_corrected",
+          "suggested_preset_names": ["ν(ring) pyridin breathing"],
+          "source_refs": ["socrates_biblio", "sigma", "nist_chart"]
+        }
+      ],
+      "coherence_rules": [
+        {
+          "band_ids": ["pyridine_1600", "pyridine_1435"],
+          "bonus": 0.3,
+          "threshold": 0.45,
+          "label": "pyridine 1600 + 1435 ring pair"
+        },
+        {
+          "band_ids": ["pyridine_1600", "pyridine_1480", "pyridine_1435"],
+          "bonus": 0.2,
+          "threshold": 0.4,
+          "label": "three-band pyridine ring set"
+        }
+      ]
+    },
+    {
+      "id": "pyridine_2_substituted",
+      "name": "2-Substituted Pyridine",
+      "color": "#2E86C1",
+      "summary": "Pyridine ring with the 2-substitution out-of-plane pattern.",
+      "source_refs": ["socrates_biblio", "sigma", "nist_chart"],
+      "bands": [
+        {
+          "id": "py2_1600",
+          "label": "ν(C=N) ring ~1600",
+          "range_min": 1580.0,
+          "range_max": 1615.0,
+          "expected_intensity": "s",
+          "shape": "sharp",
+          "role": "required",
+          "weight": 1.1,
+          "reliability": 1.0,
+          "channel": "sharp_corrected",
+          "suggested_preset_names": ["ν(C=N) pyridin ~1600"],
+          "source_refs": ["socrates_biblio", "sigma", "nist_chart"]
+        },
+        {
+          "id": "py2_1435",
+          "label": "ν(ring) ~1435",
+          "range_min": 1420.0,
+          "range_max": 1450.0,
+          "expected_intensity": "m",
+          "shape": "sharp",
+          "role": "supporting",
+          "weight": 0.8,
+          "reliability": 0.9,
+          "channel": "sharp_corrected",
+          "suggested_preset_names": ["ν(ring) pyridin ~1435"],
+          "source_refs": ["socrates_biblio", "sigma", "nist_chart"]
+        },
+        {
+          "id": "py2_oop",
+          "label": "γ(CH) 2-subst.",
+          "range_min": 740.0,
+          "range_max": 800.0,
+          "expected_intensity": "s",
+          "shape": "sharp",
+          "role": "required",
+          "weight": 1.15,
+          "reliability": 1.0,
+          "channel": "sharp_corrected",
+          "suggested_preset_names": ["γ(CH) pyridin 2-subst."],
+          "source_refs": ["socrates_biblio", "sigma", "nist_chart"]
+        },
+        {
+          "id": "py2_breath",
+          "label": "ring breathing",
+          "range_min": 985.0,
+          "range_max": 1010.0,
+          "expected_intensity": "m",
+          "shape": "sharp",
+          "role": "supporting",
+          "weight": 0.75,
+          "reliability": 0.9,
+          "channel": "sharp_corrected",
+          "suggested_preset_names": ["ν(ring) pyridin breathing"],
+          "source_refs": ["socrates_biblio", "sigma", "nist_chart"]
+        }
+      ],
+      "coherence_rules": [
+        {
+          "band_ids": ["py2_oop", "py2_1600"],
+          "bonus": 0.3,
+          "threshold": 0.45,
+          "label": "2-substituted oop + ring"
+        }
+      ]
+    },
+    {
+      "id": "pyridine_3_substituted",
+      "name": "3-Substituted Pyridine",
+      "color": "#2E86C1",
+      "summary": "Pyridine ring with the 3-substitution out-of-plane pattern.",
+      "source_refs": ["socrates_biblio", "sigma", "nist_chart"],
+      "bands": [
+        {
+          "id": "py3_1600",
+          "label": "ν(C=N) ring ~1600",
+          "range_min": 1580.0,
+          "range_max": 1615.0,
+          "expected_intensity": "s",
+          "shape": "sharp",
+          "role": "required",
+          "weight": 1.1,
+          "reliability": 1.0,
+          "channel": "sharp_corrected",
+          "suggested_preset_names": ["ν(C=N) pyridin ~1600"],
+          "source_refs": ["socrates_biblio", "sigma", "nist_chart"]
+        },
+        {
+          "id": "py3_1480",
+          "label": "ν(ring) ~1480",
+          "range_min": 1465.0,
+          "range_max": 1500.0,
+          "expected_intensity": "m",
+          "shape": "sharp",
+          "role": "supporting",
+          "weight": 0.8,
+          "reliability": 0.9,
+          "channel": "sharp_corrected",
+          "suggested_preset_names": ["ν(ring) pyridin ~1480"],
+          "source_refs": ["socrates_biblio", "sigma", "nist_chart"]
+        },
+        {
+          "id": "py3_oop",
+          "label": "γ(CH) 3-subst.",
+          "range_min": 780.0,
+          "range_max": 815.0,
+          "expected_intensity": "s",
+          "shape": "sharp",
+          "role": "required",
+          "weight": 1.15,
+          "reliability": 1.0,
+          "channel": "sharp_corrected",
+          "suggested_preset_names": ["γ(CH) pyridin 3-subst."],
+          "source_refs": ["socrates_biblio", "sigma", "nist_chart"]
+        },
+        {
+          "id": "py3_breath",
+          "label": "ring breathing",
+          "range_min": 985.0,
+          "range_max": 1010.0,
+          "expected_intensity": "m",
+          "shape": "sharp",
+          "role": "supporting",
+          "weight": 0.75,
+          "reliability": 0.9,
+          "channel": "sharp_corrected",
+          "suggested_preset_names": ["ν(ring) pyridin breathing"],
+          "source_refs": ["socrates_biblio", "sigma", "nist_chart"]
+        }
+      ],
+      "coherence_rules": [
+        {
+          "band_ids": ["py3_oop", "py3_1600"],
+          "bonus": 0.3,
+          "threshold": 0.45,
+          "label": "3-substituted oop + ring"
+        }
+      ]
+    },
+    {
+      "id": "pyridine_4_substituted",
+      "name": "4-Substituted Pyridine",
+      "color": "#2E86C1",
+      "summary": "Pyridine ring with the single 4-substitution out-of-plane band.",
+      "source_refs": ["socrates_biblio", "sigma", "nist_chart"],
+      "bands": [
+        {
+          "id": "py4_1600",
+          "label": "ν(C=N) ring ~1600",
+          "range_min": 1585.0,
+          "range_max": 1615.0,
+          "expected_intensity": "s",
+          "shape": "sharp",
+          "role": "required",
+          "weight": 1.1,
+          "reliability": 1.0,
+          "channel": "sharp_corrected",
+          "suggested_preset_names": ["ν(C=N) pyridin ~1600"],
+          "source_refs": ["socrates_biblio", "sigma", "nist_chart"]
+        },
+        {
+          "id": "py4_1420",
+          "label": "ν(ring) ~1420",
+          "range_min": 1405.0,
+          "range_max": 1445.0,
+          "expected_intensity": "m",
+          "shape": "sharp",
+          "role": "supporting",
+          "weight": 0.8,
+          "reliability": 0.9,
+          "channel": "sharp_corrected",
+          "suggested_preset_names": ["ν(ring) pyridin ~1435"],
+          "source_refs": ["socrates_biblio", "sigma", "nist_chart"]
+        },
+        {
+          "id": "py4_oop",
+          "label": "γ(CH) 4-subst.",
+          "range_min": 790.0,
+          "range_max": 840.0,
+          "expected_intensity": "s",
+          "shape": "sharp",
+          "role": "required",
+          "weight": 1.15,
+          "reliability": 1.0,
+          "channel": "sharp_corrected",
+          "suggested_preset_names": ["γ(CH) pyridin 4-subst."],
+          "source_refs": ["socrates_biblio", "sigma", "nist_chart"]
+        }
+      ],
+      "coherence_rules": [
+        {
+          "band_ids": ["py4_oop", "py4_1600"],
+          "bonus": 0.3,
+          "threshold": 0.45,
+          "label": "4-substituted oop + ring"
+        }
+      ]
+    },
+    {
+      "id": "pyrimidine",
+      "name": "Pyrimidine ring",
+      "color": "#2E86C1",
+      "summary": "Two-nitrogen six-ring: ring stretches plus breathing.",
+      "source_refs": ["socrates_biblio", "sigma", "nist_chart"],
+      "bands": [
+        {
+          "id": "pym_1560",
+          "label": "ν(ring) ~1560",
+          "range_min": 1540.0,
+          "range_max": 1590.0,
+          "expected_intensity": "s",
+          "shape": "sharp",
+          "role": "required",
+          "weight": 1.15,
+          "reliability": 0.95,
+          "channel": "sharp_corrected",
+          "suggested_preset_names": ["ν(ring) pyrimidin"],
+          "source_refs": ["socrates_biblio", "sigma", "nist_chart"]
+        },
+        {
+          "id": "pym_1470",
+          "label": "ν(ring) ~1470",
+          "range_min": 1450.0,
+          "range_max": 1495.0,
+          "expected_intensity": "m",
+          "shape": "sharp",
+          "role": "required",
+          "weight": 0.9,
+          "reliability": 0.9,
+          "channel": "sharp_corrected",
+          "suggested_preset_names": ["ν(ring) pyridin ~1480"],
+          "source_refs": ["socrates_biblio", "sigma", "nist_chart"]
+        },
+        {
+          "id": "pym_1400",
+          "label": "ν(ring) ~1400",
+          "range_min": 1385.0,
+          "range_max": 1425.0,
+          "expected_intensity": "m",
+          "shape": "sharp",
+          "role": "supporting",
+          "weight": 0.8,
+          "reliability": 0.9,
+          "channel": "sharp_corrected",
+          "suggested_preset_names": ["ν(ring) pyridin ~1435"],
+          "source_refs": ["socrates_biblio", "sigma", "nist_chart"]
+        },
+        {
+          "id": "pym_breath",
+          "label": "ring breathing",
+          "range_min": 985.0,
+          "range_max": 1010.0,
+          "expected_intensity": "m",
+          "shape": "sharp",
+          "role": "supporting",
+          "weight": 0.75,
+          "reliability": 0.9,
+          "channel": "sharp_corrected",
+          "suggested_preset_names": ["ν(ring) pyridin breathing"],
+          "source_refs": ["socrates_biblio", "sigma", "nist_chart"]
+        }
+      ],
+      "coherence_rules": [
+        {
+          "band_ids": ["pym_1560", "pym_1470"],
+          "bonus": 0.28,
+          "threshold": 0.45,
+          "label": "pyrimidine ring pair"
+        }
+      ]
+    },
+    {
+      "id": "pyrazine",
+      "name": "Pyrazine ring",
+      "color": "#2E86C1",
+      "summary": "1,4-diazine ring stretches with the 1150 in-plane mode.",
+      "source_refs": ["socrates_biblio", "sigma", "nist_chart"],
+      "bands": [
+        {
+          "id": "pyz_1490",
+          "label": "ν(ring) ~1490",
+          "range_min": 1470.0,
+          "range_max": 1530.0,
+          "expected_intensity": "s",
+          "shape": "sharp",
+          "role": "required",
+          "weight": 1.15,
+          "reliability": 0.95,
+          "channel": "sharp_corrected",
+          "suggested_preset_names": ["ν(ring) pyrazin"],
+          "source_refs": ["socrates_biblio", "sigma", "nist_chart"]
+        },
+        {
+          "id": "pyz_1410",
+          "label": "ν(ring) ~1410",
+          "range_min": 1390.0,
+          "range_max": 1430.0,
+          "expected_intensity": "m",
+          "shape": "sharp",
+          "role": "required",
+          "weight": 0.9,
+          "reliability": 0.9,
+          "channel": "sharp_corrected",
+          "suggested_preset_names": ["ν(ring) pyridin ~1435"],
+          "source_refs": ["socrates_biblio", "sigma", "nist_chart"]
+        },
+        {
+          "id": "pyz_1150",
+          "label": "δ(CH) in-plane",
+          "range_min": 1130.0,
+          "range_max": 1180.0,
+          "expected_intensity": "m",
+          "shape": "sharp",
+          "role": "supporting",
+          "weight": 0.8,
+          "reliability": 0.85,
+          "channel": "sharp_corrected",
+          "suggested_preset_names": [],
+          "source_refs": ["socrates_biblio", "sigma", "nist_chart"]
+        },
+        {
+          "id": "pyz_oop",
+          "label": "γ(CH)",
+          "range_min": 780.0,
+          "range_max": 830.0,
+          "expected_intensity": "m",
+          "shape": "sharp",
+          "role": "supporting",
+          "weight": 0.8,
+          "reliability": 0.9,
+          "channel": "sharp_corrected",
+          "suggested_preset_names": ["γ(CH) pyridin 4-subst."],
+          "source_refs": ["socrates_biblio", "sigma", "nist_chart"]
+        }
+      ],
+      "coherence_rules": [
+        {
+          "band_ids": ["pyz_1490", "pyz_1410"],
+          "bonus": 0.28,
+          "threshold": 0.45,
+          "label": "pyrazine ring pair"
+        }
+      ]
+    },
+    {
+      "id": "quinoline",
+      "name": "Quinoline / benzo-fused pyridine",
+      "color": "#2E86C1",
+      "summary": "Fused ring stretches with two out-of-plane bands.",
+      "source_refs": ["socrates_biblio", "sigma", "nist_chart"],
+      "bands": [
+        {
+          "id": "qui_1600",
+          "label": "ν(ring) ~1600",
+          "range_min": 1560.0,
+          "range_max": 1620.0,
+          "expected_intensity": "s",
+          "shape": "sharp",
+          "role": "required",
+          "weight": 1.15,
+          "reliability": 0.95,
+          "channel": "sharp_corrected",
+          "suggested_preset_names": ["ν(ring) chinolin"],
+          "source_refs": ["socrates_biblio", "sigma", "nist_chart"]
+        },
+        {
+          "id": "qui_1500",
+          "label": "ν(ring) ~1500",
+          "range_min": 1485.0,
+          "range_max": 1520.0,
+          "expected_intensity": "m",
+          "shape": "sharp",
+          "role": "required",
+          "weight": 0.9,
+          "reliability": 0.9,
+          "channel": "sharp_corrected",
+          "suggested_preset_names": ["ν(C=C) Ar ~1490"],
+          "source_refs": ["socrates_biblio", "sigma", "nist_chart"]
+        },
+        {
+          "id": "qui_oop_a",
+          "label": "γ(CH) 4 adjacent H",
+          "range_min": 750.0,
+          "range_max": 790.0,
+          "expected_intensity": "s",
+          "shape": "sharp",
+          "role": "required",
+          "weight": 1.05,
+          "reliability": 0.95,
+          "channel": "sharp_corrected",
+          "suggested_preset_names": ["γ(CH) Ar 4H 1,2-disubst."],
+          "source_refs": ["socrates_biblio", "sigma", "nist_chart"]
+        },
+        {
+          "id": "qui_oop_b",
+          "label": "γ(CH) 2 adjacent H",
+          "range_min": 800.0,
+          "range_max": 835.0,
+          "expected_intensity": "m",
+          "shape": "sharp",
+          "role": "supporting",
+          "weight": 0.8,
+          "reliability": 0.9,
+          "channel": "sharp_corrected",
+          "suggested_preset_names": ["γ(CH) Ar 2H adjacent"],
+          "source_refs": ["socrates_biblio", "sigma", "nist_chart"]
+        }
+      ],
+      "coherence_rules": [
+        {
+          "band_ids": ["qui_1600", "qui_oop_a"],
+          "bonus": 0.3,
+          "threshold": 0.45,
+          "label": "quinoline ring + oop"
+        }
+      ]
+    },
+    {
+      "id": "imidazole",
+      "name": "Imidazole ring",
+      "color": "#8E44AD",
+      "summary": "Associated N-H with the C=N and ring deformation pair.",
+      "source_refs": ["socrates_biblio", "sigma", "nist_chart"],
+      "bands": [
+        {
+          "id": "imid_nh",
+          "label": "ν(NH) associated",
+          "range_min": 3050.0,
+          "range_max": 3200.0,
+          "expected_intensity": "m",
+          "shape": "broad",
+          "role": "required",
+          "weight": 1.0,
+          "reliability": 0.9,
+          "channel": "broad_raw",
+          "suggested_preset_names": ["ν(NH) azol assoc."],
+          "source_refs": ["socrates_biblio", "sigma", "nist_chart"]
+        },
+        {
+          "id": "imid_cn",
+          "label": "ν(C=N) ring",
+          "range_min": 1540.0,
+          "range_max": 1600.0,
+          "expected_intensity": "s",
+          "shape": "sharp",
+          "role": "required",
+          "weight": 1.15,
+          "reliability": 0.95,
+          "channel": "sharp_corrected",
+          "suggested_preset_names": ["ν(C=N) imidazol"],
+          "source_refs": ["socrates_biblio", "sigma", "nist_chart"]
+        },
+        {
+          "id": "imid_ring",
+          "label": "ν(ring) ~1490",
+          "range_min": 1470.0,
+          "range_max": 1520.0,
+          "expected_intensity": "m",
+          "shape": "sharp",
+          "role": "required",
+          "weight": 0.9,
+          "reliability": 0.9,
+          "channel": "sharp_corrected",
+          "suggested_preset_names": ["ν(ring) imidazol"],
+          "source_refs": ["socrates_biblio", "sigma", "nist_chart"]
+        },
+        {
+          "id": "imid_def",
+          "label": "δ(ring) in-plane",
+          "range_min": 1050.0,
+          "range_max": 1130.0,
+          "expected_intensity": "m",
+          "shape": "sharp",
+          "role": "supporting",
+          "weight": 0.8,
+          "reliability": 0.85,
+          "channel": "sharp_corrected",
+          "suggested_preset_names": ["δ(ring) azol"],
+          "source_refs": ["socrates_biblio", "sigma", "nist_chart"]
+        },
+        {
+          "id": "imid_oop",
+          "label": "γ(CH) ring",
+          "range_min": 640.0,
+          "range_max": 790.0,
+          "expected_intensity": "m",
+          "shape": "sharp",
+          "role": "supporting",
+          "weight": 0.75,
+          "reliability": 0.85,
+          "channel": "sharp_corrected",
+          "suggested_preset_names": ["γ(CH) azol"],
+          "source_refs": ["socrates_biblio", "sigma", "nist_chart"]
+        }
+      ],
+      "coherence_rules": [
+        {
+          "band_ids": ["imid_cn", "imid_ring"],
+          "bonus": 0.28,
+          "threshold": 0.45,
+          "label": "imidazole C=N + ring"
+        },
+        {
+          "band_ids": ["imid_nh", "imid_cn", "imid_def"],
+          "bonus": 0.18,
+          "threshold": 0.4,
+          "label": "imidazole N-H + ring set"
+        }
+      ]
+    },
+    {
+      "id": "pyrazole",
+      "name": "Pyrazole ring",
+      "color": "#8E44AD",
+      "summary": "1,2-azole: associated N-H with C=N and the 1400 ring mode.",
+      "source_refs": ["socrates_biblio", "sigma", "nist_chart"],
+      "bands": [
+        {
+          "id": "pyra_nh",
+          "label": "ν(NH) associated",
+          "range_min": 3050.0,
+          "range_max": 3200.0,
+          "expected_intensity": "m",
+          "shape": "broad",
+          "role": "required",
+          "weight": 1.0,
+          "reliability": 0.9,
+          "channel": "broad_raw",
+          "suggested_preset_names": ["ν(NH) azol assoc."],
+          "source_refs": ["socrates_biblio", "sigma", "nist_chart"]
+        },
+        {
+          "id": "pyra_cn",
+          "label": "ν(C=N) ring",
+          "range_min": 1510.0,
+          "range_max": 1570.0,
+          "expected_intensity": "s",
+          "shape": "sharp",
+          "role": "required",
+          "weight": 1.1,
+          "reliability": 0.95,
+          "channel": "sharp_corrected",
+          "suggested_preset_names": ["ν(C=N) pyrazol"],
+          "source_refs": ["socrates_biblio", "sigma", "nist_chart"]
+        },
+        {
+          "id": "pyra_ring",
+          "label": "ν(ring) ~1400",
+          "range_min": 1380.0,
+          "range_max": 1450.0,
+          "expected_intensity": "m",
+          "shape": "sharp",
+          "role": "required",
+          "weight": 0.9,
+          "reliability": 0.9,
+          "channel": "sharp_corrected",
+          "suggested_preset_names": ["ν(ring) pyrazol"],
+          "source_refs": ["socrates_biblio", "sigma", "nist_chart"]
+        },
+        {
+          "id": "pyra_def",
+          "label": "δ(ring) in-plane",
+          "range_min": 1050.0,
+          "range_max": 1130.0,
+          "expected_intensity": "m",
+          "shape": "sharp",
+          "role": "supporting",
+          "weight": 0.75,
+          "reliability": 0.85,
+          "channel": "sharp_corrected",
+          "suggested_preset_names": ["δ(ring) azol"],
+          "source_refs": ["socrates_biblio", "sigma", "nist_chart"]
+        },
+        {
+          "id": "pyra_oop",
+          "label": "γ(CH) ring",
+          "range_min": 730.0,
+          "range_max": 790.0,
+          "expected_intensity": "m",
+          "shape": "sharp",
+          "role": "supporting",
+          "weight": 0.75,
+          "reliability": 0.85,
+          "channel": "sharp_corrected",
+          "suggested_preset_names": ["γ(CH) azol"],
+          "source_refs": ["socrates_biblio", "sigma", "nist_chart"]
+        }
+      ],
+      "coherence_rules": [
+        {
+          "band_ids": ["pyra_cn", "pyra_ring"],
+          "bonus": 0.28,
+          "threshold": 0.45,
+          "label": "pyrazole C=N + ring"
+        }
+      ]
+    },
+    {
+      "id": "triazole",
+      "name": "Triazole ring",
+      "color": "#8E44AD",
+      "summary": "Three-nitrogen azole: N-H with the 1450-1530 ring set.",
+      "source_refs": ["socrates_biblio", "sigma", "nist_chart"],
+      "bands": [
+        {
+          "id": "tri_nh",
+          "label": "ν(NH) associated",
+          "range_min": 3050.0,
+          "range_max": 3200.0,
+          "expected_intensity": "m",
+          "shape": "broad",
+          "role": "required",
+          "weight": 1.0,
+          "reliability": 0.9,
+          "channel": "broad_raw",
+          "suggested_preset_names": ["ν(NH) azol assoc."],
+          "source_refs": ["socrates_biblio", "sigma", "nist_chart"]
+        },
+        {
+          "id": "tri_ring_hi",
+          "label": "ν(ring) 1450-1530",
+          "range_min": 1450.0,
+          "range_max": 1530.0,
+          "expected_intensity": "s",
+          "shape": "sharp",
+          "role": "required",
+          "weight": 1.15,
+          "reliability": 0.95,
+          "channel": "sharp_corrected",
+          "suggested_preset_names": ["ν(ring) triazol"],
+          "source_refs": ["socrates_biblio", "sigma", "nist_chart"]
+        },
+        {
+          "id": "tri_ring_lo",
+          "label": "ν(ring) 1200-1290",
+          "range_min": 1200.0,
+          "range_max": 1290.0,
+          "expected_intensity": "m",
+          "shape": "sharp",
+          "role": "required",
+          "weight": 0.9,
+          "reliability": 0.9,
+          "channel": "sharp_corrected",
+          "suggested_preset_names": ["ν(ring) triazol"],
+          "source_refs": ["socrates_biblio", "sigma", "nist_chart"]
+        },
+        {
+          "id": "tri_def",
+          "label": "δ(ring) in-plane",
+          "range_min": 1050.0,
+          "range_max": 1130.0,
+          "expected_intensity": "m",
+          "shape": "sharp",
+          "role": "supporting",
+          "weight": 0.75,
+          "reliability": 0.85,
+          "channel": "sharp_corrected",
+          "suggested_preset_names": ["δ(ring) azol"],
+          "source_refs": ["socrates_biblio", "sigma", "nist_chart"]
+        },
+        {
+          "id": "tri_oop",
+          "label": "γ(CH) ring",
+          "range_min": 680.0,
+          "range_max": 800.0,
+          "expected_intensity": "m",
+          "shape": "sharp",
+          "role": "supporting",
+          "weight": 0.75,
+          "reliability": 0.85,
+          "channel": "sharp_corrected",
+          "suggested_preset_names": ["γ(CH) azol"],
+          "source_refs": ["socrates_biblio", "sigma", "nist_chart"]
+        }
+      ],
+      "coherence_rules": [
+        {
+          "band_ids": ["tri_ring_hi", "tri_ring_lo"],
+          "bonus": 0.28,
+          "threshold": 0.45,
+          "label": "triazole ring pair"
+        }
+      ]
+    },
+    {
+      "id": "tetrazole",
+      "name": "Tetrazole ring",
+      "color": "#8E44AD",
+      "summary": "Very broad associated N-H with the 1500-1560 ring stretch.",
+      "source_refs": ["socrates_biblio", "sigma", "nist_chart"],
+      "bands": [
+        {
+          "id": "tet_nh",
+          "label": "ν(NH) very broad",
+          "range_min": 2300.0,
+          "range_max": 3200.0,
+          "expected_intensity": "s",
+          "shape": "broad",
+          "role": "required",
+          "weight": 0.9,
+          "reliability": 0.8,
+          "channel": "broad_raw",
+          "suggested_preset_names": ["ν(NH) tetrazol assoc."],
+          "source_refs": ["socrates_biblio", "sigma", "nist_chart"]
+        },
+        {
+          "id": "tet_ring",
+          "label": "ν(ring) 1500-1560",
+          "range_min": 1500.0,
+          "range_max": 1560.0,
+          "expected_intensity": "s",
+          "shape": "sharp",
+          "role": "required",
+          "weight": 1.15,
+          "reliability": 0.95,
+          "channel": "sharp_corrected",
+          "suggested_preset_names": ["ν(ring) tetrazol"],
+          "source_refs": ["socrates_biblio", "sigma", "nist_chart"]
+        },
+        {
+          "id": "tet_ring_lo",
+          "label": "ν(ring) 1240-1290",
+          "range_min": 1240.0,
+          "range_max": 1290.0,
+          "expected_intensity": "m",
+          "shape": "sharp",
+          "role": "required",
+          "weight": 0.9,
+          "reliability": 0.9,
+          "channel": "sharp_corrected",
+          "suggested_preset_names": ["ν(ring) tetrazol"],
+          "source_refs": ["socrates_biblio", "sigma", "nist_chart"]
+        },
+        {
+          "id": "tet_def",
+          "label": "δ(ring) ~1100",
+          "range_min": 1080.0,
+          "range_max": 1140.0,
+          "expected_intensity": "m",
+          "shape": "sharp",
+          "role": "supporting",
+          "weight": 0.8,
+          "reliability": 0.85,
+          "channel": "sharp_corrected",
+          "suggested_preset_names": ["δ(ring) azol"],
+          "source_refs": ["socrates_biblio", "sigma", "nist_chart"]
+        }
+      ],
+      "coherence_rules": [
+        {
+          "band_ids": ["tet_ring", "tet_ring_lo"],
+          "bonus": 0.28,
+          "threshold": 0.45,
+          "label": "tetrazole ring pair"
+        }
+      ]
+    },
+    {
+      "id": "oxazole",
+      "name": "Oxazole ring",
+      "color": "#8E44AD",
+      "summary": "C=N with the ring C-O-C stretch of a 1,3-oxazole.",
+      "source_refs": ["socrates_biblio", "sigma", "nist_chart"],
+      "bands": [
+        {
+          "id": "oxa_cn",
+          "label": "ν(C=N) ring",
+          "range_min": 1550.0,
+          "range_max": 1610.0,
+          "expected_intensity": "s",
+          "shape": "sharp",
+          "role": "required",
+          "weight": 1.15,
+          "reliability": 0.95,
+          "channel": "sharp_corrected",
+          "suggested_preset_names": ["ν(C=N) oxazol"],
+          "source_refs": ["socrates_biblio", "sigma", "nist_chart"]
+        },
+        {
+          "id": "oxa_ring",
+          "label": "ν(ring) ~1500",
+          "range_min": 1480.0,
+          "range_max": 1530.0,
+          "expected_intensity": "m",
+          "shape": "sharp",
+          "role": "required",
+          "weight": 0.9,
+          "reliability": 0.9,
+          "channel": "sharp_corrected",
+          "suggested_preset_names": ["ν(ring) imidazol"],
+          "source_refs": ["socrates_biblio", "sigma", "nist_chart"]
+        },
+        {
+          "id": "oxa_co",
+          "label": "ν(C-O-C) ring",
+          "range_min": 1080.0,
+          "range_max": 1150.0,
+          "expected_intensity": "s",
+          "shape": "sharp",
+          "role": "required",
+          "weight": 1.0,
+          "reliability": 0.9,
+          "channel": "sharp_corrected",
+          "suggested_preset_names": ["δ(ring) azol"],
+          "source_refs": ["socrates_biblio", "sigma", "nist_chart"]
+        },
+        {
+          "id": "oxa_oop",
+          "label": "γ(CH) ring",
+          "range_min": 880.0,
+          "range_max": 940.0,
+          "expected_intensity": "m",
+          "shape": "sharp",
+          "role": "supporting",
+          "weight": 0.75,
+          "reliability": 0.85,
+          "channel": "sharp_corrected",
+          "suggested_preset_names": [],
+          "source_refs": ["socrates_biblio", "sigma", "nist_chart"]
+        }
+      ],
+      "coherence_rules": [
+        {
+          "band_ids": ["oxa_cn", "oxa_co"],
+          "bonus": 0.28,
+          "threshold": 0.45,
+          "label": "oxazole C=N + ring C-O"
+        }
+      ]
+    },
+    {
+      "id": "thiazole",
+      "name": "Thiazole ring",
+      "color": "#8E44AD",
+      "summary": "C=N near 1500 with the 1310-1380 ring mode.",
+      "source_refs": ["socrates_biblio", "sigma", "nist_chart"],
+      "bands": [
+        {
+          "id": "thia_cn",
+          "label": "ν(C=N) ring",
+          "range_min": 1480.0,
+          "range_max": 1530.0,
+          "expected_intensity": "s",
+          "shape": "sharp",
+          "role": "required",
+          "weight": 1.15,
+          "reliability": 0.95,
+          "channel": "sharp_corrected",
+          "suggested_preset_names": ["ν(C=N) thiazol"],
+          "source_refs": ["socrates_biblio", "sigma", "nist_chart"]
+        },
+        {
+          "id": "thia_ring",
+          "label": "ν(ring) 1310-1380",
+          "range_min": 1310.0,
+          "range_max": 1380.0,
+          "expected_intensity": "m",
+          "shape": "sharp",
+          "role": "required",
+          "weight": 0.9,
+          "reliability": 0.9,
+          "channel": "sharp_corrected",
+          "suggested_preset_names": [],
+          "source_refs": ["socrates_biblio", "sigma", "nist_chart"]
+        },
+        {
+          "id": "thia_def",
+          "label": "δ(ring) 1040-1090",
+          "range_min": 1040.0,
+          "range_max": 1090.0,
+          "expected_intensity": "m",
+          "shape": "sharp",
+          "role": "supporting",
+          "weight": 0.8,
+          "reliability": 0.85,
+          "channel": "sharp_corrected",
+          "suggested_preset_names": ["δ(ring) azol"],
+          "source_refs": ["socrates_biblio", "sigma", "nist_chart"]
+        },
+        {
+          "id": "thia_oop",
+          "label": "γ(CH) ring",
+          "range_min": 700.0,
+          "range_max": 780.0,
+          "expected_intensity": "m",
+          "shape": "sharp",
+          "role": "supporting",
+          "weight": 0.75,
+          "reliability": 0.85,
+          "channel": "sharp_corrected",
+          "suggested_preset_names": ["γ(CH) azol"],
+          "source_refs": ["socrates_biblio", "sigma", "nist_chart"]
+        }
+      ],
+      "coherence_rules": [
+        {
+          "band_ids": ["thia_cn", "thia_ring"],
+          "bonus": 0.28,
+          "threshold": 0.45,
+          "label": "thiazole C=N + ring"
+        }
+      ]
+    },
+    {
+      "id": "pyrrole",
+      "name": "Pyrrole ring",
+      "color": "#8E44AD",
+      "summary": "Sharp free N-H with the 1520-1580 ring stretch.",
+      "source_refs": ["socrates_biblio", "sigma", "nist_chart"],
+      "bands": [
+        {
+          "id": "pyr_nh",
+          "label": "ν(NH) sharp",
+          "range_min": 3380.0,
+          "range_max": 3450.0,
+          "expected_intensity": "m",
+          "shape": "sharp",
+          "role": "required",
+          "weight": 1.1,
+          "reliability": 0.95,
+          "channel": "broad_raw",
+          "suggested_preset_names": ["ν(NH) pyrrol/indol"],
+          "source_refs": ["socrates_biblio", "sigma", "nist_chart"]
+        },
+        {
+          "id": "pyr_ring_hi",
+          "label": "ν(ring) 1520-1580",
+          "range_min": 1520.0,
+          "range_max": 1580.0,
+          "expected_intensity": "m",
+          "shape": "sharp",
+          "role": "required",
+          "weight": 1.0,
+          "reliability": 0.9,
+          "channel": "sharp_corrected",
+          "suggested_preset_names": ["ν(ring) pyrrol"],
+          "source_refs": ["socrates_biblio", "sigma", "nist_chart"]
+        },
+        {
+          "id": "pyr_ring_lo",
+          "label": "ν(ring) 1380-1430",
+          "range_min": 1380.0,
+          "range_max": 1430.0,
+          "expected_intensity": "m",
+          "shape": "sharp",
+          "role": "supporting",
+          "weight": 0.8,
+          "reliability": 0.9,
+          "channel": "sharp_corrected",
+          "suggested_preset_names": ["ν(ring) pyrazol"],
+          "source_refs": ["socrates_biblio", "sigma", "nist_chart"]
+        },
+        {
+          "id": "pyr_oop",
+          "label": "γ(CH) ring",
+          "range_min": 700.0,
+          "range_max": 780.0,
+          "expected_intensity": "s",
+          "shape": "sharp",
+          "role": "required",
+          "weight": 1.0,
+          "reliability": 0.9,
+          "channel": "sharp_corrected",
+          "suggested_preset_names": ["γ(CH) azol"],
+          "source_refs": ["socrates_biblio", "sigma", "nist_chart"]
+        }
+      ],
+      "coherence_rules": [
+        {
+          "band_ids": ["pyr_nh", "pyr_oop"],
+          "bonus": 0.3,
+          "threshold": 0.45,
+          "label": "pyrrole N-H + oop"
+        }
+      ]
+    },
+    {
+      "id": "indole",
+      "name": "Indole / benzo-fused pyrrole",
+      "color": "#8E44AD",
+      "summary": "Sharp N-H with fused-ring stretches and the 740-760 oop band.",
+      "source_refs": ["socrates_biblio", "sigma", "nist_chart"],
+      "bands": [
+        {
+          "id": "ind_nh",
+          "label": "ν(NH) sharp",
+          "range_min": 3380.0,
+          "range_max": 3450.0,
+          "expected_intensity": "m",
+          "shape": "sharp",
+          "role": "required",
+          "weight": 1.1,
+          "reliability": 0.95,
+          "channel": "broad_raw",
+          "suggested_preset_names": ["ν(NH) pyrrol/indol"],
+          "source_refs": ["socrates_biblio", "sigma", "nist_chart"]
+        },
+        {
+          "id": "ind_ring_hi",
+          "label": "ν(ring) ~1610",
+          "range_min": 1590.0,
+          "range_max": 1630.0,
+          "expected_intensity": "m",
+          "shape": "sharp",
+          "role": "required",
+          "weight": 0.95,
+          "reliability": 0.9,
+          "channel": "sharp_corrected",
+          "suggested_preset_names": ["ν(C=C) Ar ~1600"],
+          "source_refs": ["socrates_biblio", "sigma", "nist_chart"]
+        },
+        {
+          "id": "ind_ring_lo",
+          "label": "ν(ring) ~1460",
+          "range_min": 1440.0,
+          "range_max": 1500.0,
+          "expected_intensity": "m",
+          "shape": "sharp",
+          "role": "supporting",
+          "weight": 0.8,
+          "reliability": 0.9,
+          "channel": "sharp_corrected",
+          "suggested_preset_names": ["ν(C=C) Ar ~1490"],
+          "source_refs": ["socrates_biblio", "sigma", "nist_chart"]
+        },
+        {
+          "id": "ind_oop",
+          "label": "γ(CH) 4 adjacent H",
+          "range_min": 730.0,
+          "range_max": 775.0,
+          "expected_intensity": "s",
+          "shape": "sharp",
+          "role": "required",
+          "weight": 1.05,
+          "reliability": 0.95,
+          "channel": "sharp_corrected",
+          "suggested_preset_names": ["γ(CH) Ar 4H 1,2-disubst."],
+          "source_refs": ["socrates_biblio", "sigma", "nist_chart"]
+        }
+      ],
+      "coherence_rules": [
+        {
+          "band_ids": ["ind_nh", "ind_oop"],
+          "bonus": 0.3,
+          "threshold": 0.45,
+          "label": "indole N-H + oop"
+        }
+      ]
+    },
+    {
+      "id": "furan",
+      "name": "Furan ring",
+      "color": "#CA6F1E",
+      "summary": "Ring stretch with the strong furan C-O and 740-760 oop band.",
+      "source_refs": ["socrates_biblio", "sigma", "nist_chart"],
+      "bands": [
+        {
+          "id": "fur_ring",
+          "label": "ν(ring) ~1500",
+          "range_min": 1480.0,
+          "range_max": 1520.0,
+          "expected_intensity": "m",
+          "shape": "sharp",
+          "role": "required",
+          "weight": 1.0,
+          "reliability": 0.9,
+          "channel": "sharp_corrected",
+          "suggested_preset_names": ["ν(ring) furan"],
+          "source_refs": ["socrates_biblio", "sigma", "nist_chart"]
+        },
+        {
+          "id": "fur_co",
+          "label": "ν(C-O) ring",
+          "range_min": 1005.0,
+          "range_max": 1035.0,
+          "expected_intensity": "s",
+          "shape": "sharp",
+          "role": "required",
+          "weight": 1.15,
+          "reliability": 0.95,
+          "channel": "sharp_corrected",
+          "suggested_preset_names": ["ν(C–O) furan"],
+          "source_refs": ["socrates_biblio", "sigma", "nist_chart"]
+        },
+        {
+          "id": "fur_ring_hi",
+          "label": "ν(ring) ~1580",
+          "range_min": 1555.0,
+          "range_max": 1605.0,
+          "expected_intensity": "m",
+          "shape": "sharp",
+          "role": "supporting",
+          "weight": 0.8,
+          "reliability": 0.85,
+          "channel": "sharp_corrected",
+          "suggested_preset_names": ["ν(C=C) Ar conj. ~1580"],
+          "source_refs": ["socrates_biblio", "sigma", "nist_chart"]
+        },
+        {
+          "id": "fur_oop",
+          "label": "γ(CH) ring",
+          "range_min": 730.0,
+          "range_max": 775.0,
+          "expected_intensity": "s",
+          "shape": "sharp",
+          "role": "required",
+          "weight": 1.0,
+          "reliability": 0.9,
+          "channel": "sharp_corrected",
+          "suggested_preset_names": ["γ(CH) azol"],
+          "source_refs": ["socrates_biblio", "sigma", "nist_chart"]
+        }
+      ],
+      "coherence_rules": [
+        {
+          "band_ids": ["fur_co", "fur_oop"],
+          "bonus": 0.3,
+          "threshold": 0.45,
+          "label": "furan C-O + oop"
+        }
+      ]
+    },
+    {
+      "id": "thiophene",
+      "name": "Thiophene ring",
+      "color": "#CA6F1E",
+      "summary": "Ring stretches with the 690-720 out-of-plane band.",
+      "source_refs": ["socrates_biblio", "sigma", "nist_chart"],
+      "bands": [
+        {
+          "id": "thio_ring_hi",
+          "label": "ν(ring) 1490-1545",
+          "range_min": 1490.0,
+          "range_max": 1545.0,
+          "expected_intensity": "m",
+          "shape": "sharp",
+          "role": "required",
+          "weight": 1.05,
+          "reliability": 0.9,
+          "channel": "sharp_corrected",
+          "suggested_preset_names": ["ν(ring) thiofen"],
+          "source_refs": ["socrates_biblio", "sigma", "nist_chart"]
+        },
+        {
+          "id": "thio_ring_lo",
+          "label": "ν(ring) 1400-1450",
+          "range_min": 1395.0,
+          "range_max": 1455.0,
+          "expected_intensity": "m",
+          "shape": "sharp",
+          "role": "required",
+          "weight": 0.9,
+          "reliability": 0.9,
+          "channel": "sharp_corrected",
+          "suggested_preset_names": [],
+          "source_refs": ["socrates_biblio", "sigma", "nist_chart"]
+        },
+        {
+          "id": "thio_oop",
+          "label": "γ(CH) ring",
+          "range_min": 680.0,
+          "range_max": 730.0,
+          "expected_intensity": "s",
+          "shape": "sharp",
+          "role": "required",
+          "weight": 1.1,
+          "reliability": 0.95,
+          "channel": "sharp_corrected",
+          "suggested_preset_names": ["γ(CH) thiofen"],
+          "source_refs": ["socrates_biblio", "sigma", "nist_chart"]
+        },
+        {
+          "id": "thio_oop_b",
+          "label": "γ(CH) 2,5-subst.",
+          "range_min": 790.0,
+          "range_max": 860.0,
+          "expected_intensity": "m",
+          "shape": "sharp",
+          "role": "supporting",
+          "weight": 0.75,
+          "reliability": 0.85,
+          "channel": "sharp_corrected",
+          "suggested_preset_names": [],
+          "source_refs": ["socrates_biblio", "sigma", "nist_chart"]
+        }
+      ],
+      "coherence_rules": [
+        {
+          "band_ids": ["thio_ring_hi", "thio_oop"],
+          "bonus": 0.3,
+          "threshold": 0.45,
+          "label": "thiophene ring + oop"
+        }
+      ]
+    },
+    {
+      "id": "cyclic_ether",
+      "name": "Cyclic Ether (THF / pyran / dioxane)",
+      "color": "#16A085",
+      "summary": "Ring C-O-C pair with the 880-930 ring mode.",
+      "source_refs": ["socrates_biblio", "sigma", "nist_chart"],
+      "bands": [
+        {
+          "id": "cyc_co_asym",
+          "label": "νas(C-O-C) ring",
+          "range_min": 1060.0,
+          "range_max": 1150.0,
+          "expected_intensity": "vs",
+          "shape": "sharp",
+          "role": "required",
+          "weight": 1.25,
+          "reliability": 1.0,
+          "channel": "sharp_corrected",
+          "suggested_preset_names": ["νas(C–O–C) cykl. ether"],
+          "source_refs": ["socrates_biblio", "sigma", "nist_chart"]
+        },
+        {
+          "id": "cyc_co_sym",
+          "label": "νs(C-O-C) ring",
+          "range_min": 1000.0,
+          "range_max": 1060.0,
+          "expected_intensity": "m",
+          "shape": "sharp",
+          "role": "required",
+          "weight": 0.95,
+          "reliability": 0.9,
+          "channel": "sharp_corrected",
+          "suggested_preset_names": ["νs(C–O–C) cykl. ether"],
+          "source_refs": ["socrates_biblio", "sigma", "nist_chart"]
+        },
+        {
+          "id": "cyc_ring",
+          "label": "ν(ring) 880-930",
+          "range_min": 880.0,
+          "range_max": 930.0,
+          "expected_intensity": "m",
+          "shape": "sharp",
+          "role": "supporting",
+          "weight": 0.8,
+          "reliability": 0.85,
+          "channel": "sharp_corrected",
+          "suggested_preset_names": ["ν(ring) cykl. ether"],
+          "source_refs": ["socrates_biblio", "sigma", "nist_chart"]
+        },
+        {
+          "id": "cyc_ch2",
+          "label": "νas(CH₂) ring",
+          "range_min": 2915.0,
+          "range_max": 2960.0,
+          "expected_intensity": "m",
+          "shape": "sharp",
+          "role": "supporting",
+          "weight": 0.7,
+          "reliability": 0.8,
+          "channel": "broad_raw",
+          "suggested_preset_names": ["νas(CH₂) –CH₂–"],
+          "source_refs": ["socrates_biblio", "sigma", "nist_chart"]
+        }
+      ],
+      "coherence_rules": [
+        {
+          "band_ids": ["cyc_co_asym", "cyc_co_sym"],
+          "bonus": 0.3,
+          "threshold": 0.45,
+          "label": "ring C-O-C pair"
+        }
+      ]
+    },
+    {
+      "id": "methoxy",
+      "name": "Methoxy –OCH₃",
+      "color": "#16A085",
+      "summary": "The diagnostic 2815-2860 O-CH₃ stretch with the C-O band.",
+      "source_refs": ["socrates_biblio", "sigma", "nist_chart"],
+      "bands": [
+        {
+          "id": "meo_ch",
+          "label": "ν(CH) O-CH₃",
+          "range_min": 2805.0,
+          "range_max": 2845.0,
+          "expected_intensity": "m",
+          "shape": "sharp",
+          "role": "required",
+          "weight": 1.2,
+          "reliability": 1.0,
+          "channel": "broad_raw",
+          "suggested_preset_names": ["ν(CH) O–CH₃"],
+          "source_refs": ["socrates_biblio", "sigma", "nist_chart"]
+        },
+        {
+          "id": "meo_co",
+          "label": "ν(C-O) O-CH₃",
+          "range_min": 1000.0,
+          "range_max": 1090.0,
+          "expected_intensity": "s",
+          "shape": "sharp",
+          "role": "required",
+          "weight": 1.0,
+          "reliability": 0.9,
+          "channel": "sharp_corrected",
+          "suggested_preset_names": ["ν(C–O) O–CH₃"],
+          "source_refs": ["socrates_biblio", "sigma", "nist_chart"]
+        },
+        {
+          "id": "meo_def",
+          "label": "δ(CH₃)",
+          "range_min": 1440.0,
+          "range_max": 1475.0,
+          "expected_intensity": "m",
+          "shape": "sharp",
+          "role": "supporting",
+          "weight": 0.75,
+          "reliability": 0.85,
+          "channel": "sharp_corrected",
+          "suggested_preset_names": ["δd(CH₃) –CH₃"],
+          "source_refs": ["socrates_biblio", "sigma", "nist_chart"]
+        },
+        {
+          "id": "meo_rock",
+          "label": "ρ(CH₃) O-CH₃",
+          "range_min": 1150.0,
+          "range_max": 1200.0,
+          "expected_intensity": "m",
+          "shape": "sharp",
+          "role": "supporting",
+          "weight": 0.75,
+          "reliability": 0.8,
+          "channel": "sharp_corrected",
+          "suggested_preset_names": [],
+          "source_refs": ["socrates_biblio", "sigma", "nist_chart"]
+        }
+      ],
+      "coherence_rules": [
+        {
+          "band_ids": ["meo_ch", "meo_co"],
+          "bonus": 0.32,
+          "threshold": 0.45,
+          "label": "O-CH₃ C-H + C-O"
+        }
+      ]
+    },
+    {
+      "id": "acetal_ketal",
+      "name": "Acetal / Ketal",
+      "color": "#16A085",
+      "summary": "Two strong C-O-C stretches with the low O-CH-O stretch.",
+      "source_refs": ["socrates_biblio", "sigma", "nist_chart"],
+      "bands": [
+        {
+          "id": "ace_co_hi",
+          "label": "νas(C-O-C)",
+          "range_min": 1140.0,
+          "range_max": 1205.0,
+          "expected_intensity": "s",
+          "shape": "sharp",
+          "role": "required",
+          "weight": 1.1,
+          "reliability": 0.95,
+          "channel": "sharp_corrected",
+          "suggested_preset_names": ["νas(C–O–C) acetal"],
+          "source_refs": ["socrates_biblio", "sigma", "nist_chart"]
+        },
+        {
+          "id": "ace_co_lo",
+          "label": "νs(C-O-C)",
+          "range_min": 1040.0,
+          "range_max": 1120.0,
+          "expected_intensity": "s",
+          "shape": "sharp",
+          "role": "required",
+          "weight": 1.05,
+          "reliability": 0.9,
+          "channel": "sharp_corrected",
+          "suggested_preset_names": ["νs(C–O–C) cykl. ether"],
+          "source_refs": ["socrates_biblio", "sigma", "nist_chart"]
+        },
+        {
+          "id": "ace_ch",
+          "label": "ν(CH) O-CH-O",
+          "range_min": 2760.0,
+          "range_max": 2830.0,
+          "expected_intensity": "m",
+          "shape": "sharp",
+          "role": "supporting",
+          "weight": 0.85,
+          "reliability": 0.85,
+          "channel": "broad_raw",
+          "suggested_preset_names": ["ν(CH) O–CH₂–O acetal"],
+          "source_refs": ["socrates_biblio", "sigma", "nist_chart"]
+        }
+      ],
+      "coherence_rules": [
+        {
+          "band_ids": ["ace_co_hi", "ace_co_lo"],
+          "bonus": 0.3,
+          "threshold": 0.45,
+          "label": "acetal C-O-C pair"
         }
       ]
     }

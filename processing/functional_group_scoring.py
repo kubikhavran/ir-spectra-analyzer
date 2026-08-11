@@ -81,6 +81,24 @@ _REQUIRED_GATE_FLOOR = 0.12  # credit left when a required band is entirely abse
 # Two bands matched this close apart are the same absorption.
 _SAME_BAND_TOLERANCE = 20.0
 
+# Scoring a group as "matched evidence / possible evidence" rewards thin
+# definitions: a group resting on one band reached 100 % from that single hit,
+# while a four-band group with three solid hits capped at 75 %. An imine, whose
+# only positive band is a C=N window overlapping the alkene C=C, therefore
+# outranked every alkene in the library. One band cannot establish a functional
+# group — corroboration across independent bands is what an interpreter looks
+# for — so the fraction is scaled by how much evidence was actually found.
+_EVIDENCE_FOR_FULL_BREADTH = 1.8  # roughly two solid bands at their usual weight
+_EVIDENCE_BREADTH_FLOOR = 0.45  # a single convincing band still counts for this
+
+# Matching a band inside a 20 cm^-1 window is a sharper statement than matching
+# one anywhere inside 135 cm^-1: the narrow window had far less room to be
+# satisfied by coincidence. Both "aromatic ring" and "monosubstituted benzene"
+# are true of a monosubstituted benzene, and the specific reading is the useful
+# one, so tightly specified definitions are credited a little above loose ones.
+_SPECIFICITY_REFERENCE_SPAN = 70.0
+_SPECIFICITY_RANGE = (0.95, 1.05)
+
 
 @dataclass(frozen=True)
 class _PreparedSignal:
@@ -475,6 +493,16 @@ def _shape_score(shape: str, width_fraction: float, peak_count: int) -> float:
     return float(max(0.0, 1.0 - ((width_fraction - target_max) / 0.55)))
 
 
+def _specificity_factor(group: FunctionalGroupDefinition) -> float:
+    """How tightly this definition pins its bands down, as a small multiplier."""
+    spans = [band.span for band in group.bands if band.role == "required" and band.span > 0]
+    if not spans:
+        return 1.0
+    low, high = _SPECIFICITY_RANGE
+    ratio = _SPECIFICITY_REFERENCE_SPAN / float(np.mean(spans))
+    return float(np.clip(ratio, low, high))
+
+
 def _required_gate(confidence: float) -> float:
     """Ceiling a single required band's confidence puts on its whole group."""
     if confidence >= _REQUIRED_GATE_FULL:
@@ -593,6 +621,11 @@ def _collect_evidence(
     max_score = max(max_positive_total + max_bonus_total, 1e-6)
     # Supporting evidence cannot stand in for a required band that is not there.
     gated = float(np.clip(raw_score / max_score, 0.0, 1.0)) * required_gate
+    # ...and a thin definition cannot reach the same confidence as a corroborated
+    # one on the strength of a single hit.
+    breadth = min(positive_total / _EVIDENCE_FOR_FULL_BREADTH, 1.0)
+    gated *= _EVIDENCE_BREADTH_FLOOR + (1.0 - _EVIDENCE_BREADTH_FLOOR) * breadth
+    gated = min(gated * _specificity_factor(group), 1.0)
     band_matches.sort(key=lambda match: (match.confidence, match.range_max), reverse=True)
 
     return _GroupEvidence(
