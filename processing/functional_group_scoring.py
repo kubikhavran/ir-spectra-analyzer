@@ -15,6 +15,7 @@ from core.functional_groups import (
     FunctionalGroupScore,
 )
 from core.spectrum import Spectrum
+from processing.baseline import rubber_band_baseline
 from storage.functional_group_repository import FunctionalGroupRepository
 
 _INTENSITY_TARGETS = {
@@ -63,6 +64,22 @@ _EXPLAINED_RESIDUAL = 0.25
 # sit on the band itself and the line would subtract the very peak being
 # measured. Those windows keep the flat floor.
 _MIN_SLOPED_BASELINE_SPAN = 45.0
+
+# Share of the half-window that still counts as a fully centred match, and the
+# credit left at the very rim. See _center_fit.
+_CENTER_PLATEAU = 0.6
+_CENTER_EDGE_FIT = 0.45
+
+# A group is only as convincing as its weakest required band. Summing evidence
+# alone let a phenol score 78 % on a carboxylic acid, collecting credit for the
+# O-H and the C-O while its aromatic ring bands were absent — the one thing that
+# would have settled it. The weakest required band therefore gates the whole
+# group, the way an interpreter refuses a ring assignment with no ring bands.
+_REQUIRED_GATE_FULL = 0.50  # confidence at which a required band stops limiting
+_REQUIRED_GATE_FLOOR = 0.12  # credit left when a required band is entirely absent
+
+# Two bands matched this close apart are the same absorption.
+_SAME_BAND_TOLERANCE = 20.0
 
 
 @dataclass(frozen=True)
@@ -145,10 +162,13 @@ def _prepare_sharp_signal(
         wn, signal = _sorted_absorption_signal(corrected_spectrum)
     else:
         wn, signal = _sorted_absorption_signal(raw_spectrum)
-        window = _pick_savgol_window(signal.size)
-        if window >= 7:
-            baseline = savgol_filter(signal, window_length=window, polyorder=3, mode="interp")
-            signal = signal - baseline
+        # A Savitzky-Golay fit follows the bands it is meant to sit under, and
+        # subtracting it leaves a ripple between every pair of strong bands. Those
+        # ripples were being read as real vibrations: a phenol ring band appeared
+        # at 1570 cm^-1 in a spectrum that only had 1710 and 1465, which is how a
+        # carboxylic acid came out as 78 % phenol. A convex-hull baseline never
+        # rises above the data, so it cannot manufacture a band.
+        signal = rubber_band_baseline(wn, signal, upper=False)
     signal = np.clip(signal - np.percentile(signal, 5), 0.0, None)
     scale = max(float(np.percentile(signal, 99)), 1e-6)
     return _PreparedSignal(wavenumbers=wn, signal=signal, scale=scale)
@@ -455,11 +475,33 @@ def _shape_score(shape: str, width_fraction: float, peak_count: int) -> float:
     return float(max(0.0, 1.0 - ((width_fraction - target_max) / 0.55)))
 
 
+def _required_gate(confidence: float) -> float:
+    """Ceiling a single required band's confidence puts on its whole group."""
+    if confidence >= _REQUIRED_GATE_FULL:
+        return 1.0
+    reached = confidence / _REQUIRED_GATE_FULL
+    return float(_REQUIRED_GATE_FLOOR + (1.0 - _REQUIRED_GATE_FLOOR) * reached)
+
+
 def _center_fit(center: float, expected_center: float, span: float) -> float:
+    """How well a matched position sits inside the band's allowed window.
+
+    The window already states where the vibration may appear, so a band is not
+    suspicious merely for sitting off-centre — measuring distance from the middle
+    punished correct assignments, and a primary alcohol C-O at 1050 inside a
+    1045-1088 window scored 0.23 and lost to the generic alcohol group. Full
+    credit across the middle of the window, easing off only near the rim where a
+    neighbouring feature could be responsible instead.
+    """
     if span <= 1e-9:
         return 1.0
-    distance = abs(center - expected_center)
-    return float(max(0.0, 1.0 - (distance / (span / 2.0))))
+    offset = abs(center - expected_center) / (span / 2.0)
+    if offset <= _CENTER_PLATEAU:
+        return 1.0
+    if offset >= 1.0:
+        return _CENTER_EDGE_FIT
+    taper = (offset - _CENTER_PLATEAU) / (1.0 - _CENTER_PLATEAU)
+    return float(1.0 - taper * (1.0 - _CENTER_EDGE_FIT))
 
 
 def _observed_intensity_class(metric: float) -> str:
@@ -476,7 +518,7 @@ class _GroupEvidence:
     group: FunctionalGroupDefinition
     metrics: list[_BandMetrics]
     base_fraction: float
-    discriminators: tuple[tuple[FunctionalGroupBand, float], ...]
+    discriminators: tuple[_BandMetrics, ...]
     band_matches: tuple[DiagnosticBandMatch, ...]
     matched_bonus_labels: tuple[str, ...]
 
@@ -494,7 +536,8 @@ def _collect_evidence(
     max_bonus_total = sum(rule.bonus for rule in group.coherence_rules)
     band_metrics_by_id: dict[str, _BandMetrics] = {}
     band_matches: list[DiagnosticBandMatch] = []
-    discriminators: list[tuple[FunctionalGroupBand, float]] = []
+    discriminators: list[_BandMetrics] = []
+    required_gate = 1.0
 
     for metric in metrics:
         band = metric.band
@@ -507,10 +550,12 @@ def _collect_evidence(
         # A missing required band is this group's own evidence failing, so it
         # still subtracts directly. An exclusion is a statement about a
         # different group and is handled as a discount in pass 2.
-        if band.role == "required" and metric.confidence_fraction < 0.40:
-            required_penalty += weight * ((0.40 - metric.confidence_fraction) / 0.40)
+        if band.role == "required":
+            if metric.confidence_fraction < 0.40:
+                required_penalty += weight * ((0.40 - metric.confidence_fraction) / 0.40)
+            required_gate = min(required_gate, _required_gate(metric.confidence_fraction))
         elif band.role == "exclusion" and metric.confidence_fraction > 0.55:
-            discriminators.append((band, metric.confidence_fraction))
+            discriminators.append(metric)
 
         band_matches.append(
             DiagnosticBandMatch(
@@ -546,12 +591,14 @@ def _collect_evidence(
 
     raw_score = positive_total + bonus_total - required_penalty
     max_score = max(max_positive_total + max_bonus_total, 1e-6)
+    # Supporting evidence cannot stand in for a required band that is not there.
+    gated = float(np.clip(raw_score / max_score, 0.0, 1.0)) * required_gate
     band_matches.sort(key=lambda match: (match.confidence, match.range_max), reverse=True)
 
     return _GroupEvidence(
         group=group,
         metrics=metrics,
-        base_fraction=float(np.clip(raw_score / max_score, 0.0, 1.0)),
+        base_fraction=gated,
         discriminators=tuple(discriminators),
         band_matches=tuple(band_matches),
         matched_bonus_labels=tuple(matched_bonus_labels),
@@ -566,6 +613,7 @@ class _BandClaim:
     range_min: float
     range_max: float
     strength: float
+    matched_wavenumber: float | None
 
 
 def _required_band_claims(evidences: list[_GroupEvidence]) -> list[_BandClaim]:
@@ -589,29 +637,37 @@ def _required_band_claims(evidences: list[_GroupEvidence]) -> list[_BandClaim]:
                     range_min=metric.band.range_min,
                     range_max=metric.band.range_max,
                     strength=min(evidence.base_fraction, metric.confidence_fraction),
+                    matched_wavenumber=metric.matched_wavenumber,
                 )
             )
     return claims
 
 
 def _explained_strength(
-    band: FunctionalGroupBand,
+    metric: _BandMetrics,
     claims: list[_BandClaim],
     own_group_id: str,
 ) -> float:
-    """How well another group already accounts for this discriminating band."""
+    """How well another group already accounts for this discriminating band.
+
+    Compared by where the absorption actually sits, not by how the two windows
+    overlap: an amide claims its carbonyl over 1630-1690 while an ether excludes
+    carbonyls over 1680-1815, and those windows barely touch even though both
+    are pointing at the very same 1680 cm^-1 band.
+    """
+    position = metric.matched_wavenumber
+    if position is None:
+        return 0.0
     best = 0.0
     for claim in claims:
         if claim.owner_group_id == own_group_id:
             continue
-        overlap = min(band.range_max, claim.range_max) - max(band.range_min, claim.range_min)
-        if overlap <= 0.0:
-            continue
-        # Require a real overlap, not just a shared endpoint.
-        coverage = overlap / max(min(band.span, claim.range_max - claim.range_min), 1e-6)
-        if coverage < 0.35:
-            continue
-        best = max(best, claim.strength * coverage)
+        same_band = claim.range_min <= position <= claim.range_max or (
+            claim.matched_wavenumber is not None
+            and abs(claim.matched_wavenumber - position) <= _SAME_BAND_TOLERANCE
+        )
+        if same_band:
+            best = max(best, claim.strength)
     return float(np.clip(best, 0.0, 1.0))
 
 
@@ -626,10 +682,11 @@ def _finalize_group(
 
     if evidence.discriminators and fraction > 0.0:
         pressure = 0.0
-        for band, confidence in evidence.discriminators:
-            explained = _explained_strength(band, claims, group.id)
+        for metric in evidence.discriminators:
+            band = metric.band
+            explained = _explained_strength(metric, claims, group.id)
             residual = 1.0 - explained * (1.0 - _EXPLAINED_RESIDUAL)
-            pressure += band.weight * band.reliability * confidence * residual
+            pressure += band.weight * band.reliability * metric.confidence_fraction * residual
         discount = min(_MAX_DISCRIMINATOR_DISCOUNT, pressure / 2.0)
         fraction *= 1.0 - discount
 
