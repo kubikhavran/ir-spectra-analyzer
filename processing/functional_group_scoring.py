@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 
 import numpy as np
 from scipy.signal import find_peaks, savgol_filter
@@ -30,6 +30,24 @@ _INTENSITY_THRESHOLDS = {
     "s": 0.18,
     "vs": 0.28,
 }
+
+# Windows tighter than this are narrower than the bands they target, so their
+# baseline has to be sampled from the surrounding region instead.
+_NARROW_WINDOW_SPAN = 45.0
+
+# Below this share of the strongest absorption a feature is treated as noise,
+# whatever it looks like next to its neighbours.
+_PRESENCE_NOISE_FLOOR = 0.012
+
+# An "exclusion" band rarely means the group is impossible — it means a
+# neighbouring group would explain that absorption better. Taken as a veto it
+# removes groups that genuinely co-occur: an aliphatic ether excludes carbonyl
+# and alcohol O-H, so on the analysed samples, which are sugars carrying esters
+# and hydroxyls, the ether was thrown away 24 times out of 25. It now discounts
+# the group, bounded, and not at all when another group already claims the band.
+_MAX_EXCLUSION_DISCOUNT = 0.5
+_EXPLAINED_OWNER_CONFIDENCE = 0.45
+_SAME_BAND_TOLERANCE = 20.0
 
 _OBSERVED_INTENSITY_CLASSES = (
     (0.40, "vs"),
@@ -74,18 +92,35 @@ def score_functional_groups(
         "sharp_corrected": _prepare_sharp_signal(raw_spectrum, corrected_spectrum),
     }
 
-    results: list[FunctionalGroupScore] = []
-    for group in knowledge_base.groups:
-        metrics = [
-            _score_band(
-                band,
-                prepared_channels.get(band.channel, prepared_channels["sharp_corrected"]),
-                group.color,
-            )
-            for band in group.bands
-        ]
-        result = _score_group(group, metrics, knowledge_base.sources)
-        results.append(result)
+    # Pass 1 — every group's own evidence, independent of the others.
+    scored = [
+        _score_group(
+            group,
+            [
+                _score_band(
+                    band,
+                    prepared_channels.get(band.channel, prepared_channels["sharp_corrected"]),
+                    group.color,
+                )
+                for band in group.bands
+            ],
+            knowledge_base.sources,
+        )
+        for group in knowledge_base.groups
+    ]
+
+    # Pass 2 — a band a convincing group claims as required evidence no longer
+    # counts against the groups that merely exclude it.
+    claims = [
+        claim
+        for result, _exclusions, group_claims in scored
+        if result.score >= _EXPLAINED_OWNER_CONFIDENCE * 100.0
+        for claim in group_claims
+    ]
+    results = [
+        _apply_exclusion_discount(result, exclusions, claims)
+        for result, exclusions, _group_claims in scored
+    ]
 
     results.sort(key=lambda result: result.score, reverse=True)
     return FunctionalGroupAnalysis(
@@ -175,8 +210,13 @@ def _score_band(
             observed_intensity_class="w",
         )
 
-    local_floor = _local_floor(segment_signal, band.shape)
-    segment_signal = np.clip(segment_signal - local_floor, 0.0, None)
+    # A window narrower than its own band has no baseline inside it to measure.
+    if band.span < _NARROW_WINDOW_SPAN:
+        segment_signal = np.clip(segment_signal - _context_floor(prepared, band), 0.0, None)
+    else:
+        segment_signal = np.clip(
+            segment_signal - _local_floor(segment_signal, band.shape), 0.0, None
+        )
     if float(np.max(segment_signal)) <= 1e-9:
         return _BandMetrics(
             band=band,
@@ -199,6 +239,13 @@ def _score_band(
     )
 
     metric_for_presence = max(amp_norm, area_norm * 1.5) if band.shape == "broad" else amp_norm
+    # A band that stands out among its neighbours counts as present even when a
+    # far stronger band elsewhere in the spectrum dwarfs it, provided it clears
+    # the noise floor.
+    if amp_norm >= _PRESENCE_NOISE_FLOOR:
+        local = _local_prominence(prepared, band, matched_intensity)
+        threshold = _INTENSITY_THRESHOLDS.get(band.expected_intensity, 0.10)
+        metric_for_presence = max(metric_for_presence, local * threshold)
     metric_for_intensity = area_norm * 1.25 if band.shape == "broad" else amp_norm
     presence = _presence_score(metric_for_presence, band.expected_intensity)
     intensity_match = _intensity_score(metric_for_intensity, band.expected_intensity)
@@ -230,6 +277,33 @@ def _score_band(
     )
 
 
+def _local_prominence(prepared: _PreparedSignal, band: FunctionalGroupBand, height: float) -> float:
+    """How the matched band compares with the bands around it.
+
+    "Expected intensity" in the knowledge base is written for a compound where
+    the group dominates — a methyl stretch is the strongest band in an alkane.
+    Measured against the whole spectrum of an acetylated sugar, the same real
+    methyl stretch is 3 % of an enormous ester carbonyl and reads as absent, which
+    is why methyl- and methylene-rich alkyl were missed on nearly every analysed
+    sample. Judging the band against its own neighbourhood asks the question that
+    actually matters: is there a band here.
+    """
+    reach = max(band.span * 3.0, 150.0)
+    context = (prepared.wavenumbers >= band.range_min - reach) & (
+        prepared.wavenumbers <= band.range_max + reach
+    )
+    sample = prepared.signal[context]
+    if sample.size < 5:
+        return 0.0
+    # The height was measured after its window's floor was removed, so the
+    # neighbourhood has to be put on the same footing before comparing.
+    sample = sample - float(np.percentile(sample, 15))
+    reference = float(np.percentile(sample, 95))
+    if reference <= 1e-9:
+        return 0.0
+    return float(np.clip(height / reference, 0.0, 1.5))
+
+
 def _presence_score(metric: float, expected_intensity: str) -> float:
     threshold = _INTENSITY_THRESHOLDS.get(expected_intensity, 0.10)
     if metric <= threshold * 0.4:
@@ -252,6 +326,26 @@ def _intensity_score(metric: float, expected_intensity: str) -> float:
 def _local_floor(signal: np.ndarray, shape: str) -> float:
     percentile = 12 if shape == "broad" else 20
     return float(np.percentile(signal, percentile))
+
+
+def _context_floor(prepared: _PreparedSignal, band: FunctionalGroupBand) -> float:
+    """Baseline sampled from around the window rather than inside it.
+
+    Several windows are narrower than the band they target — the CH2 and CH3
+    stretch windows are 14-18 cm^-1 around a band several times that wide — so
+    every point inside them belongs to the band. A percentile taken there
+    measures the band itself, and subtracting it erases what was to be measured,
+    which is why methylene- and methyl-rich alkyl were missed on 24 of the 47
+    analysed samples.
+    """
+    margin = max(band.span * 2.0, 40.0)
+    context = (prepared.wavenumbers >= band.range_min - margin) & (
+        prepared.wavenumbers <= band.range_max + margin
+    )
+    sample = prepared.signal[context]
+    if sample.size < 5:
+        return _local_floor(prepared.signal, band.shape)
+    return float(np.percentile(sample, 10 if band.shape == "broad" else 15))
 
 
 def _select_candidate_index(
@@ -353,9 +447,19 @@ def _score_group(
     group: FunctionalGroupDefinition,
     metrics: list[_BandMetrics],
     source_lookup: dict[str, str],
-) -> FunctionalGroupScore:
+) -> tuple[
+    FunctionalGroupScore,
+    tuple[_BandMetrics, ...],
+    tuple[tuple[float | None, float, float], ...],
+]:
+    """Score one group, plus what the second pass needs.
+
+    Returns the result, the exclusion bands that fired, and the ranges this group
+    convincingly claims as its own required evidence.
+    """
     positive_total = 0.0
     penalty_total = 0.0
+    exclusions: list[_BandMetrics] = []
     bonus_total = 0.0
     max_positive_total = 0.0
     max_bonus_total = sum(rule.bonus for rule in group.coherence_rules)
@@ -373,7 +477,7 @@ def _score_group(
         if band.role == "required" and metric.confidence_fraction < 0.40:
             penalty_total += weight * ((0.40 - metric.confidence_fraction) / 0.40)
         elif band.role == "exclusion" and metric.confidence_fraction > 0.55:
-            penalty_total += weight * metric.confidence_fraction * 0.85
+            exclusions.append(metric)
 
         band_matches.append(
             DiagnosticBandMatch(
@@ -410,6 +514,12 @@ def _score_group(
     raw_score = positive_total + bonus_total - penalty_total
     max_score = max(max_positive_total + max_bonus_total, 1e-6)
     score_pct = round(float(np.clip(raw_score / max_score, 0.0, 1.0) * 100.0), 1)
+    claims = [
+        (metric.matched_wavenumber, metric.band.range_min, metric.band.range_max)
+        for metric in metrics
+        if metric.band.role == "required"
+        and metric.confidence_fraction >= _EXPLAINED_OWNER_CONFIDENCE
+    ]
 
     strong_labels = [
         match.label
@@ -420,17 +530,46 @@ def _score_group(
 
     band_matches.sort(key=lambda match: (match.confidence, match.range_max), reverse=True)
 
-    return FunctionalGroupScore(
-        group_id=group.id,
-        group_name=group.name,
-        color=group.color,
-        score=score_pct,
-        summary=summary,
-        bands=tuple(band_matches),
-        matched_bonus_labels=tuple(matched_bonus_labels),
-        source_refs=group.source_refs,
-        source_links=_resolve_source_links(group.source_refs, source_lookup),
+    return (
+        FunctionalGroupScore(
+            group_id=group.id,
+            group_name=group.name,
+            color=group.color,
+            score=score_pct,
+            summary=summary,
+            bands=tuple(band_matches),
+            matched_bonus_labels=tuple(matched_bonus_labels),
+            source_refs=group.source_refs,
+            source_links=_resolve_source_links(group.source_refs, source_lookup),
+        ),
+        tuple(exclusions),
+        tuple(claims),
     )
+
+
+def _apply_exclusion_discount(
+    result: FunctionalGroupScore,
+    exclusions: tuple[_BandMetrics, ...],
+    claims: list[tuple[float | None, float, float]],
+) -> FunctionalGroupScore:
+    """Discount a group for a band a better-placed group has not already claimed."""
+    if not exclusions or result.score <= 0.0:
+        return result
+    pressure = 0.0
+    for metric in exclusions:
+        position = metric.matched_wavenumber
+        explained = position is not None and any(
+            low <= position <= high
+            or (owner is not None and abs(owner - position) <= _SAME_BAND_TOLERANCE)
+            for owner, low, high in claims
+        )
+        if explained:
+            continue
+        pressure += metric.band.weight * metric.band.reliability * metric.confidence_fraction
+    if pressure <= 0.0:
+        return result
+    discount = min(_MAX_EXCLUSION_DISCOUNT, pressure / 2.0)
+    return replace(result, score=round(result.score * (1.0 - discount), 1))
 
 
 def _supports_coherence(metric: _BandMetrics | None, threshold: float) -> bool:

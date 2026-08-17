@@ -63,6 +63,9 @@ PROJECT_STATE.md
 # QA test artifacts
 tests/qa_screenshots/
 tests/fixtures/reference library_1/
+# Analysed projects used to validate functional-group scoring. They carry the
+# SMILES of unpublished compounds and customer names — local only.
+tests/fixtures/irproj test/
 
 # OS
 .DS_Store
