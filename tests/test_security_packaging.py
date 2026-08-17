@@ -13,7 +13,7 @@ def test_distribution_and_runtime_versions_match() -> None:
     runtime_version = re.search(r'^APP_VERSION = "([^"]+)"$', config_text, re.MULTILINE)
 
     assert runtime_version is not None
-    assert project["version"] == runtime_version.group(1) == "0.26.0"
+    assert project["version"] == runtime_version.group(1) == "0.27.0"
     assert project["gui-scripts"]["ir-spectra"] == "main:main"
 
 
