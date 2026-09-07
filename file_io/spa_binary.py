@@ -570,8 +570,8 @@ class SPABinaryReader:
         peaks.sort(key=lambda peak: peak["position"], reverse=True)
         return peaks
 
-    @staticmethod
-    def _parse_omnic_history(text: str) -> dict:
+    @classmethod
+    def _parse_omnic_history(cls, text: str) -> dict:
         """Parse acquisition metadata from an OMNIC type-27 history text block.
 
         All fields are optional — returns a dict with None values for any field
@@ -590,20 +590,7 @@ class SPABinaryReader:
             "instrument_serial": None,
         }
 
-        # y_unit — "Final format:\t%(Transmittance|Absorbance|Reflectance|Single Beam)"
-        m_fmt = re.search(
-            r"Final format:\s*%?(Transmittance|Absorbance|Reflectance|Single Beam)",
-            text,
-        )
-        if m_fmt:
-            fmt = m_fmt.group(1)
-            _unit_map = {
-                "Transmittance": SpectralUnit.TRANSMITTANCE,
-                "Absorbance": SpectralUnit.ABSORBANCE,
-                "Reflectance": SpectralUnit.REFLECTANCE,
-                "Single Beam": SpectralUnit.SINGLE_BEAM,
-            }
-            result["y_unit"] = _unit_map.get(fmt, SpectralUnit.ABSORBANCE)
+        result["y_unit"] = cls._final_y_unit(text)
 
         # acquired_at — "Background collected on <weekday> <mon> <dd> HH:MM:SS YYYY ..."
         m_date = re.search(
@@ -631,6 +618,52 @@ class SPABinaryReader:
             result["instrument_serial"] = m_serial.group(1)
 
         return result
+
+    # The unit the file was acquired in, written once at the top of the history.
+    _OMNIC_ACQUIRED_FORMAT_RE = re.compile(
+        r"Final format:\s*%?(Transmittance|Absorbance|Reflectance|Single Beam)"
+    )
+    # Every later y-axis switch the analyst made, in the order they made them.
+    _OMNIC_CONVERSION_RE = re.compile(
+        r"Converted to\s+(%T|%Transmittance|Transmittance|absorbance|Absorbance|"
+        r"Reflectance|Single Beam)\s+y-axis units",
+        re.IGNORECASE,
+    )
+    _OMNIC_UNIT_NAMES = {
+        "%t": SpectralUnit.TRANSMITTANCE,
+        "%transmittance": SpectralUnit.TRANSMITTANCE,
+        "transmittance": SpectralUnit.TRANSMITTANCE,
+        "absorbance": SpectralUnit.ABSORBANCE,
+        "reflectance": SpectralUnit.REFLECTANCE,
+        "single beam": SpectralUnit.SINGLE_BEAM,
+    }
+
+    @classmethod
+    def _final_y_unit(cls, text: str) -> SpectralUnit | None:
+        """The unit the spectrum ended up in, or None when the history is silent.
+
+        OMNIC never rewrites the acquisition header when the analyst flips the
+        y-axis; it appends a line instead::
+
+            Final format:\t%Transmittance          <- how it was collected
+            ...
+            Converted to absorbance y-axis units    <- what happened later
+            Converted to %T y-axis units            <- and later still
+
+        The history is chronological, so the marker that appears last in the
+        text is the one that describes the data in the file. Reading only the
+        header is how a %T spectrum came into the app labelled Absorbance,
+        drawn upside down with its peak labels on the wrong side of the curve.
+        """
+        markers = [
+            (match.start(), match.group(1))
+            for pattern in (cls._OMNIC_ACQUIRED_FORMAT_RE, cls._OMNIC_CONVERSION_RE)
+            for match in pattern.finditer(text)
+        ]
+        if not markers:
+            return None
+        _, name = max(markers)
+        return cls._OMNIC_UNIT_NAMES.get(name.lower())
 
     # ------------------------------------------------------------------
     # Compact/legacy format parser (Variant 2)

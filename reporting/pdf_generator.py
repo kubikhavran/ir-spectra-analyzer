@@ -324,7 +324,7 @@ class PDFGenerator:
                 project.peaks,
                 caption_style,
                 dpi=options.dpi,
-                y_unit=spectrum.y_unit,
+                y_unit=spectrum.display_y_unit,
                 is_dip_spectrum=spectrum.is_dip_spectrum,
                 text_width=_LAND_TEXT_W,
                 text_height=_LAND_TEXT_H,
@@ -477,7 +477,7 @@ class PDFGenerator:
             spectrum.intensities,
             project.peaks,
             dpi=max(options.dpi, _FULL_BLEED_MIN_DPI),
-            y_unit=spectrum.y_unit,
+            y_unit=spectrum.display_y_unit,
             is_dip_spectrum=spectrum.is_dip_spectrum,
             figsize=(_LAND_W / 72.0, _LAND_H / 72.0),
             x_min=x_min,
@@ -1155,7 +1155,8 @@ class PDFGenerator:
             _add_row("Resolution", f"{resolution:.3f} cm\u207b\u00b9")
         if comment or spectrum.extra_metadata.get("omnic_comment"):
             _add_row("Comment", comment or spectrum.extra_metadata.get("omnic_comment"))
-        _add_row("Y unit", spectrum.y_unit.value)
+        # The unit the plot is drawn in, so the table can never contradict it.
+        _add_row("Y unit", spectrum.display_y_unit.value)
         _x_lo, _x_hi = self._resolve_x_range(options, spectrum)
         _add_row(
             "X range",
