@@ -66,6 +66,10 @@ tests/fixtures/reference library_1/
 # Analysed projects used to validate functional-group scoring. They carry the
 # SMILES of unpublished compounds and customer names — local only.
 tests/fixtures/irproj test/
+# Same reason: a customer sample, kept only as a local regression fixture for
+# the Y-unit guard. tests/test_y_unit_check.py skips without it, and the parse
+# rule itself is covered by synthetic history text.
+tests/fixtures/JUS251-SE.SPA
 
 # OS
 .DS_Store

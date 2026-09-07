@@ -17,8 +17,12 @@ from dataclasses import dataclass, field
 from datetime import datetime
 from enum import Enum
 from pathlib import Path
+from typing import TYPE_CHECKING
 
 import numpy as np
+
+if TYPE_CHECKING:
+    from processing.y_unit_check import YUnitCheck
 
 
 class SpectralUnit(Enum):
@@ -94,29 +98,13 @@ class Spectrum:
         values clearly behave like percent-transmittance curves near 100 with
         downward absorptions. For those files, use a conservative heuristic so
         label placement and peak workflows stay physically meaningful.
+
+        The decision lives in :mod:`processing.y_unit_check` so the viewer, the
+        report and the file readers all read the curve the same way.
         """
-        dip_units = {
-            SpectralUnit.TRANSMITTANCE,
-            SpectralUnit.REFLECTANCE,
-            SpectralUnit.SINGLE_BEAM,
-        }
-        if self.y_unit in dip_units:
-            return True
-        if self.y_unit == SpectralUnit.BASELINE_CORRECTED:
-            y_min_v = float(np.min(self.intensities))
-            y_max_v = float(np.max(self.intensities))
-            # Corrected %T spectra: baseline near 0, absorption bands as negative dips
-            return y_min_v < -5.0 and y_max_v <= 5.0
+        from processing.y_unit_check import is_dip_shaped  # noqa: PLC0415
 
-        y_min = float(np.min(self.intensities))
-        y_max = float(np.max(self.intensities))
-        if y_max <= 5.0 or y_min < -5.0 or y_max > 120.0:
-            return False
-
-        median = float(np.median(self.intensities))
-        lower_drop = median - y_min
-        upper_headroom = y_max - median
-        return lower_drop > (upper_headroom * 1.25)
+        return is_dip_shaped(self.intensities, self.y_unit)
 
     @property
     def display_y_unit(self) -> SpectralUnit:
@@ -130,3 +118,15 @@ class Spectrum:
         if self.y_unit == SpectralUnit.ABSORBANCE and self.is_dip_spectrum:
             return SpectralUnit.TRANSMITTANCE
         return self.y_unit
+
+    @property
+    def y_unit_check(self) -> YUnitCheck:
+        """Whether the declared Y unit survives a look at the numbers.
+
+        Non-empty ``warning`` means the header and the data disagree — the
+        state that turns a %T spectrum into an upside-down absorbance plot with
+        its peak labels on the wrong side of the curve.
+        """
+        from processing.y_unit_check import check_y_unit  # noqa: PLC0415
+
+        return check_y_unit(self.intensities, self.y_unit)

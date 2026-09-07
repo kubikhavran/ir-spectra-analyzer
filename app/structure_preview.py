@@ -86,18 +86,18 @@ class StructurePreviewService:
 
     def _render(self, path: Path) -> bytes:
         """Read the structure out of one project and draw it, or return b""."""
-        from chemistry.structure_renderer import render_to_svg, svg_to_png_bytes  # noqa: PLC0415
+        from chemistry.structure_renderer import render_structure  # noqa: PLC0415
 
         structure = self._structures.get(path)
         if not structure:
             return b""
 
-        svg = render_to_svg(
+        # The raster takes the shape of the molecule, so a wide structure gets
+        # the full preview width instead of a strip across the middle of a
+        # square; the popup scales whatever it is handed.
+        rendered = render_structure(
             smiles=structure.smiles,
             mol_block=structure.mol_block,
-            size=(self._size, self._size),
+            max_px=self._size * _HIDPI_SCALE,
         )
-        if not svg:
-            return b""
-        pixels = self._size * _HIDPI_SCALE
-        return svg_to_png_bytes(svg, pixels, pixels) or b""
+        return rendered.png if rendered else b""

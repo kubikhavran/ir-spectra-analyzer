@@ -789,7 +789,14 @@ class MainWindow(QMainWindow):
                 peak_note = "PEAKTABLE empty"
             else:
                 peak_note = "no PEAKTABLE in source file"
-            self.statusBar().showMessage(f"{base}, {peak_note}")
+            message = f"{base}, {peak_note}"
+            # A header that contradicts the curve is the one thing about a load
+            # the analyst cannot see for themselves: it flips the axis and puts
+            # every peak label on the wrong side of the band.
+            unit_warning = spectrum.y_unit_check.warning
+            if unit_warning:
+                message = f"{message} — ⚠ {unit_warning}"
+            self.statusBar().showMessage(message)
         except Exception as e:  # noqa: BLE001
             QMessageBox.critical(self, "Error", f"Failed to load spectrum:\n{e}")
 

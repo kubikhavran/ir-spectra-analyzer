@@ -424,11 +424,17 @@ def test_real_spa_wavenumber_range_plausible(spa_path: Path) -> None:
 @pytest.mark.skipif(not _has_fixtures, reason="No real .SPA fixtures in tests/fixtures/")
 @pytest.mark.parametrize("spa_path", _real_spa_files, ids=lambda p: p.name)
 def test_real_spa_intensities_finite(spa_path: Path) -> None:
-    """All intensity values must be finite (no NaN or Inf)."""
+    """Intensities carry real numbers, plus NaN wherever OMNIC blanked a region.
+
+    OMNIC's Blank tool cuts a band out of the curve (a solvent window, say) and
+    writes the gap as NaN. That is data, not corruption — but infinities never
+    are, and a spectrum that is nothing but gaps did not parse.
+    """
     from file_io.spa_binary import SPABinaryReader
 
     spec = SPABinaryReader().read(spa_path)
-    assert np.all(np.isfinite(spec.intensities)), "Non-finite intensity values found"
+    assert not np.any(np.isinf(spec.intensities)), "Infinite intensity values found"
+    assert np.any(np.isfinite(spec.intensities)), "No finite intensity values at all"
 
 
 @pytest.mark.skipif(not _has_fixtures, reason="No real .SPA fixtures in tests/fixtures/")
@@ -706,3 +712,54 @@ def test_omnic_text_decodes_central_european_diacritics() -> None:
     # Plain ASCII and latin-1-only bytes must keep working.
     assert decode_omnic_text(b"Smith") == "Smith"
     assert decode_omnic_text(b"\x81") == "\x81"
+
+
+# ── The Y unit is the last one the history mentions ──────────────────────────
+
+_HISTORY_CONVERTED_LAST = (
+    "Final format:\t%Absorbance\r\n"
+    "Collected on Wed Aug 19 17:00:00 2026\r\n"
+    "Converted to %T y-axis units on Wed Aug 19 17:25:47 2026 (GMT+02:00)\r\n"
+)
+_HISTORY_NO_FINAL_FORMAT = (
+    "Subtract on Wed Aug 19 17:25:07 2026 (GMT+02:00)\r\n"
+    "\t Take spectrum:\tSubtraction Result:JUS251 as Absorbance\r\n"
+    "Converted to %T y-axis units on Wed Aug 19 17:25:47 2026 (GMT+02:00)\r\n"
+    "Converted to absorbance y-axis units on Mon Sep 07 10:27:22 2026 (GMT+02:00)\r\n"
+    "Converted to %T y-axis units on Mon Sep 07 10:27:27 2026 (GMT+02:00)\r\n"
+)
+_HISTORY_ONLY_FINAL_FORMAT = "Final format:\t%Transmittance\r\nCollected on Wed Aug 19\r\n"
+_HISTORY_SILENT = "Collected on Wed Aug 19 17:00:00 2026\r\n"
+
+
+def test_history_y_unit_prefers_a_later_conversion() -> None:
+    """A conversion after acquisition is what the data actually is."""
+    from core.spectrum import SpectralUnit
+    from file_io.spa_binary import SPABinaryReader
+
+    parsed = SPABinaryReader()._parse_omnic_history(_HISTORY_CONVERTED_LAST)
+    assert parsed["y_unit"] == SpectralUnit.TRANSMITTANCE
+
+
+def test_history_y_unit_takes_the_last_of_several_conversions() -> None:
+    """The analyst flipped the axis three times; only the last one counts."""
+    from core.spectrum import SpectralUnit
+    from file_io.spa_binary import SPABinaryReader
+
+    parsed = SPABinaryReader()._parse_omnic_history(_HISTORY_NO_FINAL_FORMAT)
+    assert parsed["y_unit"] == SpectralUnit.TRANSMITTANCE
+
+
+def test_history_y_unit_falls_back_to_the_acquisition_header() -> None:
+    from core.spectrum import SpectralUnit
+    from file_io.spa_binary import SPABinaryReader
+
+    parsed = SPABinaryReader()._parse_omnic_history(_HISTORY_ONLY_FINAL_FORMAT)
+    assert parsed["y_unit"] == SpectralUnit.TRANSMITTANCE
+
+
+def test_history_y_unit_is_none_when_the_history_says_nothing() -> None:
+    """No marker means no claim; the caller keeps its own default."""
+    from file_io.spa_binary import SPABinaryReader
+
+    assert SPABinaryReader()._parse_omnic_history(_HISTORY_SILENT)["y_unit"] is None

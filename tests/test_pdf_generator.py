@@ -7,6 +7,7 @@ from pathlib import Path
 
 import numpy as np
 import pytest
+from reportlab.lib.units import cm
 
 from core.peak import Peak
 from core.project import Project
@@ -290,17 +291,17 @@ def test_pdf_generator_omits_structures_when_disabled(tmp_path: Path, monkeypatc
 
     render_calls: list = []
 
-    def _fake_render_to_svg(*args, **kwargs) -> str:
+    def _fake_render_structure(*args, **kwargs):
         render_calls.append(kwargs)
-        return "<svg></svg>"
+        return None
 
-    monkeypatch.setattr("chemistry.structure_renderer.render_to_svg", _fake_render_to_svg)
+    monkeypatch.setattr("chemistry.structure_renderer.render_structure", _fake_render_structure)
 
     out = tmp_path / "report_without_structures.pdf"
     PDFGenerator().generate(project, out, options=ReportOptions(include_structures=False))
 
     assert out.exists()
-    assert render_calls == [], "render_to_svg should not be called when include_structures=False"
+    assert render_calls == [], "the renderer should not run when include_structures=False"
 
 
 def test_spectrum_renderer_render_to_bytes() -> None:
@@ -405,17 +406,17 @@ def test_pdf_without_project_smiles_skips_structure_section(tmp_path, monkeypatc
 
     render_calls: list = []
 
-    def _fake_render_to_svg(*args, **kwargs) -> str:
+    def _fake_render_structure(*args, **kwargs):
         render_calls.append(kwargs)
-        return "<svg></svg>"
+        return None
 
-    monkeypatch.setattr("chemistry.structure_renderer.render_to_svg", _fake_render_to_svg)
+    monkeypatch.setattr("chemistry.structure_renderer.render_structure", _fake_render_structure)
 
     out = tmp_path / "report_no_project_smiles.pdf"
     PDFGenerator().generate(project, out, options=ReportOptions(include_structures=True))
 
     assert out.exists()
-    assert render_calls == [], "render_to_svg should not be called without SMILES/mol_block"
+    assert render_calls == [], "the renderer should not run without SMILES/mol_block"
 
 
 def _banded_spectrum() -> tuple[np.ndarray, np.ndarray, list[Peak]]:
@@ -921,3 +922,53 @@ def test_spectrum_renderer_closes_figure_when_savefig_fails(monkeypatch) -> None
         )
 
     assert set(plt.get_fignums()) == before
+
+
+# ── A big structure gets the room it needs ───────────────────────────────────
+
+_WIDE_SALT = (
+    "CCCCCCCCCCCCCC(=O)N(CCN(CCCN)CCCN)COCCCCOCCN(C(=O)CCCCCCCCCCCC)CCN(CCCN)CCCN.Cl.Cl.Cl.Cl.Cl.Cl"
+)
+
+
+def _structure_widths(smiles: str) -> tuple[float, float]:
+    """(width the molecule asks for, width the page would give it) in points."""
+    pytest.importorskip("rdkit")
+    from reporting.pdf_generator import _PORT_TEXT_W, PDFGenerator, ReportOptions
+
+    project = _make_project()
+    project.smiles = smiles
+    art = PDFGenerator()._structure_art(project, ReportOptions(), trim=True)
+    assert art is not None
+    column_w = _PORT_TEXT_W * 0.42 - 0.3 * cm
+    return (art.width_pt, column_w)
+
+
+def test_wide_structure_asks_for_more_than_the_metadata_column(qapp) -> None:
+    """The salt that used to render as a smudge must outgrow the side column."""
+    wanted, column_w = _structure_widths(_WIDE_SALT)
+    assert wanted > column_w
+
+
+def test_small_structure_still_sits_beside_the_metadata(qapp) -> None:
+    """A small molecule has no business taking the whole page width."""
+    wanted, column_w = _structure_widths("CC(=O)Oc1ccccc1C(=O)O")
+    assert wanted <= column_w
+
+
+def test_structure_flowable_fills_its_width_until_it_hits_the_height_cap() -> None:
+    from PIL import Image as PILImage
+
+    from reporting.pdf_generator import PDFGenerator, _StructureArt
+
+    buffer = io.BytesIO()
+    PILImage.new("RGBA", (4, 2)).save(buffer, format="PNG")
+    png = buffer.getvalue()
+
+    wide = _StructureArt(png=png, width_pt=0.0, aspect=0.5)
+    image = PDFGenerator()._structure_flowable(wide, 400.0, 300.0)
+    assert (image.drawWidth, image.drawHeight) == (400.0, 200.0)
+
+    tall = _StructureArt(png=png, width_pt=0.0, aspect=2.0)
+    capped = PDFGenerator()._structure_flowable(tall, 400.0, 300.0)
+    assert (capped.drawWidth, capped.drawHeight) == (150.0, 300.0)

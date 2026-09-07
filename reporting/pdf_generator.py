@@ -124,6 +124,31 @@ _IDENTITY_STRIPPED_SUFFIXES = frozenset({".spa", ".jdx", ".dx", ".irproj"})
 # still pixels, so give them a floor above the 150 dpi used inside a frame.
 _FULL_BLEED_MIN_DPI = 200
 
+# Points of paper per RDKit 2D coordinate unit. RDKit draws a single bond
+# 1.5 units long, so this prints a bond at about 0.42 cm — the size a bond is
+# drawn at in a printed structure. It is what lets a 60-atom salt claim the
+# full text width while ethanol stays the size of a stamp.
+_STRUCTURE_PT_PER_UNIT = 8.0
+# Tallest a full-width structure may get before it starts pushing the peak
+# table off the page on its own.
+_STRUCTURE_MAX_H = 11.0 * cm
+# Height cap for a structure sharing its row with the metadata table.
+_STRUCTURE_COLUMN_MAX_H = 7.0 * cm
+
+
+@dataclass(frozen=True)
+class _StructureArt:
+    """A structure ready to place on a page, plus how wide it wants to be.
+
+    ``width_pt`` comes from the molecule's own extent, not from the box it
+    will land in: it is what decides whether the drawing fits beside the
+    metadata table or has to take the page width for itself.
+    """
+
+    png: bytes
+    width_pt: float
+    aspect: float
+
 
 @dataclass
 class ReportOptions:
@@ -299,7 +324,7 @@ class PDFGenerator:
                 project.peaks,
                 caption_style,
                 dpi=options.dpi,
-                y_unit=spectrum.y_unit,
+                y_unit=spectrum.display_y_unit,
                 is_dip_spectrum=spectrum.is_dip_spectrum,
                 text_width=_LAND_TEXT_W,
                 text_height=_LAND_TEXT_H,
@@ -442,7 +467,8 @@ class PDFGenerator:
         sample_name, file_name = self._header_identifiers(project, spectrum)
         file_name = self._without_spectrum_suffix(file_name)
         method = self._measurement_method(project, spectrum)
-        structure_png = self._structure_png_bytes(project, options, trim=True)
+        structure_art = self._structure_art(project, options, trim=True)
+        structure_png = structure_art.png if structure_art else None
         # %T curves leave their gap under the baseline, absorbance above it.
         anchor_bottom = spectrum.is_dip_spectrum
 
@@ -451,7 +477,7 @@ class PDFGenerator:
             spectrum.intensities,
             project.peaks,
             dpi=max(options.dpi, _FULL_BLEED_MIN_DPI),
-            y_unit=spectrum.y_unit,
+            y_unit=spectrum.display_y_unit,
             is_dip_spectrum=spectrum.is_dip_spectrum,
             figsize=(_LAND_W / 72.0, _LAND_H / 72.0),
             x_min=x_min,
@@ -460,7 +486,7 @@ class PDFGenerator:
             diagnostic_regions=options.diagnostic_regions,
             split_at=2000.0 if options.split_xaxis else None,
             label_placements=options.peak_label_placements,
-            annotation_target=self._annotation_target(structure_png),
+            annotation_target=self._annotation_target(structure_art),
         )
 
         def _paint(canvas: Canvas, doc: object) -> None:
@@ -593,20 +619,23 @@ class PDFGenerator:
 
     # Width the floating block asks for, as a fraction of the page, plus the
     # vertical allowance for the two identity lines, the sampling-method line
-    # below them, and the frame padding.
+    # below them, and the frame padding. A structure that wants more room than
+    # the default may claim up to _BLOCK_MAX_WIDTH of the page — a big salt
+    # drawn a quarter of a page wide is unreadable, and the plot behind it has
+    # empty space to spare.
     _BLOCK_TARGET_WIDTH = 0.26
+    _BLOCK_MAX_WIDTH = 0.38
     _BLOCK_TEXT_ALLOWANCE = 52.0
 
     @classmethod
-    def _annotation_target(cls, structure_png: bytes | None) -> tuple[float, float]:
+    def _annotation_target(cls, structure: _StructureArt | None) -> tuple[float, float]:
         """Ask the renderer for a gap shaped like the block we are going to draw."""
         width_pt = _LAND_W * cls._BLOCK_TARGET_WIDTH
-        if structure_png is None:
+        if structure is None:
             return (width_pt * 0.8 / _LAND_W, cls._BLOCK_TEXT_ALLOWANCE / _LAND_H)
 
-        img_w, img_h = cls._png_size(structure_png)
-        aspect = img_h / img_w if img_w else 1.0
-        height_pt = width_pt * aspect + cls._BLOCK_TEXT_ALLOWANCE
+        width_pt = min(max(width_pt, structure.width_pt), _LAND_W * cls._BLOCK_MAX_WIDTH)
+        height_pt = width_pt * structure.aspect + cls._BLOCK_TEXT_ALLOWANCE
         return (width_pt / _LAND_W, min(max(height_pt / _LAND_H, 0.08), 0.5))
 
     @staticmethod
@@ -761,16 +790,20 @@ class PDFGenerator:
         return (sample_name or "", file_name or project.name)
 
     @classmethod
-    def _structure_png_bytes(
+    def _structure_art(
         cls, project: Project, options: ReportOptions, *, trim: bool = False
-    ) -> bytes | None:
-        """Render the project's molecule to PNG bytes, or None when there is none.
+    ) -> _StructureArt | None:
+        """Render the project's molecule, or None when there is none.
+
+        The raster is shaped like the molecule rather than squeezed into a
+        square, so a wide structure keeps its resolution instead of spending
+        most of its pixels on empty canvas.
 
         Args:
-            trim: Crop the empty border a molecule renderer leaves around the
-                drawing, so the image fills whatever box it is given.
+            trim: Crop the thin border the renderer leaves around the drawing,
+                so the image fills whatever box it is given.
         """
-        from chemistry.structure_renderer import render_to_svg, svg_to_png_bytes  # noqa: PLC0415
+        from chemistry.structure_renderer import render_structure  # noqa: PLC0415
 
         mol_block = getattr(project, "mol_block", "")
         if not options.include_structures:
@@ -778,16 +811,27 @@ class PDFGenerator:
         if not (project.smiles or mol_block or project.structure_image):
             return None
 
+        width_pt = 0.0
         png_bytes: bytes | None = None
         if project.smiles or mol_block:
-            svg = render_to_svg(smiles=project.smiles, mol_block=mol_block, size=(380, 380))
-            if svg:
-                png_bytes = svg_to_png_bytes(svg, 760, 760)
+            rendered = render_structure(smiles=project.smiles, mol_block=mol_block)
+            if rendered is not None:
+                png_bytes = rendered.png
+                width_pt = rendered.width_units * _STRUCTURE_PT_PER_UNIT
         if not png_bytes and project.structure_image:
+            # A PNG saved by an older version: no drawing units to go on, so it
+            # keeps the column-sized slot structures have always had.
             png_bytes = project.structure_image
-        if png_bytes and trim:
+        if not png_bytes:
+            return None
+        if trim:
             png_bytes = cls._trim_png_border(png_bytes)
-        return png_bytes
+        img_w, img_h = cls._png_size(png_bytes)
+        return _StructureArt(
+            png=png_bytes,
+            width_pt=width_pt,
+            aspect=(img_h / img_w) if img_w else 1.0,
+        )
 
     @staticmethod
     def _trim_png_border(png_bytes: bytes) -> bytes:
@@ -1111,18 +1155,25 @@ class PDFGenerator:
             _add_row("Resolution", f"{resolution:.3f} cm\u207b\u00b9")
         if comment or spectrum.extra_metadata.get("omnic_comment"):
             _add_row("Comment", comment or spectrum.extra_metadata.get("omnic_comment"))
-        _add_row("Y unit", spectrum.y_unit.value)
+        # The unit the plot is drawn in, so the table can never contradict it.
+        _add_row("Y unit", spectrum.display_y_unit.value)
         _x_lo, _x_hi = self._resolve_x_range(options, spectrum)
         _add_row(
             "X range",
             f"{max(_x_lo, _x_hi):.0f} \u2013 {min(_x_lo, _x_hi):.0f} cm\u207b\u00b9",
         )
 
-        # ── Try to render molecule structure (right column) ──────────────────
-        png_bytes = self._structure_png_bytes(project, options)
+        # ── Render the molecule and decide how much room it needs ────────────
+        structure = self._structure_art(project, options, trim=True)
 
-        # ── Decide layout ────────────────────────────────────────────────────
-        if png_bytes:
+        # A structure shares the row with the metadata table only while it is
+        # small enough to still read there. Anything wider takes the full text
+        # width underneath instead — a 60-atom salt squeezed into a 40 % column
+        # is a smudge, and that column is the whole reason it looked tiny.
+        column_w = _PORT_TEXT_W * 0.42 - 0.3 * cm
+        beside_table = structure is not None and structure.width_pt <= column_w
+
+        if beside_table:
             left_col_w = _PORT_TEXT_W * 0.58
             right_col_w = _PORT_TEXT_W - left_col_w
         else:
@@ -1148,20 +1199,10 @@ class PDFGenerator:
         else:
             meta_subtable = Spacer(left_col_w, 1)
 
-        if png_bytes:
-            img_w_px, img_h_px = self._png_size(png_bytes)
-
-            max_w = right_col_w - 0.3 * cm  # small inset from column edge
-            max_h = 7.0 * cm
-            if img_w_px > 0 and img_h_px > 0:
-                scale = min(max_w / img_w_px, max_h / img_h_px)
-                embed_w = img_w_px * scale
-                embed_h = img_h_px * scale
-            else:
-                embed_w = embed_h = max_w
-
-            right_cell: object = Image(io.BytesIO(png_bytes), width=embed_w, height=embed_h)
-
+        if beside_table and structure is not None:
+            right_cell = self._structure_flowable(
+                structure, right_col_w - 0.3 * cm, _STRUCTURE_COLUMN_MAX_H
+            )
             two_col = Table(
                 [[meta_subtable, right_cell]],
                 colWidths=[left_col_w, right_col_w],
@@ -1172,6 +1213,9 @@ class PDFGenerator:
                         ("VALIGN", (0, 0), (-1, -1), "TOP"),
                         ("ALIGN", (1, 0), (1, 0), "CENTER"),
                         ("TOPPADDING", (0, 0), (-1, -1), 0),
+                        # The drawing now fills its cell, so without this it
+                        # would start on the rule under the header.
+                        ("TOPPADDING", (1, 0), (1, 0), 6),
                         ("BOTTOMPADDING", (0, 0), (-1, -1), 0),
                         ("LEFTPADDING", (0, 0), (-1, -1), 0),
                         ("RIGHTPADDING", (0, 0), (-1, -1), 0),
@@ -1181,8 +1225,26 @@ class PDFGenerator:
             story.append(two_col)
         else:
             story.append(meta_subtable)
+            if structure is not None:
+                story.append(Spacer(1, 0.3 * cm))
+                # Once it has the row to itself there is nothing to save the
+                # space for: take the text width, and only the height cap
+                # pulls it back.
+                wide = self._structure_flowable(structure, _PORT_TEXT_W, _STRUCTURE_MAX_H)
+                wide.hAlign = "CENTER"
+                story.append(wide)
 
         story.append(Spacer(1, 0.4 * cm))
+
+    @staticmethod
+    def _structure_flowable(structure: _StructureArt, max_width: float, max_height: float) -> Image:
+        """The structure as a flowable filling `max_width`, never taller than `max_height`."""
+        width = max(max_width, 1.0)
+        height = width * structure.aspect
+        if height > max_height:
+            height = max_height
+            width = height / structure.aspect if structure.aspect > 0 else width
+        return Image(io.BytesIO(structure.png), width=width, height=height)
 
     @staticmethod
     def _paragraph_text(value: object) -> str:
