@@ -20,6 +20,7 @@ import pyqtgraph as pg
 from PySide6.QtCore import Qt, Signal
 from PySide6.QtGui import QColor, QFont
 from PySide6.QtWidgets import (
+    QComboBox,
     QHBoxLayout,
     QLabel,
     QPushButton,
@@ -29,7 +30,7 @@ from PySide6.QtWidgets import (
 )
 
 from core.peak import Peak
-from core.spectrum import Spectrum
+from core.spectrum import SpectralUnit, Spectrum
 
 # Default visible X range (standard IR region)
 _X_DEFAULT_MIN = 400.0
@@ -277,6 +278,10 @@ class SpectrumWidget(QWidget):
     def __init__(self, parent=None) -> None:
         super().__init__(parent)
         self._spectrum: Spectrum | None = None
+        # The spectrum as it was loaded. `_spectrum` is what is on screen,
+        # which is the same object until a different display unit is chosen.
+        self._source_spectrum: Spectrum | None = None
+        self._display_unit: SpectralUnit | None = None
         self._peaks: list[Peak] = []
         self._peak_items: list = []
         self._selected_peak: Peak | None = None  # viewer-only: marks the active peak
@@ -362,6 +367,22 @@ class SpectrumWidget(QWidget):
         self._split_btn.setToolTip("Show fingerprint region (400–2000 cm⁻¹) expanded")
         self._split_btn.toggled.connect(self._on_split_toggled)
         toolbar_row.addWidget(self._split_btn)
+
+        # Y-axis unit selector — hidden until a spectrum with a convertible
+        # unit is loaded, so it never offers a choice that does not exist.
+        self._unit_label = QLabel("Show as:")
+        toolbar_row.addWidget(self._unit_label)
+        self._unit_combo = QComboBox()
+        self._unit_combo.setFixedHeight(22)
+        self._unit_combo.setToolTip(
+            "Redraw the spectrum in another intensity unit.\n"
+            "The loaded data is not changed; overlays follow the same unit."
+        )
+        self._unit_combo.currentIndexChanged.connect(self._on_unit_selected)
+        toolbar_row.addWidget(self._unit_combo)
+        self._unit_label.setVisible(False)
+        self._unit_combo.setVisible(False)
+
         toolbar_row.addStretch()
         layout.addWidget(self._toolbar_bar)
 
@@ -500,24 +521,27 @@ class SpectrumWidget(QWidget):
             plot_widget.addItem(leader)
             items_list.append(leader)
 
-            if peak.manual_placement:
+            peak_y = self._display_y(peak.intensity)
+            if peak.manual_placement and not self.is_converted_view():
                 lx = peak.position + peak.label_offset_x
                 ly = peak.intensity + peak.label_offset_y
             else:
                 lx = peak.position
-                ly = peak.intensity + label_offset
+                ly = peak_y + label_offset
 
             label_text, label_color = self._label_text_and_color(peak)
             label = _DraggableLabel(
                 peak=peak,
                 peak_x=peak.position,
-                peak_y=peak.intensity,
-                label_offset=ly - peak.intensity,
+                peak_y=peak_y,
+                label_offset=ly - peak_y,
                 label_x=lx,
                 label_y=ly,
                 click_callback=self._on_label_clicked,
                 shift_click_callback=self._on_label_shift_clicked,
-                drag_finished_callback=self.peak_label_moved.emit,
+                drag_finished_callback=(
+                    None if self.is_converted_view() else self.peak_label_moved.emit
+                ),
                 text=label_text,
                 color=label_color,
                 angle=90,
@@ -607,14 +631,128 @@ class SpectrumWidget(QWidget):
                 resetting to the full view. Used on undo/redo so adding a peak
                 while zoomed in does not snap the graph back to the full range.
         """
-        self._spectrum = spectrum
+        self._source_spectrum = spectrum
+        self._spectrum = self._displayed(spectrum)
+        self._refresh_unit_selector()
+        self._draw_spectrum_curves()
+
+        if not preserve_view:
+            self.reset_view()
+
+    # ── Display unit ─────────────────────────────────────────────────────────
+
+    def display_unit(self) -> SpectralUnit | None:
+        """The unit the curve is drawn in, or None while it is shown as loaded."""
+        return self._display_unit
+
+    def set_display_unit(self, unit: SpectralUnit | None) -> None:
+        """Draw the spectrum converted into ``unit``; None restores the file's own.
+
+        The loaded data is never touched — this only changes what is plotted, so
+        an ATR spectrum measured in absorbance can be laid over a library of
+        %T references and read against them.
+        """
+        if unit == self._display_unit:
+            return
+        self._display_unit = unit
+        if self._source_spectrum is None:
+            return
+        self._spectrum = self._displayed(self._source_spectrum)
+        # Keep the toolbar honest when the unit is set from code (project load,
+        # tests) rather than by picking it there.
+        self._refresh_unit_selector()
+        self._draw_spectrum_curves()
+        self._redraw_overlays()
+        self.set_peaks(self._peaks)
+        self.reset_view()
+
+    def _refresh_unit_selector(self) -> None:
+        """Offer the units this spectrum can be shown in, or hide the choice."""
+        spectrum = self._source_spectrum
+        options = spectrum.convertible_units() if spectrum is not None else ()
+        show = len(options) > 1
+        self._unit_label.setVisible(show)
+        self._unit_combo.setVisible(show)
+        if not show:
+            self._display_unit = None
+            return
+
+        native = spectrum.display_y_unit if spectrum is not None else None
+        blocked = self._unit_combo.blockSignals(True)
+        try:
+            self._unit_combo.clear()
+            for unit in options:
+                suffix = " (as loaded)" if unit == native else ""
+                self._unit_combo.addItem(f"{unit.value}{suffix}", unit)
+            wanted = self._display_unit or native
+            index = self._unit_combo.findData(wanted)
+            self._unit_combo.setCurrentIndex(max(index, 0))
+        finally:
+            self._unit_combo.blockSignals(blocked)
+
+    def _on_unit_selected(self, index: int) -> None:
+        """Toolbar choice — the native unit is stored as "no conversion"."""
+        unit = self._unit_combo.itemData(index)
+        if unit is None:
+            return
+        native = self._source_spectrum.display_y_unit if self._source_spectrum else None
+        self.set_display_unit(None if unit == native else unit)
+
+    def is_converted_view(self) -> bool:
+        """True when the plot shows something other than the loaded unit.
+
+        Label positions are stored in the file's own intensity units, so the
+        drag and auto-arrange paths stay switched off while this is True rather
+        than writing offsets that would be nonsense back in the native view.
+        """
+        source = self._source_spectrum
+        return (
+            source is not None
+            and self._display_unit is not None
+            and self._display_unit != source.display_y_unit
+        )
+
+    def _displayed(self, spectrum: Spectrum) -> Spectrum:
+        """`spectrum` in the chosen display unit, or unchanged when it cannot be."""
+        if self._display_unit is None:
+            return spectrum
+        return spectrum.converted_to(self._display_unit) or spectrum
+
+    def _overlay_in_display_unit(self, spectrum: Spectrum) -> Spectrum:
+        """An overlay redrawn in the unit the main curve is using.
+
+        Library references are %T and an ATR query is absorbance; without this
+        the reference is plotted on a 0-100 scale against a 0-0.2 curve and
+        disappears off the top of the plot.
+        """
+        target = self._spectrum.display_y_unit if self._spectrum is not None else None
+        if target is None:
+            return spectrum
+        return spectrum.converted_to(target) or spectrum
+
+    def _display_y(self, value: float) -> float:
+        """One intensity moved from the file's unit into the displayed one."""
+        source = self._source_spectrum
+        if source is None or not self.is_converted_view():
+            return float(value)
+        from processing.unit_conversion import convert_intensities  # noqa: PLC0415
+
+        converted = convert_intensities(
+            np.asarray([value], dtype=float), source.display_y_unit, self._display_unit
+        )
+        return float(value) if converted is None else float(converted[0])
+
+    def _draw_spectrum_curves(self) -> None:
+        """Push the displayed spectrum into the main and fingerprint curves."""
+        spectrum = self._spectrum
+        if spectrum is None:
+            return
         # "finite" leaves a gap wherever the source blanked a region instead of
         # drawing a straight line across the missing data.
         self._spectrum_curve.setData(
             x=spectrum.wavenumbers, y=spectrum.intensities, connect="finite"
         )
 
-        # Update Y-axis label from spectrum unit
         label_style = {"color": "#000000", "font-size": "10pt"}
         self._plot_widget.setLabel("left", spectrum.display_y_unit.value, **label_style)
 
@@ -622,9 +760,6 @@ class SpectrumWidget(QWidget):
             self._spectrum_curve_fp.setData(
                 x=spectrum.wavenumbers, y=spectrum.intensities, connect="finite"
             )
-
-        if not preserve_view:
-            self.reset_view()
 
     def _default_x_range(self) -> tuple[float, float]:
         """Return the full-view x range: the standard IR window widened to the data.
@@ -673,11 +808,12 @@ class SpectrumWidget(QWidget):
             label_margin = y_span * 0.08
             label_y_values = []
             for peak in self._peaks:
-                if peak.manual_placement:
+                if peak.manual_placement and not self.is_converted_view():
                     label_y_values.append(peak.intensity + peak.label_offset_y)
                 else:
                     label_y_values.append(
-                        peak.intensity + (-label_offset if peaks_are_dips else label_offset)
+                        self._display_y(peak.intensity)
+                        + (-label_offset if peaks_are_dips else label_offset)
                     )
             if label_y_values:
                 if peaks_are_dips:
@@ -785,7 +921,7 @@ class SpectrumWidget(QWidget):
         intentionally forbidden here so leader lines remain mostly vertical
         and do not start criss-crossing the plot.
         """
-        if self._spectrum is None or not self._peaks:
+        if self._spectrum is None or not self._peaks or self.is_converted_view():
             return []
 
         labels = self._peak_label_items()
@@ -997,7 +1133,11 @@ class SpectrumWidget(QWidget):
         self._overlay_curves_fp.clear()
 
         alpha = int(self._overlay_alpha / 100 * 255)
-        for i, spectrum in enumerate(self._overlay_spectra_cache):
+        for i, raw in enumerate(self._overlay_spectra_cache):
+            # A %T reference laid over an absorbance query sits three orders of
+            # magnitude away and reads as a flat line at the top of the plot;
+            # matching the displayed unit is what makes the two comparable.
+            spectrum = self._overlay_in_display_unit(raw)
             hex_color = _OVERLAY_COLORS[i % len(_OVERLAY_COLORS)]
             r = int(hex_color[1:3], 16)
             g = int(hex_color[3:5], 16)

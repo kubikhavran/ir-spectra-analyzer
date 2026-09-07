@@ -70,6 +70,10 @@ tests/fixtures/irproj test/
 # the Y-unit guard. tests/test_y_unit_check.py skips without it, and the parse
 # rule itself is covered by synthetic history text.
 tests/fixtures/JUS251-SE.SPA
+# 16 MB of unpublished ATR measurements, kept locally to check the display-unit
+# work against real absorbance spectra. tests/test_display_unit.py builds its
+# own curves, so nothing in CI depends on them.
+tests/fixtures/ATR.zip
 
 # OS
 .DS_Store
