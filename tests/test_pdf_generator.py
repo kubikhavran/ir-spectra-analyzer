@@ -12,6 +12,7 @@ from reportlab.lib.units import cm
 from core.peak import Peak
 from core.project import Project
 from core.spectrum import SpectralUnit, Spectrum
+from reporting.pdf_generator import _PORT_TEXT_W
 
 
 def _make_spectrum(y_unit: SpectralUnit = SpectralUnit.TRANSMITTANCE) -> Spectrum:
@@ -931,29 +932,65 @@ _WIDE_SALT = (
 )
 
 
-def _structure_widths(smiles: str) -> tuple[float, float]:
-    """(width the molecule asks for, width the page would give it) in points."""
+def _column_widths(smiles: str) -> tuple[float, float]:
+    """(metadata width, structure width) in points for a project with this molecule."""
     pytest.importorskip("rdkit")
-    from reporting.pdf_generator import _PORT_TEXT_W, PDFGenerator, ReportOptions
+    from reportlab.lib.styles import ParagraphStyle, getSampleStyleSheet
+
+    from reporting.pdf_generator import _PORT_TEXT_W, PDFGenerator
+
+    styles = getSampleStyleSheet()
+    key_style = ParagraphStyle("K", parent=styles["Normal"], fontSize=9, fontName="Helvetica-Bold")
+    val_style = ParagraphStyle("V", parent=styles["Normal"], fontSize=9, fontName="Helvetica")
+    meta_text = [
+        ("Sample", "I79EDJ1147"),
+        ("File", "JUS251-SE"),
+        ("Instrument", "Nicolet iS 50"),
+        ("Comment", "CHCl3, film"),
+        ("X range", "3800 - 400 cm-1"),
+    ]
+    key_w, val_w = PDFGenerator()._metadata_column_widths(
+        meta_text, key_style, val_style, has_structure=True
+    )
+    return (key_w + val_w, _PORT_TEXT_W - (key_w + val_w))
+
+
+def test_structure_always_sits_beside_the_metadata(qapp) -> None:
+    """Under the table it reads bigger but costs the peak table its page."""
+    pytest.importorskip("rdkit")
+    from reporting.pdf_generator import PDFGenerator, ReportOptions
 
     project = _make_project()
-    project.smiles = smiles
+    project.smiles = _WIDE_SALT
     art = PDFGenerator()._structure_art(project, ReportOptions(), trim=True)
     assert art is not None
-    column_w = _PORT_TEXT_W * 0.42 - 0.3 * cm
-    return (art.width_pt, column_w)
+
+    _meta_w, structure_w = _column_widths(_WIDE_SALT)
+    # It has a column, and a taller one than the old fixed 42 % split gave it.
+    assert structure_w > _PORT_TEXT_W * 0.42
+    image = PDFGenerator()._structure_flowable(art, structure_w - 0.3 * cm, 7.0 * cm)
+    assert image.drawHeight <= 7.0 * cm
 
 
-def test_wide_structure_asks_for_more_than_the_metadata_column(qapp) -> None:
-    """The salt that used to render as a smudge must outgrow the side column."""
-    wanted, column_w = _structure_widths(_WIDE_SALT)
-    assert wanted > column_w
+def test_metadata_table_gives_its_spare_width_to_the_structure() -> None:
+    """Short labels and values must not reserve room the drawing could use."""
+    meta_w, structure_w = _column_widths("CCO")
+    assert meta_w + structure_w == pytest.approx(_PORT_TEXT_W)
+    assert meta_w < _PORT_TEXT_W * 0.58  # narrower than the old fixed split
 
 
-def test_small_structure_still_sits_beside_the_metadata(qapp) -> None:
-    """A small molecule has no business taking the whole page width."""
-    wanted, column_w = _structure_widths("CC(=O)Oc1ccccc1C(=O)O")
-    assert wanted <= column_w
+def test_metadata_table_keeps_the_page_when_there_is_no_structure() -> None:
+    from reportlab.lib.styles import ParagraphStyle, getSampleStyleSheet
+
+    from reporting.pdf_generator import _PORT_TEXT_W, PDFGenerator
+
+    styles = getSampleStyleSheet()
+    key_style = ParagraphStyle("K", parent=styles["Normal"], fontSize=9, fontName="Helvetica-Bold")
+    val_style = ParagraphStyle("V", parent=styles["Normal"], fontSize=9, fontName="Helvetica")
+    key_w, val_w = PDFGenerator()._metadata_column_widths(
+        [("Sample", "x")], key_style, val_style, has_structure=False
+    )
+    assert key_w + val_w == pytest.approx(_PORT_TEXT_W)
 
 
 def test_structure_flowable_fills_its_width_until_it_hits_the_height_cap() -> None:

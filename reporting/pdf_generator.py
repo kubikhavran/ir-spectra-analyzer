@@ -129,10 +129,8 @@ _FULL_BLEED_MIN_DPI = 200
 # drawn at in a printed structure. It is what lets a 60-atom salt claim the
 # full text width while ethanol stays the size of a stamp.
 _STRUCTURE_PT_PER_UNIT = 8.0
-# Tallest a full-width structure may get before it starts pushing the peak
-# table off the page on its own.
-_STRUCTURE_MAX_H = 11.0 * cm
-# Height cap for a structure sharing its row with the metadata table.
+# Height cap for the structure: it shares its row with the metadata table, so
+# anything taller than this eats into the peak table for no reading benefit.
 _STRUCTURE_COLUMN_MAX_H = 7.0 * cm
 
 
@@ -616,6 +614,14 @@ class PDFGenerator:
                 max_height=structure_h,
             )
         canvas.restoreState()
+
+    # How the metadata table divides itself when a structure sits beside it.
+    _META_KEY_GAP = 12.0
+    _META_KEY_MIN_W = 2.2 * cm
+    _META_KEY_MAX_W = 4.0 * cm
+    _META_VALUE_GAP = 6.0
+    _META_MIN_W = 6.0 * cm
+    _META_MAX_W = _PORT_TEXT_W * 0.62
 
     # Width the floating block asks for, as a fraction of the page, plus the
     # vertical allowance for the two identity lines, the sampling-method line
@@ -1105,6 +1111,7 @@ class PDFGenerator:
         # ── Build metadata rows ──────────────────────────────────────────────
         project_metadata = getattr(project, "metadata", None)
         meta_rows: list = []
+        meta_text: list[tuple[str, str]] = []
 
         def _add_row(key: str, value: str | None) -> None:
             if value:
@@ -1114,6 +1121,7 @@ class PDFGenerator:
                         Paragraph(self._paragraph_text(value), val_style),
                     ]
                 )
+                meta_text.append((key, str(value)))
 
         # The sample designation is the spectrum title — the same value the
         # header prints top-right.
@@ -1163,25 +1171,18 @@ class PDFGenerator:
             f"{max(_x_lo, _x_hi):.0f} \u2013 {min(_x_lo, _x_hi):.0f} cm\u207b\u00b9",
         )
 
-        # ── Render the molecule and decide how much room it needs ────────────
+        # ── Render the molecule; it always sits beside the metadata ──────────
         structure = self._structure_art(project, options, trim=True)
 
-        # A structure shares the row with the metadata table only while it is
-        # small enough to still read there. Anything wider takes the full text
-        # width underneath instead — a 60-atom salt squeezed into a 40 % column
-        # is a smudge, and that column is the whole reason it looked tiny.
-        column_w = _PORT_TEXT_W * 0.42 - 0.3 * cm
-        beside_table = structure is not None and structure.width_pt <= column_w
-
-        if beside_table:
-            left_col_w = _PORT_TEXT_W * 0.58
-            right_col_w = _PORT_TEXT_W - left_col_w
-        else:
-            left_col_w = _PORT_TEXT_W
-            right_col_w = 0.0
-
-        key_col_w = 4.0 * cm
-        val_col_w = left_col_w - key_col_w
+        # The metadata is a handful of short label/value pairs, so it takes
+        # only the width it needs and the structure gets everything left over.
+        # Putting the drawing underneath instead would read bigger but costs
+        # the peak table its page — which is the worse trade in a lab report.
+        key_col_w, val_col_w = self._metadata_column_widths(
+            meta_text, key_style, val_style, has_structure=structure is not None
+        )
+        left_col_w = key_col_w + val_col_w
+        right_col_w = _PORT_TEXT_W - left_col_w if structure is not None else 0.0
 
         if meta_rows:
             meta_subtable = Table(meta_rows, colWidths=[key_col_w, val_col_w])
@@ -1199,7 +1200,7 @@ class PDFGenerator:
         else:
             meta_subtable = Spacer(left_col_w, 1)
 
-        if beside_table and structure is not None:
+        if structure is not None:
             right_cell = self._structure_flowable(
                 structure, right_col_w - 0.3 * cm, _STRUCTURE_COLUMN_MAX_H
             )
@@ -1225,16 +1226,47 @@ class PDFGenerator:
             story.append(two_col)
         else:
             story.append(meta_subtable)
-            if structure is not None:
-                story.append(Spacer(1, 0.3 * cm))
-                # Once it has the row to itself there is nothing to save the
-                # space for: take the text width, and only the height cap
-                # pulls it back.
-                wide = self._structure_flowable(structure, _PORT_TEXT_W, _STRUCTURE_MAX_H)
-                wide.hAlign = "CENTER"
-                story.append(wide)
 
         story.append(Spacer(1, 0.4 * cm))
+
+    @classmethod
+    def _metadata_column_widths(
+        cls,
+        meta_text: list[tuple[str, str]],
+        key_style: ParagraphStyle,
+        val_style: ParagraphStyle,
+        *,
+        has_structure: bool,
+    ) -> tuple[float, float]:
+        """Width of the label and value columns, fitted to what they hold.
+
+        With no structure to make room for, the table keeps the full text
+        width. Beside one, every point the labels do not need is a point the
+        drawing does: a fixed 4 cm label column left a visible gap after
+        ``Instrument`` and squeezed the molecule for no reason.
+        """
+        keys = [key for key, _ in meta_text]
+        values = [value for _, value in meta_text]
+        key_w = max(
+            (pdfmetrics.stringWidth(key, key_style.fontName, key_style.fontSize) for key in keys),
+            default=0.0,
+        )
+        key_col_w = min(max(key_w + cls._META_KEY_GAP, cls._META_KEY_MIN_W), cls._META_KEY_MAX_W)
+        if not has_structure:
+            return (key_col_w, _PORT_TEXT_W - key_col_w)
+
+        value_w = max(
+            (
+                pdfmetrics.stringWidth(value, val_style.fontName, val_style.fontSize)
+                for value in values
+            ),
+            default=0.0,
+        )
+        # A long comment wraps rather than pushing the drawing off the page.
+        total = min(
+            max(key_col_w + value_w + cls._META_VALUE_GAP, cls._META_MIN_W), cls._META_MAX_W
+        )
+        return (key_col_w, total - key_col_w)
 
     @staticmethod
     def _structure_flowable(structure: _StructureArt, max_width: float, max_height: float) -> Image:
