@@ -13,7 +13,7 @@ pracují s instancí Spectrum.
 
 from __future__ import annotations
 
-from dataclasses import dataclass, field
+from dataclasses import dataclass, field, replace
 from datetime import datetime
 from enum import Enum
 from pathlib import Path
@@ -118,6 +118,30 @@ class Spectrum:
         if self.y_unit == SpectralUnit.ABSORBANCE and self.is_dip_spectrum:
             return SpectralUnit.TRANSMITTANCE
         return self.y_unit
+
+    def converted_to(self, unit: SpectralUnit) -> Spectrum | None:
+        """This spectrum with its intensities recomputed into ``unit``.
+
+        The source is :attr:`display_y_unit`, so a file whose header lies still
+        converts from the scale its numbers are actually on. Returns None when
+        the two units have no defined transform, and ``self`` when there is
+        nothing to do — the original object is never modified.
+        """
+        from processing.unit_conversion import convert_intensities  # noqa: PLC0415
+
+        source = self.display_y_unit
+        if unit == source:
+            return self
+        converted = convert_intensities(self.intensities, source, unit)
+        if converted is None:
+            return None
+        return replace(self, intensities=converted, y_unit=unit)
+
+    def convertible_units(self) -> tuple[SpectralUnit, ...]:
+        """Units this spectrum can be displayed as, itself included."""
+        from processing.unit_conversion import convertible_units  # noqa: PLC0415
+
+        return tuple(convertible_units(self.display_y_unit))
 
     @property
     def y_unit_check(self) -> YUnitCheck:
