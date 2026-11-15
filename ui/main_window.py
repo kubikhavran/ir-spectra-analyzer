@@ -69,6 +69,8 @@ class MainWindow(QMainWindow):
 
     _MATCH_RESULTS_LIMIT = 20
     _ASSIGNMENT_TRANSFER_TOLERANCE = 8.0  # cm⁻¹ window for copying assignments
+    # A detected peak this close to an already assigned one is the same band.
+    _DETECT_KEEP_TOLERANCE = 4.0  # cm⁻¹
 
     def __init__(
         self,
@@ -129,16 +131,23 @@ class MainWindow(QMainWindow):
         new_window_action.triggered.connect(self.new_window_requested)
         file_menu.addSeparator()
 
-        open_action = file_menu.addAction("&Open SPA...")
+        open_action = file_menu.addAction("&Open Spectrum...")
         open_action.setShortcut("Ctrl+O")
         open_action.triggered.connect(self._on_open_file)
 
         open_project_action = file_menu.addAction("Open &Project...")
         open_project_action.triggered.connect(self._on_open_project)
 
-        save_project_action = file_menu.addAction("&Save Project...")
+        save_project_action = file_menu.addAction("&Save Project")
         save_project_action.setShortcut("Ctrl+S")
-        save_project_action.triggered.connect(self._on_save_project)
+        save_project_action.setToolTip(
+            "Save to the project file already open; asks for a name the first time"
+        )
+        save_project_action.triggered.connect(self._on_save_project_quick)
+
+        save_as_action = file_menu.addAction("Save Project &As...")
+        save_as_action.setShortcut("Ctrl+Shift+S")
+        save_as_action.triggered.connect(self._on_save_project)
 
         self._recent_menu = file_menu.addMenu("Open &Recent")
         # Rebuilt on every open: the list lives in the shared settings, so a file
@@ -390,6 +399,7 @@ class MainWindow(QMainWindow):
         )
         # Keep the user's current zoom/pan — adding a peak while zoomed in must
         # not snap the graph back to the full view.
+        curve_changed = spectrum is not self._spectrum_widget.source_spectrum()
         self._spectrum_widget.set_spectrum(spectrum, preserve_view=True)
         current_smiles = getattr(self._molecule_widget, "_current_smiles", "")
         current_mol_block = getattr(self._molecule_widget, "_current_mol_block", "")
@@ -402,6 +412,11 @@ class MainWindow(QMainWindow):
                 image_bytes=self._project.structure_image,
             )
         self._refresh_peak_views(preferred_peak)
+        if curve_changed:
+            # Baseline correction (or its undo) swapped the curve for one on a
+            # different Y scale. The wavenumber zoom is still meaningful, the
+            # old intensity range is not — keeping it showed an empty plot.
+            self._spectrum_widget.fit_y_to_view()
         self._refresh_functional_group_analysis(preferred_group_id=preferred_group_id)
         self._update_window_title()
 
@@ -459,7 +474,7 @@ class MainWindow(QMainWindow):
             QMessageBox.StandardButton.Save,
         )
         if answer == QMessageBox.StandardButton.Save:
-            return self._on_save_project()
+            return self._on_save_project_quick()
         return bool(answer == QMessageBox.StandardButton.Discard)
 
     def _connect_signals(self) -> None:
@@ -646,11 +661,28 @@ class MainWindow(QMainWindow):
         path, _ = QFileDialog.getOpenFileName(
             self,
             "Open IR Spectrum",
-            "",
-            "OMNIC SPA Files (*.spa *.SPA);;All Files (*)",
+            self._last_open_dir(),
+            "IR spectra (*.spa *.SPA *.jdx *.JDX *.dx *.DX);;"
+            "OMNIC SPA Files (*.spa *.SPA);;JCAMP-DX Files (*.jdx *.JDX *.dx *.DX);;"
+            "All Files (*)",
         )
         if path:
+            self._remember_open_dir(path)
             self._load_spectrum(path)
+
+    def _last_open_dir(self) -> str:
+        """Folder the last spectrum/project was opened from, "" when unknown."""
+        stored = self._settings.get("last_open_dir")
+        if stored and Path(stored).is_dir():
+            return str(stored)
+        return ""
+
+    def _remember_open_dir(self, path: str) -> None:
+        """Persist the folder of a just-opened file for the next open dialog."""
+        try:
+            self._settings.set("last_open_dir", str(Path(path).parent))
+        except Exception:  # noqa: BLE001 — remembering the folder is best-effort
+            pass
 
     def _default_export_basename(self) -> str:
         """Return the filename stem to pre-fill in save/export dialogs.
@@ -699,8 +731,21 @@ class MainWindow(QMainWindow):
             directory = self._last_save_dir()
         return str(directory / f"{basename}{extension}")
 
+    def _on_save_project_quick(self) -> bool:
+        """Handle File → Save Project: write to the open project file, no dialog.
+
+        Falls back to Save As while the project has never been saved, so the
+        first Ctrl+S still asks where the file should go.
+        """
+        if self._project is None:
+            self.statusBar().showMessage("No project loaded")
+            return False
+        if not self._current_project_path:
+            return self._on_save_project()
+        return self._save_project_to(self._current_project_path)
+
     def _on_save_project(self) -> bool:
-        """Handle File → Save Project action."""
+        """Handle File → Save Project As action."""
         if self._project is None:
             self.statusBar().showMessage("No project loaded")
             return False
@@ -713,14 +758,20 @@ class MainWindow(QMainWindow):
         )
         if not path:
             return False
+        return self._save_project_to(path)
 
+    def _save_project_to(self, path: str) -> bool:
+        """Write the project to ``path`` and run the after-save bookkeeping."""
         from pathlib import Path  # noqa: PLC0415
 
         from storage.project_serializer import ProjectSerializer  # noqa: PLC0415
 
+        project = self._project
+        if project is None:
+            return False
         try:
             self._sync_project_metadata_from_panel()
-            ProjectSerializer().save(self._project, path)
+            ProjectSerializer().save(project, path)
         except Exception as e:  # noqa: BLE001
             QMessageBox.critical(self, "Save Error", f"Failed to save project:\n{e}")
             return False
@@ -746,11 +797,12 @@ class MainWindow(QMainWindow):
         path, _ = QFileDialog.getOpenFileName(
             self,
             "Open IR Project",
-            "",
+            self._last_open_dir(),
             "IR Project Files (*.irproj);;JSON files (*.json);;All Files (*)",
         )
         if not path:
             return
+        self._remember_open_dir(path)
 
         try:
             self._load_project_from_path(path)
@@ -811,12 +863,16 @@ class MainWindow(QMainWindow):
         from core.commands import AddPeakCommand  # noqa: PLC0415
         from core.peak import Peak  # noqa: PLC0415
 
+        # The click height is in the displayed unit. While the view is converted
+        # it cannot be turned into a label offset in the file's own unit, so the
+        # label takes the default position instead of a meaningless one.
+        converted_view = self._spectrum_widget.is_converted_view()
         peak = Peak(
             position=wavenumber,
             intensity=intensity,
-            manual_placement=True,
+            manual_placement=not converted_view,
             label_offset_x=0.0,
-            label_offset_y=click_y - intensity,
+            label_offset_y=0.0 if converted_view else click_y - intensity,
         )
         cmd = AddPeakCommand(self._project, peak)
         self._undo_stack.push(cmd)
@@ -838,14 +894,28 @@ class MainWindow(QMainWindow):
         # Wrap all additions in a macro so it's a single Ctrl+Z
         self._undo_stack.beginMacro("Detect peaks")
         from core.commands import AddPeakCommand, DeletePeakCommand  # noqa: PLC0415
+        from core.peak_assignments import peak_has_assignment  # noqa: PLC0415
 
+        # A peak that already carries an assignment is work the analyst did by
+        # hand. Re-running detection (e.g. after a baseline correction) used to
+        # throw all of it away; now only unassigned peaks are replaced.
+        kept = [existing for existing in self._project.peaks if peak_has_assignment(existing)]
         for existing in list(self._project.peaks):
-            self._undo_stack.push(DeletePeakCommand(self._project, existing))
+            if not any(existing is keeper for keeper in kept):
+                self._undo_stack.push(DeletePeakCommand(self._project, existing))
         for peak in peaks:
+            if any(
+                abs(peak.position - keeper.position) <= self._DETECT_KEEP_TOLERANCE
+                for keeper in kept
+            ):
+                continue  # the assigned peak already marks this band
             self._undo_stack.push(AddPeakCommand(self._project, peak))
         self._undo_stack.endMacro()
         self._refresh_peak_views()
-        self.statusBar().showMessage(f"Detected {len(self._project.peaks)} peaks")
+        message = f"Detected {len(self._project.peaks)} peaks"
+        if kept:
+            message += f" ({len(kept)} assigned kept)"
+        self.statusBar().showMessage(message)
 
     def _on_correct_baseline(self) -> None:
         """Apply baseline correction and make it undoable."""
@@ -930,20 +1000,61 @@ class MainWindow(QMainWindow):
         report_options.view_x_range = self._spectrum_widget.get_x_view_range()
         report_options.view_y_range = self._spectrum_widget.get_y_view_range()
         report_options.diagnostic_regions = ()
-        report_options.peak_label_placements = {
-            id(peak): (label_x, label_y)
-            for peak, label_x, label_y in self._spectrum_widget.get_peak_label_placements()
-        }
+        report_project, report_options.peak_label_placements = self._project_as_displayed(project)
 
         try:
             builder = ReportBuilder()
-            builder.build_with_options(project, Path(path), report_options)
+            builder.build_with_options(report_project, Path(path), report_options)
             self._remember_save_dir(path)
             self.statusBar().showMessage(f"PDF exported: {Path(path).name}")
             return True
         except Exception as e:  # noqa: BLE001
             QMessageBox.critical(self, "Export Error", f"Failed to export PDF:\n{e}")
             return False
+
+    def _project_as_displayed(self, project):
+        """Return (project, label placements) matching what the viewer shows.
+
+        The Y range and label positions handed to the report come from the
+        plot. While the plot is converted to another unit they are on that
+        unit's scale, so the report has to draw the converted curve too —
+        pairing them with the stored data flattened the spectrum to a line.
+        The saved project itself is never touched.
+        """
+        from dataclasses import replace  # noqa: PLC0415
+
+        widget = self._spectrum_widget
+        placements = {
+            id(peak): (label_x, label_y)
+            for peak, label_x, label_y in widget.get_peak_label_placements()
+        }
+        unit = widget.display_unit()
+        source = project.corrected_spectrum or project.spectrum
+        if not widget.is_converted_view() or unit is None or source is None:
+            return project, placements
+        converted = source.converted_to(unit)
+        if converted is None:
+            return project, placements
+
+        shown_peaks = []
+        shown_placements: dict[int, tuple[float, float]] = {}
+        for peak in project.peaks:
+            shown = replace(
+                peak,
+                intensity=widget.display_intensity(peak.intensity),
+                vibration_ids=list(peak.vibration_ids),
+                vibration_labels=list(peak.vibration_labels),
+                manual_placement=False,
+                label_offset_x=0.0,
+                label_offset_y=0.0,
+            )
+            shown_peaks.append(shown)
+            if id(peak) in placements:
+                shown_placements[id(shown)] = placements[id(peak)]
+        shown_project = replace(
+            project, spectrum=converted, corrected_spectrum=None, peaks=shown_peaks
+        )
+        return shown_project, shown_placements
 
     def _export_csv(self, *, include_unassigned: bool = False) -> None:
         """Export peaks to a CSV file."""
@@ -1238,14 +1349,27 @@ class MainWindow(QMainWindow):
             return
         if self._project is None:
             return
-        peak = self._peak_table.selected_peak()
-        if peak is None:
+        # Every highlighted row goes, as one undo step — deleting only the
+        # "current" row of a multi-row selection left the rest behind.
+        peaks = self._peak_table.selected_peaks()
+        if not peaks:
+            peak = self._peak_table.selected_peak()
+            peaks = [peak] if peak is not None else []
+        if not peaks:
             return
         from core.commands import DeletePeakCommand  # noqa: PLC0415
 
-        self._undo_stack.push(DeletePeakCommand(self._project, peak))
+        if len(peaks) == 1:
+            self._undo_stack.push(DeletePeakCommand(self._project, peaks[0]))
+            message = f"Deleted peak at {peaks[0].position:.1f} cm\u207b\u00b9"
+        else:
+            self._undo_stack.beginMacro(f"Delete {len(peaks)} peaks")
+            for peak in peaks:
+                self._undo_stack.push(DeletePeakCommand(self._project, peak))
+            self._undo_stack.endMacro()
+            message = f"Deleted {len(peaks)} peaks"
         self._refresh_peak_views()
-        self.statusBar().showMessage(f"Deleted peak at {peak.position:.1f} cm\u207b\u00b9")
+        self.statusBar().showMessage(message)
 
     def _on_delete_peak_object(self, peak: Peak) -> None:
         """Delete a specific peak object (emitted from shift+click on label)."""

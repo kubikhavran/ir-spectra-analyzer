@@ -4,6 +4,7 @@ from __future__ import annotations
 
 from datetime import datetime
 
+import numpy as np
 from PySide6.QtGui import QUndoCommand
 
 from core.peak import Peak
@@ -225,18 +226,47 @@ class SetPeakLabelPlacementsCommand(QUndoCommand):
 
 
 class CorrectBaselineCommand(QUndoCommand):
-    """Applies baseline correction to the project (undoable)."""
+    """Applies baseline correction to the project (undoable).
+
+    Existing peaks are re-anchored onto the corrected curve. A peak stores the
+    intensity it was picked at, so without this every label kept pointing at
+    the raw curve: after correcting a %T spectrum the labels hung ~100 units
+    above a curve that now sits at zero.
+    """
 
     def __init__(self, project: Project, corrected_spectrum: Spectrum) -> None:
         super().__init__("Correct Baseline")
         self._project = project
         self._corrected_spectrum = corrected_spectrum
         self._previous_spectrum = project.corrected_spectrum
+        self._peak_intensities: list[tuple[Peak, float, float]] = [
+            (peak, peak.intensity, _intensity_on(corrected_spectrum, peak.position, peak.intensity))
+            for peak in project.peaks
+        ]
 
     def redo(self) -> None:
         self._project.corrected_spectrum = self._corrected_spectrum
+        for peak, _old_intensity, new_intensity in self._peak_intensities:
+            peak.intensity = new_intensity
         self._project.updated_at = datetime.now()
 
     def undo(self) -> None:
         self._project.corrected_spectrum = self._previous_spectrum
+        for peak, old_intensity, _new_intensity in self._peak_intensities:
+            peak.intensity = old_intensity
         self._project.updated_at = datetime.now()
+
+
+def _intensity_on(spectrum: Spectrum, wavenumber: float, fallback: float) -> float:
+    """Intensity of ``spectrum`` at ``wavenumber``; ``fallback`` where it has none.
+
+    A peak outside the measured range, or inside a blanked (NaN) region, keeps
+    the value it had rather than being moved to an invented one.
+    """
+    x = np.asarray(spectrum.wavenumbers, dtype=float)
+    y = np.asarray(spectrum.intensities, dtype=float)
+    if x.size == 0 or not (float(x.min()) <= wavenumber <= float(x.max())):
+        return float(fallback)
+    order = np.argsort(x)
+    value = float(np.interp(wavenumber, x[order], y[order]))
+    return value if np.isfinite(value) else float(fallback)

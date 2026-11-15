@@ -19,7 +19,10 @@ RERANK_GRID = STANDARD_GRID
 # by an older build is not comparable with one computed now. Without this bump
 # those cached vectors would keep being reused against freshly preprocessed
 # queries.
-MATCH_FEATURE_VERSION = 3
+# Bumped to 4 when polarity started to follow the shape of the data instead of
+# the declared unit alone: a reference stored as "Absorbance" but holding a %T
+# curve used to be indexed upside down, and its cached vector still is.
+MATCH_FEATURE_VERSION = 4
 
 
 def compute_search_vector(

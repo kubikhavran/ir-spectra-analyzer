@@ -276,15 +276,22 @@ folder of `.spa` files on disk.
 
 | Shortcut | Action |
 |----------|--------|
-| `Ctrl+O` | Open `.spa` spectrum |
-| `Ctrl+S` / `Ctrl+Shift+S` | Save / Save As project |
+| `Ctrl+O` | Open a spectrum (`.spa`, `.jdx`, `.dx`) |
+| `Ctrl+S` | Save the project to its file (asks for a name only the first time) |
+| `Ctrl+Shift+S` | Save the project under a new name |
+| `Ctrl+Shift+N` | New window |
 | `Ctrl+Z` / `Ctrl+Y` | Undo / Redo |
-| `Ctrl+E` | Export PDF report |
-| `Delete` | Delete selected peak |
+| `Ctrl+M` | Match the spectrum against the reference library |
+| `Ctrl+E` | Export (PDF report, CSV, Excel) |
+| `Delete` | Delete the selected peak(s) |
 | `A` | Switch to Add-Peak tool |
 | `S` | Switch to Select tool |
 | `P` | Switch to Pan tool |
 | `Z` | Switch to Zoom tool |
+
+In the Add-Peak tool a click snaps to the apex of the band under the pointer;
+hold `Ctrl` to place the peak exactly where you click (e.g. on a shoulder).
+`Shift`+click on a peak label deletes that peak.
 
 ---
 

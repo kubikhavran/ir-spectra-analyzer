@@ -725,10 +725,44 @@ class SpectrumWidget(QWidget):
         the reference is plotted on a 0-100 scale against a 0-0.2 curve and
         disappears off the top of the plot.
         """
-        target = self._spectrum.display_y_unit if self._spectrum is not None else None
-        if target is None:
+        main = self._spectrum
+        if main is None:
             return spectrum
-        return spectrum.converted_to(target) or spectrum
+        if main.y_unit == SpectralUnit.BASELINE_CORRECTED:
+            return self._overlay_on_corrected_scale(spectrum, dips=main.is_dip_spectrum)
+        return spectrum.converted_to(main.display_y_unit) or spectrum
+
+    @staticmethod
+    def _overlay_on_corrected_scale(spectrum: Spectrum, *, dips: bool) -> Spectrum:
+        """A reference given the same baseline treatment as the corrected curve.
+
+        After Correct Baseline the main curve sits at zero, while a library
+        reference is still raw %T near 100 — it was drawn far outside the plot
+        and the overlay looked empty. Putting the reference on the same
+        polarity and subtracting its own rubber band lines the two up again.
+        """
+        from dataclasses import replace  # noqa: PLC0415
+
+        from processing.baseline import rubber_band_baseline  # noqa: PLC0415
+
+        if spectrum.y_unit == SpectralUnit.BASELINE_CORRECTED:
+            return spectrum
+        target = SpectralUnit.TRANSMITTANCE if dips else SpectralUnit.ABSORBANCE
+        aligned = spectrum.converted_to(target)
+        if aligned is None:
+            # No defined transform (%R, single beam): usable only when it
+            # already points the same way as the corrected curve.
+            if spectrum.is_dip_spectrum != dips:
+                return spectrum
+            aligned = spectrum
+        finite = np.isfinite(aligned.intensities)
+        if finite.sum() < 2:
+            return spectrum
+        corrected = np.full(aligned.intensities.shape, np.nan, dtype=float)
+        corrected[finite] = rubber_band_baseline(
+            aligned.wavenumbers[finite], aligned.intensities[finite], upper=dips
+        )
+        return replace(aligned, intensities=corrected, y_unit=SpectralUnit.BASELINE_CORRECTED)
 
     def _display_y(self, value: float) -> float:
         """One intensity moved from the file's unit into the displayed one."""
@@ -741,6 +775,10 @@ class SpectrumWidget(QWidget):
             np.asarray([value], dtype=float), source.display_y_unit, self._display_unit
         )
         return float(value) if converted is None else float(converted[0])
+
+    def display_intensity(self, value: float) -> float:
+        """One stored intensity as it is drawn in the current display unit."""
+        return self._display_y(value)
 
     def _draw_spectrum_curves(self) -> None:
         """Push the displayed spectrum into the main and fingerprint curves."""
@@ -782,7 +820,24 @@ class SpectrumWidget(QWidget):
                 self._fp_plot_widget.setXRange(x_lo, _SPLIT_WN, padding=0.0)
         else:
             self._plot_widget.setXRange(x_lo, x_hi, padding=0.0)
+        self._fit_y_range(x_lo, x_hi)
 
+    def fit_y_to_view(self) -> None:
+        """Refit the Y axis to the data inside the current X window.
+
+        Used when the curve itself changes scale (baseline correction and its
+        undo): the wavenumber zoom the analyst chose stays, but a Y range left
+        over from the previous curve would show an empty plot.
+        """
+        x_lo, x_hi = self.get_x_view_range()
+        self._fit_y_range(x_lo, x_hi)
+
+    def source_spectrum(self) -> Spectrum | None:
+        """The spectrum last handed to :meth:`set_spectrum`, before any unit change."""
+        return self._source_spectrum
+
+    def _fit_y_range(self, x_lo: float, x_hi: float) -> None:
+        """Fit Y to the data (and peak labels) between ``x_lo`` and ``x_hi``."""
         if self._spectrum is None:
             return
 
@@ -803,11 +858,12 @@ class SpectrumWidget(QWidget):
         y_span = max(y_max - y_min, 1e-9)
 
         peaks_are_dips = self._spectrum.is_dip_spectrum
-        if self._peaks:
+        visible_peaks = [peak for peak in self._peaks if x_lo <= peak.position <= x_hi]
+        if visible_peaks:
             label_offset = y_span * 0.065
             label_margin = y_span * 0.08
             label_y_values = []
-            for peak in self._peaks:
+            for peak in visible_peaks:
                 if peak.manual_placement and not self.is_converted_view():
                     label_y_values.append(peak.intensity + peak.label_offset_y)
                 else:
@@ -1147,6 +1203,7 @@ class SpectrumWidget(QWidget):
                 x=spectrum.wavenumbers,
                 y=spectrum.intensities,
                 pen=pen,
+                connect="finite",
             )
             self._overlay_curves.append(curve)
             if self._split_mode and self._fp_plot_widget is not None:
@@ -1154,6 +1211,7 @@ class SpectrumWidget(QWidget):
                     x=spectrum.wavenumbers,
                     y=spectrum.intensities,
                     pen=pen,
+                    connect="finite",
                 )
                 self._overlay_curves_fp.append(curve_fp)
 
@@ -1344,12 +1402,17 @@ class SpectrumWidget(QWidget):
         if self._add_peak_mode:
             if event.modifiers() & Qt.KeyboardModifier.ShiftModifier:
                 return  # let label's shift_click_callback handle deletion
+            # Ctrl places the peak exactly under the pointer (a shoulder has no
+            # apex to snap to); a plain click lands on the band's apex.
+            if not (event.modifiers() & Qt.KeyboardModifier.ControlModifier):
+                wavenumber = self.snap_to_band_apex(wavenumber, self._snap_tolerance_for(vb))
             # Don't add a new peak if the click landed on an existing label
             if self._peaks:
                 closest = min(self._peaks, key=lambda p: abs(p.position - wavenumber))
                 if abs(closest.position - wavenumber) <= 5.0:
                     return  # user clicked on/near an existing label — label handles it
-            intensity = self._intensity_at(wavenumber)
+            # Peaks are stored in the file's own unit, whatever is displayed.
+            intensity = self._native_intensity_at(wavenumber)
             self.peak_clicked.emit(wavenumber, intensity, click_y)
         elif self._peaks:
             # Select nearest peak within 30 cm⁻¹
@@ -1380,12 +1443,59 @@ class SpectrumWidget(QWidget):
         self.cursor_moved.emit(wavenumber, intensity)
 
     def _intensity_at(self, wavenumber: float) -> float:
-        """Return interpolated intensity at the given wavenumber."""
-        if self._spectrum is None:
+        """Return interpolated intensity of the displayed curve at a wavenumber."""
+        return self._interpolate(self._spectrum, wavenumber)
+
+    def _native_intensity_at(self, wavenumber: float) -> float:
+        """Return interpolated intensity in the loaded (unconverted) unit."""
+        return self._interpolate(self._source_spectrum or self._spectrum, wavenumber)
+
+    @staticmethod
+    def _interpolate(spectrum: Spectrum | None, wavenumber: float) -> float:
+        if spectrum is None:
             return 0.0
-        x = self._spectrum.wavenumbers
-        y = self._spectrum.intensities
+        x = spectrum.wavenumbers
+        y = spectrum.intensities
         if x.size >= 2 and x[0] > x[-1]:
             x = x[::-1]
             y = y[::-1]
         return float(np.interp(wavenumber, x, y))
+
+    # How close to a band's apex a click has to land, in screen pixels, for the
+    # new peak to snap onto it. At full view one pixel is ~5 cm⁻¹, so without
+    # snapping the stored position depended on where exactly the mouse was.
+    _SNAP_PIXELS = 10.0
+
+    def _snap_tolerance_for(self, view_box) -> float:
+        """Snap window in cm⁻¹ for the zoom level of the clicked panel."""
+        try:
+            pixel_width = abs(float(view_box.viewPixelSize()[0]))
+        except Exception:  # noqa: BLE001 — a panel that is not laid out yet
+            return 0.0
+        if not np.isfinite(pixel_width):
+            return 0.0
+        return pixel_width * self._SNAP_PIXELS
+
+    def snap_to_band_apex(self, wavenumber: float, tolerance: float) -> float:
+        """Return the apex of the band under ``wavenumber``, if one is in reach.
+
+        Looks for the extremum of the curve within ``tolerance`` cm⁻¹ (minimum
+        for dip spectra, maximum otherwise). It only counts when it lies inside
+        the window: an extremum on the window's edge means the curve is still
+        rising or falling there — the click is on a slope or a shoulder and the
+        position is returned unchanged.
+        """
+        spectrum = self._spectrum
+        if spectrum is None or tolerance <= 0.0:
+            return float(wavenumber)
+        x = np.asarray(spectrum.wavenumbers, dtype=float)
+        y = np.asarray(spectrum.intensities, dtype=float)
+        window = np.flatnonzero((x >= wavenumber - tolerance) & (x <= wavenumber + tolerance))
+        window = window[np.isfinite(y[window])]
+        if window.size < 3:
+            return float(wavenumber)
+        values = y[window]
+        best = int(np.argmin(values) if spectrum.is_dip_spectrum else np.argmax(values))
+        if best in (0, window.size - 1):
+            return float(wavenumber)
+        return float(x[window[best]])

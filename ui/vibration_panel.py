@@ -185,7 +185,12 @@ class VibrationPanel(QWidget):
         def _passes(preset) -> bool:
             if tag_names is not None and preset.name not in tag_names:
                 return False
-            label = f"{preset.name} ({preset.typical_range_min:.0f}{preset.typical_range_max:.0f})"
+            # Same separators as the visible row text, plus a plain hyphen, so a
+            # range can be searched the way it is read ("1700-1750").
+            label = (
+                f"{preset.name} ({preset.typical_range_min:.0f}\u2013{preset.typical_range_max:.0f}"
+                f" {preset.typical_range_min:.0f}-{preset.typical_range_max:.0f})"
+            )
             return not needle or needle in label.lower()
 
         general = [p for p in self._presets if _passes(p) and p.category not in _PG_CATEGORIES]

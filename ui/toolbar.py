@@ -66,6 +66,22 @@ class MainToolbar(QToolBar):
         mode_group.addAction(self._add_peak_action)
         self.addAction(self._add_peak_action)
 
+        # Single-key shortcuts and tooltips. Text inputs take the key first, so
+        # typing an "s" into a filter box still types an "s".
+        for action, key, tip in (
+            (self._select_action, "S", "Select — click a peak or its label to select it"),
+            (self._zoom_action, "Z", "Zoom — drag a rectangle to zoom in"),
+            (self._pan_action, "P", "Pan — drag to move the view, wheel to zoom"),
+            (
+                self._add_peak_action,
+                "A",
+                "Add Peak — click a band; the peak snaps to its apex "
+                "(hold Ctrl to place it exactly where you click, e.g. on a shoulder)",
+            ),
+        ):
+            action.setShortcut(key)
+            action.setToolTip(f"{tip} ({key})")
+
         # Connect mode actions
         self._select_action.toggled.connect(
             lambda checked: self.tool_mode_changed.emit("select") if checked else None
@@ -110,6 +126,18 @@ class MainToolbar(QToolBar):
         # Export action
         self._export_action = QAction("Export", self)
         self.addAction(self._export_action)
+
+        self._open_action.setToolTip("Open a spectrum file (Ctrl+O)")
+        self._detect_action.setToolTip(
+            "Find peaks automatically. Peaks that already carry an assignment are kept."
+        )
+        self._clear_peaks_action.setToolTip("Remove every peak (Ctrl+Z brings them back)")
+        self._arrange_labels_action.setToolTip("Stagger overlapping peak labels")
+        self._correct_baseline_action.setToolTip("Subtract a rubber-band baseline (Ctrl+Z to undo)")
+        self._match_action.setToolTip("Compare the spectrum with the reference library (Ctrl+M)")
+        self._match_action.setShortcut("Ctrl+M")
+        self._export_action.setToolTip("Export a PDF report, CSV or Excel file (Ctrl+E)")
+        self._export_action.setShortcut("Ctrl+E")
 
         if self._correct_baseline_action is not None:
             self._correct_baseline_action.triggered.connect(self.correct_baseline)

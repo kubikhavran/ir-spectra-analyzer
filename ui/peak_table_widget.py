@@ -29,6 +29,20 @@ _HEADERS = ["Position (cm⁻¹)", "Intensity", "Label", "Vibration"]
 _SELECT_MATCH_TOLERANCE = 1.0
 
 
+def format_intensity(value: float, scale: float | None = None) -> str:
+    """Intensity as table text, with decimals that fit the scale it is on.
+
+    Rounding to a whole number suits %T but turned every absorbance value into
+    "0" or "1" — the column carried no information for an absorbance spectrum.
+    ``scale`` is the largest magnitude in the column, so every row of one table
+    gets the same number of decimals.
+    """
+    reference = abs(value) if scale is None else scale
+    if reference >= 10.0:
+        return f"{value:.1f}"
+    return f"{value:.3f}"
+
+
 class _CopyableTable(QTableWidget):
     """QTableWidget that copies selected rows as TSV on Ctrl+C."""
 
@@ -117,9 +131,10 @@ class PeakTableWidget(QWidget):
         self._peaks = peaks
         self._table.blockSignals(True)
         self._table.setRowCount(len(peaks))
+        scale = max((abs(peak.intensity) for peak in peaks), default=0.0)
         for row, peak in enumerate(peaks):
             self._table.setItem(row, 0, QTableWidgetItem(str(int(round(peak.position)))))
-            self._table.setItem(row, 1, QTableWidgetItem(str(int(round(peak.intensity)))))
+            self._table.setItem(row, 1, QTableWidgetItem(format_intensity(peak.intensity, scale)))
             self._table.setItem(row, 2, QTableWidgetItem(peak.label))
             assignment = peak.display_label if peak.vibration_labels else ""
             vibration_item = QTableWidgetItem(assignment)
@@ -133,6 +148,11 @@ class PeakTableWidget(QWidget):
         if 0 <= row < len(self._peaks):
             return self._peaks[row]
         return None
+
+    def selected_peaks(self) -> list[Peak]:
+        """Return every peak whose row is selected, in table order."""
+        rows = sorted({index.row() for index in self._table.selectedIndexes()})
+        return [self._peaks[row] for row in rows if 0 <= row < len(self._peaks)]
 
     def select_peak(self, peak: Peak) -> None:
         """Programmatically select the row holding the given peak.
