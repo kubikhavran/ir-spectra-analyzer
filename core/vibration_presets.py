@@ -25,6 +25,10 @@ class VibrationPreset:
         description: Optional extended description.
         color: Hex color for UI display.
         db_id: Database row ID.
+        is_builtin: True for an entry of the shipped library.
+        seed_name: The name a built-in entry shipped with. Built-in entries can
+            be renamed; the functional-group knowledge base still refers to
+            them by this name.
     """
 
     name: str
@@ -35,6 +39,16 @@ class VibrationPreset:
     color: str = "#4A90D9"
     db_id: int | None = None
     is_builtin: bool = True
+    seed_name: str = ""
+
+    @property
+    def catalog_name(self) -> str:
+        """Name the knowledge base knows this entry by (survives a rename)."""
+        return self.seed_name or self.name
+
+    def answers_to(self, names) -> bool:
+        """True when ``names`` refers to this entry, by its current or shipped name."""
+        return self.name in names or self.catalog_name in names
 
     def covers_wavenumber(self, wavenumber: float) -> bool:
         """Return True if wavenumber falls within the typical range."""

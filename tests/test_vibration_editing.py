@@ -161,3 +161,174 @@ def test_reset_restores_builtins_and_leaves_custom_alone(tmp_path) -> None:
     assert sum(1 for p in presets if p["is_builtin"] == 1) == 168
     assert any(p["id"] == custom_id and p["name"] == "my band" for p in presets)
     assert db.reset_builtin_vibration_presets() == 0  # nothing left to restore
+
+
+# ── Panel and main window ────────────────────────────────────────────────────
+
+from unittest.mock import MagicMock  # noqa: E402
+
+import numpy as np  # noqa: E402
+from PySide6.QtWidgets import QDialog, QMessageBox  # noqa: E402
+
+from core.peak import Peak  # noqa: E402
+from core.project import Project  # noqa: E402
+from core.spectrum import SpectralUnit, Spectrum  # noqa: E402
+from core.vibration_presets import VibrationPreset  # noqa: E402
+from ui.vibration_panel import VibrationPanel, _VibrationEditorDialog  # noqa: E402
+
+
+def _window(qtbot, tmp_path):
+    from storage.settings import Settings
+    from ui.main_window import MainWindow
+
+    db = _db(tmp_path, "window.db")
+    settings = Settings(tmp_path / "settings.json")
+    settings.load()
+    window = MainWindow(db=db, settings=settings)
+
+    def _discard(closing) -> None:
+        closing._non_undo_dirty = False
+        closing._undo_stack.setClean()
+
+    qtbot.addWidget(window, before_close_func=_discard)
+    return window, db
+
+
+def test_editor_prefills_a_builtin_and_returns_the_edit(qtbot) -> None:
+    preset = VibrationPreset(
+        "ν(C=O) mine",
+        1700.0,
+        1750.0,
+        category="stretch",
+        description="lit.",
+        db_id=5,
+        seed_name="ν(C=O) ester",
+    )
+    dialog = _VibrationEditorDialog(preset=preset)
+    qtbot.addWidget(dialog)
+    assert dialog.windowTitle() == "Edit Vibration"
+    values = dialog.values()
+    assert values.name == "ν(C=O) mine"
+    assert (values.range_min, values.range_max) == (1700.0, 1750.0)
+    assert values.category == "stretch"
+    assert values.description == "lit."
+
+    dialog._name_edit.set_text("  ν(C=O) changed ")
+    dialog._category_combo.setCurrentIndex(dialog._category_combo.findData("bend"))
+    assert dialog.values().name == "ν(C=O) changed"
+    assert dialog.values().category == "bend"
+
+    unknown = _VibrationEditorDialog(preset=VibrationPreset("x", 1.0, 2.0, category="lab"))
+    qtbot.addWidget(unknown)
+    assert unknown.values().category == "lab"  # an unlisted category is kept
+
+
+def test_panel_edits_deletes_and_resets_through_the_database(qtbot, monkeypatch) -> None:
+    db = MagicMock()
+    panel = VibrationPanel(db=db)
+    qtbot.addWidget(panel)
+    preset = VibrationPreset("ν(OH)", 3200.0, 3600.0, category="stretch", db_id=7)
+    changed: list[int] = []
+    deleted: list[int] = []
+    panel.presets_changed.connect(lambda: changed.append(1))
+    panel.preset_deleted.connect(lambda: deleted.append(1))
+
+    monkeypatch.setattr(_VibrationEditorDialog, "exec", lambda self: QDialog.DialogCode.Accepted)
+    assert panel.edit_preset(preset)
+    db.update_vibration_preset.assert_called_once()
+    assert db.update_vibration_preset.call_args.kwargs["name"] == "ν(OH)"
+    assert changed == [1]
+
+    monkeypatch.setattr(
+        "ui.vibration_panel.QMessageBox.question",
+        lambda *a, **k: QMessageBox.StandardButton.Cancel,
+    )
+    assert not panel.delete_preset(preset)
+    assert not panel.reset_builtin_presets()
+    db.delete_vibration_preset.assert_not_called()
+    db.reset_builtin_vibration_presets.assert_not_called()
+
+    monkeypatch.setattr(
+        "ui.vibration_panel.QMessageBox.question",
+        lambda *a, **k: QMessageBox.StandardButton.Yes,
+    )
+    assert panel.delete_preset(preset)
+    db.delete_vibration_preset.assert_called_once_with(7)
+    assert deleted == [1]
+    assert panel.reset_builtin_presets()
+    db.reset_builtin_vibration_presets.assert_called_once()
+    assert changed == [1, 1]
+
+
+def test_renaming_a_vibration_renames_it_on_the_peaks_that_carry_it(qtbot, tmp_path) -> None:
+    window, db = _window(qtbot, tmp_path)
+    wn = np.linspace(400.0, 4000.0, 1000)
+    window._apply_project_to_ui(
+        Project(
+            name="p",
+            spectrum=Spectrum(wn, np.zeros_like(wn) + 0.1, y_unit=SpectralUnit.ABSORBANCE),
+        )
+    )
+    preset = next(p for p in window._vibration_presets_cache if p.name == "ν(OH) –OH isolated")
+    assigned = Peak(
+        position=3600.0,
+        intensity=0.5,
+        vibration_labels=["ν(OH) –OH isolated"],
+        vibration_ids=[preset.db_id],
+    )
+    retyped = Peak(  # same id, but the analyst typed their own text — leave it
+        position=3610.0,
+        intensity=0.5,
+        vibration_labels=["my own words"],
+        vibration_ids=[preset.db_id],
+    )
+    window._project.add_peak(assigned)
+    window._project.add_peak(retyped)
+    window._refresh_peak_views()
+
+    db.update_vibration_preset(
+        preset.db_id,
+        name="ν(OH) free",
+        range_min=3580.0,
+        range_max=3670.0,
+        category="stretch",
+    )
+    window._vibration_panel.presets_changed.emit()
+
+    assert assigned.vibration_labels == ["ν(OH) free"]
+    assert retyped.vibration_labels == ["my own words"]
+    assert window._has_unsaved_changes()
+    texts = [window._peak_table._table.item(r, 3).text() for r in range(2)]
+    assert "ν(OH) free" in texts
+
+    # Reset brings the shipped name back — on the peak too.
+    db.reset_builtin_vibration_presets()
+    window._vibration_panel.presets_changed.emit()
+    assert assigned.vibration_labels == ["ν(OH) –OH isolated"]
+
+
+def test_suggestions_still_find_a_renamed_builtin(qtbot, tmp_path) -> None:
+    """Functional-group suggestions name vibrations as shipped; a rename must not break them."""
+    window, db = _window(qtbot, tmp_path)
+    preset = next(p for p in window._vibration_presets_cache if p.name == "ν(OH) –OH isolated")
+    db.update_vibration_preset(
+        preset.db_id, name="ν(OH) free", range_min=3580.0, range_max=3670.0, category="stretch"
+    )
+    window._vibration_panel.presets_changed.emit()
+
+    band = MagicMock()
+    band.suggested_preset_names = ("ν(OH) –OH isolated",)
+    found = window._find_best_preset_for_band(band, 3620.0)
+    assert found is not None
+    assert found.name == "ν(OH) free"
+    assert found.catalog_name == "ν(OH) –OH isolated"
+
+
+def test_f2_and_the_context_menu_offer_editing_for_builtins(qtbot) -> None:
+    from PySide6.QtGui import QShortcut
+
+    panel = VibrationPanel(db=MagicMock())
+    qtbot.addWidget(panel)
+    panel.set_presets([VibrationPreset("ν(OH)", 3200.0, 3600.0, db_id=1, is_builtin=True)])
+    keys = {sc.key().toString() for sc in panel._list.findChildren(QShortcut)}
+    assert "F2" in keys

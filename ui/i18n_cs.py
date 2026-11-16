@@ -627,4 +627,35 @@ CZECH_TEXTS: dict[str, str] = {
     "About": "O aplikaci",
     "About IR Spectra Analyzer": "O aplikaci IR Spectra Analyzer",
     "Professional IR spectrum analysis tool": "Profesionální nástroj pro analýzu IR spekter",
+    # ── Vibration editor ────────────────────────────────────────────────────
+    "Edit Vibration": "Upravit vibraci",
+    "Edit \u201c{name}\u201d\u2026": "Upravit \u201e{name}\u201c\u2026",
+    "Reset built-in vibrations to defaults\u2026": "Obnovit výchozí vestavěné vibrace\u2026",
+    "Delete Vibration": "Smazat vibraci",
+    "Delete \u201c{name}\u201d from the list?": "Smazat \u201e{name}\u201c ze seznamu?",
+    "It can be brought back with \u201cReset built-in vibrations to defaults\u201d.": (
+        "Lze ji vrátit volbou \u201eObnovit výchozí vestavěné vibrace\u201c."
+    ),
+    "A custom vibration cannot be brought back.": "Vlastní vibraci už nelze vrátit.",
+    "Peaks that already carry it keep their assignment.": (
+        "Píky, které ji už mají přiřazenou, si přiřazení ponechají."
+    ),
+    "Reset Built-in Vibrations": "Obnovit vestavěné vibrace",
+    "Restore every built-in vibration to its original name, range and "
+    "category, and bring back the ones that were deleted?\n\n"
+    "Custom vibrations are not changed.": (
+        "Vrátit všem vestavěným vibracím původní název, rozsah a kategorii "
+        "a obnovit ty smazané?\n\nVlastní vibrace zůstanou beze změny."
+    ),
+    "Category:": "Kategorie:",
+    "Note:": "Poznámka:",
+    "optional note, e.g. a literature source": "nepovinná poznámka, např. zdroj v literatuře",
+    "Section of the vibration list the entry appears in when grouped by type": (
+        "Sekce seznamu vibrací, ve které se položka zobrazí při seskupení podle typu"
+    ),
+    "Built-in vibration, originally \u201c{name}\u201d": (
+        "Vestavěná vibrace, původně \u201e{name}\u201c"
+    ),
+    "Rocking \u03c1": "Kývavé \u03c1",
+    "Wagging \u03c9": "Vějířové \u03c9",
 }

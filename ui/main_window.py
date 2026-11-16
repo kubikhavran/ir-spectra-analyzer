@@ -530,6 +530,7 @@ class MainWindow(QMainWindow):
                 color=row.get("color", "#4A90D9"),
                 db_id=row.get("id"),
                 is_builtin=bool(row.get("is_builtin", 1)),
+                seed_name=str(row.get("seed_name") or ""),
             )
             for row in raw_presets
         ]
@@ -714,6 +715,7 @@ class MainWindow(QMainWindow):
         )
         self._vibration_panel.preset_added.connect(self._on_vibration_preset_changed)
         self._vibration_panel.preset_deleted.connect(self._on_vibration_preset_changed)
+        self._vibration_panel.presets_changed.connect(self._on_vibration_preset_changed)
         self._vibration_panel.preset_remove_requested.connect(self._on_remove_vibration)
         self._peak_table.vibration_edit_requested.connect(self._on_edit_peak_vibration_requested)
         self._match_results_panel.candidate_selected.connect(self._on_match_candidate_selected)
@@ -1617,8 +1619,49 @@ class MainWindow(QMainWindow):
         )
 
     def _on_vibration_preset_changed(self) -> None:
-        """Reload vibration presets after a custom preset is added or deleted."""
+        """Reload vibration presets after one was added, edited, removed or reset.
+
+        A renamed vibration is renamed on the peaks of the open project that
+        carry it too, so the table, the plot and the report do not keep showing
+        the old name.
+        """
+        old_names = {
+            preset.db_id: preset.name
+            for preset in self._vibration_presets_cache
+            if preset.db_id is not None
+        }
         self._reload_vibration_presets()
+        renamed = {
+            preset.db_id: (old_names[preset.db_id], preset.name)
+            for preset in self._vibration_presets_cache
+            if preset.db_id in old_names and old_names[preset.db_id] != preset.name
+        }
+        if renamed and self._apply_vibration_renames(renamed):
+            self._mark_non_undo_dirty()
+            self._refresh_peak_views(self._peak_table.selected_peak())
+
+    def _apply_vibration_renames(self, renamed: dict) -> int:
+        """Relabel peaks whose assignment points at a renamed vibration.
+
+        A label is changed only when both its vibration id *and* its text match
+        the vibration as it was. An id alone is not enough: assignments copied
+        from a project made on another computer carry ids of that computer's
+        library, which may name a different vibration here; and a label the
+        analyst re-typed by hand is theirs to keep. Returns the number of
+        labels changed.
+        """
+        if self._project is None:
+            return 0
+        changed = 0
+        for peak in self._project.peaks:
+            for index, preset_id in enumerate(peak.vibration_ids):
+                if preset_id not in renamed or index >= len(peak.vibration_labels):
+                    continue
+                old_name, new_name = renamed[preset_id]
+                if peak.vibration_labels[index] == old_name:
+                    peak.vibration_labels[index] = new_name
+                    changed += 1
+        return changed
 
     def _on_structure_edited(self, smiles: str) -> None:
         """Handle SMILES change emitted by MoleculeWidget after dialog acceptance."""
@@ -2200,7 +2243,7 @@ class MainWindow(QMainWindow):
             return None
 
         named_candidates = [
-            preset for preset in self._vibration_presets_cache if preset.name in candidate_names
+            preset for preset in self._vibration_presets_cache if preset.answers_to(candidate_names)
         ]
         if not named_candidates:
             return None

@@ -10,6 +10,7 @@ Zodpovědnost:
 
 from __future__ import annotations
 
+from dataclasses import dataclass
 from typing import TYPE_CHECKING
 
 from PySide6.QtCore import QRect, QSize, Qt, Signal
@@ -26,6 +27,7 @@ from PySide6.QtWidgets import (
     QListWidget,
     QListWidgetItem,
     QMenu,
+    QMessageBox,
     QPushButton,
     QStyle,
     QStyledItemDelegate,
@@ -174,7 +176,9 @@ class VibrationPanel(QWidget):
     #: only shows where the vibration can appear, so the list can be browsed.
     preset_clicked_for_assign = Signal(object)
     preset_added = Signal()  # emits when a custom preset is saved
-    preset_deleted = Signal()  # emits when a custom preset is deleted
+    preset_deleted = Signal()  # emits when a preset is deleted (custom) or removed (built-in)
+    #: Emits after a preset was edited or the built-in library was reset.
+    presets_changed = Signal()
     preset_remove_requested = Signal(object)  # emits VibrationPreset to remove from active peak
     #: Emits the clicked VibrationPreset so its typical window can be outlined in
     #: the spectrum. Separate from the assignment signal: looking up where a
@@ -259,6 +263,11 @@ class VibrationPanel(QWidget):
             shortcut = QShortcut(QKeySequence(key), self._list)
             shortcut.setContext(Qt.ShortcutContext.WidgetShortcut)
             shortcut.activated.connect(self._on_assign_clicked)
+
+        # F2 edits the highlighted vibration, as in the reference library.
+        edit_shortcut = QShortcut(QKeySequence(Qt.Key.Key_F2), self._list)
+        edit_shortcut.setContext(Qt.ShortcutContext.WidgetShortcut)
+        edit_shortcut.activated.connect(self._edit_highlighted)
 
         self._assign_btn = QPushButton(tr(_ASSIGN_IDLE_TEXT))
         self._assign_btn.setProperty("role", "primary")
@@ -460,7 +469,7 @@ class VibrationPanel(QWidget):
         tag_names = self._active_tag_preset_names()
 
         def _passes(preset) -> bool:
-            if tag_names is not None and preset.name not in tag_names:
+            if tag_names is not None and not preset.answers_to(tag_names):
                 return False
             # Same separators as the visible row text, plus a plain hyphen, so a
             # range can be searched the way it is read ("1700-1750").
@@ -576,86 +585,240 @@ class VibrationPanel(QWidget):
 
     def _on_context_menu(self, pos) -> None:
         item = self._list.itemAt(pos)
-        if item is None:
-            return
-        preset = item.data(_PRESET_ROLE)
-        if preset is None:
-            return
+        preset = item.data(_PRESET_ROLE) if item is not None else None
         menu = QMenu(self)
-        # Delete custom preset (only for non-builtin presets)
-        if not preset.is_builtin:
-            delete_action = menu.addAction(tr("Delete \u201c{name}\u201d").format(name=preset.name))
-        else:
-            delete_action = None
-        # Remove assignment from active peak
-        remove_action = None
-        if (
-            self._active_peak is not None
-            and preset.db_id is not None
-            and preset.db_id in self._active_peak.vibration_ids
-        ):
-            remove_action = menu.addAction(
-                tr("Remove from peak {wavenumber} cm\u207b\u00b9").format(
-                    wavenumber=int(round(self._active_peak.position))
-                )
+        edit_action = delete_action = remove_action = None
+        if preset is not None:
+            edit_action = menu.addAction(
+                tr("Edit \u201c{name}\u201d\u2026").format(name=preset.name)
             )
-        if not menu.actions():
-            return
+            edit_action.setShortcut(QKeySequence(Qt.Key.Key_F2))
+            delete_action = menu.addAction(tr("Delete \u201c{name}\u201d").format(name=preset.name))
+            # Remove assignment from active peak
+            if (
+                self._active_peak is not None
+                and preset.db_id is not None
+                and preset.db_id in self._active_peak.vibration_ids
+            ):
+                remove_action = menu.addAction(
+                    tr("Remove from peak {wavenumber} cm\u207b\u00b9").format(
+                        wavenumber=int(round(self._active_peak.position))
+                    )
+                )
+            menu.addSeparator()
+        reset_action = menu.addAction(tr("Reset built-in vibrations to defaults\u2026"))
+        reset_action.setEnabled(self._db is not None)
         action = menu.exec(self._list.mapToGlobal(pos))
-        if delete_action and action == delete_action and self._db is not None:
-            self._db.delete_vibration_preset(preset.db_id)
-            self.preset_deleted.emit()
-        elif remove_action and action == remove_action:
+        if action is None:
+            return
+        if action == edit_action:
+            self.edit_preset(preset)
+        elif action == delete_action:
+            self.delete_preset(preset)
+        elif action == remove_action:
             self.preset_remove_requested.emit(preset)
+        elif action == reset_action:
+            self.reset_builtin_presets()
+
+    # ── Editing the library ──────────────────────────────────────────────────
+
+    def _edit_highlighted(self) -> None:
+        preset = self._highlighted_preset()
+        if preset is not None:
+            self.edit_preset(preset)
+
+    def edit_preset(self, preset: VibrationPreset) -> bool:
+        """Open the editor for one vibration (built-in or custom). True when saved."""
+        if self._db is None or preset.db_id is None:
+            return False
+        dialog = _VibrationEditorDialog(self, preset=preset)
+        if dialog.exec() != QDialog.DialogCode.Accepted:
+            return False
+        values = dialog.values()
+        if not values.name:
+            return False
+        self._db.update_vibration_preset(
+            preset.db_id,
+            name=values.name,
+            range_min=values.range_min,
+            range_max=values.range_max,
+            category=values.category,
+            description=values.description,
+        )
+        self.presets_changed.emit()
+        return True
+
+    def delete_preset(self, preset: VibrationPreset) -> bool:
+        """Remove one vibration after a confirmation. True when it was removed.
+
+        A custom vibration is deleted for good; a built-in one only disappears
+        from the list and comes back with "Reset built-in vibrations".
+        Assignments already written on peaks keep their text either way.
+        """
+        if self._db is None or preset.db_id is None:
+            return False
+        if preset.is_builtin:
+            detail = tr(
+                "It can be brought back with \u201cReset built-in vibrations to defaults\u201d."
+            )
+        else:
+            detail = tr("A custom vibration cannot be brought back.")
+        answer = QMessageBox.question(
+            self,
+            tr("Delete Vibration"),
+            tr("Delete \u201c{name}\u201d from the list?").format(name=preset.name)
+            + "\n\n"
+            + detail
+            + "\n"
+            + tr("Peaks that already carry it keep their assignment."),
+            QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.Cancel,
+            QMessageBox.StandardButton.Cancel,
+        )
+        if answer != QMessageBox.StandardButton.Yes:
+            return False
+        self._db.delete_vibration_preset(preset.db_id)
+        self.preset_deleted.emit()
+        return True
+
+    def reset_builtin_presets(self) -> bool:
+        """Restore the built-in library after a confirmation. True when it ran."""
+        if self._db is None:
+            return False
+        answer = QMessageBox.question(
+            self,
+            tr("Reset Built-in Vibrations"),
+            tr(
+                "Restore every built-in vibration to its original name, range and "
+                "category, and bring back the ones that were deleted?\n\n"
+                "Custom vibrations are not changed."
+            ),
+            QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.Cancel,
+            QMessageBox.StandardButton.Cancel,
+        )
+        if answer != QMessageBox.StandardButton.Yes:
+            return False
+        self._db.reset_builtin_vibration_presets()
+        self.presets_changed.emit()
+        return True
 
     def _on_add_custom(self) -> None:
         if self._db is None:
             return
-        dlg = _AddVibrationDialog(self)
+        dlg = _VibrationEditorDialog(self)
         if dlg.exec() == QDialog.DialogCode.Accepted:
-            name, rmin, rmax = dlg.get_values()
-            if name.strip():
+            values = dlg.values()
+            if values.name:
                 self._db.add_vibration_preset(
-                    name=name.strip(),
-                    range_min=rmin,
-                    range_max=rmax,
+                    name=values.name,
+                    range_min=values.range_min,
+                    range_max=values.range_max,
+                    category=values.category,
+                    description=values.description,
                 )
                 self.preset_added.emit()
 
 
-class _AddVibrationDialog(QDialog):
-    """Simple dialog for adding a custom vibration preset."""
+@dataclass(frozen=True)
+class VibrationValues:
+    """What the vibration editor returns."""
 
-    def __init__(self, parent=None) -> None:
+    name: str
+    range_min: float
+    range_max: float
+    category: str
+    description: str
+
+
+#: Categories offered in the editor: (stored value, section title). The stored
+#: values are the ones the built-in library uses, so an edited entry lands in
+#: the same section of the grouped list as its siblings.
+_CATEGORY_CHOICES: tuple[tuple[str, str], ...] = (
+    ("stretch", "Stretching \u03bd"),
+    ("bend", "Bending \u03b4"),
+    ("oop", "Out-of-plane \u03b3"),
+    ("rocking", "Rocking \u03c1"),
+    ("wagging", "Wagging \u03c9"),
+    ("overtone", "Overtones and combinations"),
+    ("silyl", "Protecting groups"),
+    ("", "Other"),
+)
+
+
+class _VibrationEditorDialog(QDialog):
+    """Add a custom vibration, or edit any vibration — built-in or custom."""
+
+    def __init__(self, parent=None, *, preset: VibrationPreset | None = None) -> None:
         super().__init__(parent)
-        self.setWindowTitle("Add Custom Vibration")
-        self.setMinimumWidth(340)
+        self._preset = preset
+        if preset is None:
+            self.setWindowTitle(tr("Add Custom Vibration"))
+        else:
+            self.setWindowTitle(tr("Edit Vibration"))
+        self.setMinimumWidth(380)
 
         layout = QVBoxLayout(self)
         form = QFormLayout()
 
         self._name_edit = VibrationTextEdit(self)
         self._name_edit.set_placeholder_text("e.g. \u03bd(C=O) \u2013CO\u2013O\u2013")
-        form.addRow("Label:", self._name_edit)
+        form.addRow(tr("Label:"), self._name_edit)
 
         self._rmin_spin = QDoubleSpinBox()
-        self._rmin_spin.setRange(400.0, 4000.0)
+        self._rmin_spin.setRange(0.0, 15000.0)
         self._rmin_spin.setDecimals(0)
         self._rmin_spin.setSuffix(" cm\u207b\u00b9")
         self._rmin_spin.setValue(1000.0)
-        form.addRow("Range min:", self._rmin_spin)
+        form.addRow(tr("Range min:"), self._rmin_spin)
 
         self._rmax_spin = QDoubleSpinBox()
-        self._rmax_spin.setRange(400.0, 4000.0)
+        self._rmax_spin.setRange(0.0, 15000.0)
         self._rmax_spin.setDecimals(0)
         self._rmax_spin.setSuffix(" cm\u207b\u00b9")
         self._rmax_spin.setValue(1200.0)
-        form.addRow("Range max:", self._rmax_spin)
+        form.addRow(tr("Range max:"), self._rmax_spin)
+
+        self._category_combo = QComboBox()
+        for value, title in _CATEGORY_CHOICES:
+            self._category_combo.addItem(tr(title), value)
+        self._category_combo.setToolTip(
+            tr("Section of the vibration list the entry appears in when grouped by type")
+        )
+        form.addRow(tr("Category:"), self._category_combo)
+
+        self._description_edit = QLineEdit()
+        self._description_edit.setPlaceholderText(tr("optional note, e.g. a literature source"))
+        form.addRow(tr("Note:"), self._description_edit)
+
+        if preset is not None:
+            self._name_edit.set_text(preset.name)
+            low, high = sorted((float(preset.typical_range_min), float(preset.typical_range_max)))
+            self._rmin_spin.setValue(low)
+            self._rmax_spin.setValue(high)
+            index = self._category_combo.findData(preset.category)
+            if index < 0:
+                # A category this dialog does not list is kept as it is.
+                self._category_combo.addItem(preset.category, preset.category)
+                index = self._category_combo.count() - 1
+            self._category_combo.setCurrentIndex(index)
+            self._description_edit.setText(preset.description)
+            if preset.is_builtin and preset.catalog_name != preset.name:
+                note = QLabel(
+                    tr("Built-in vibration, originally \u201c{name}\u201d").format(
+                        name=preset.catalog_name
+                    )
+                )
+                note.setWordWrap(True)
+                note.setStyleSheet(theme.CAPTION_STYLE)
+                form.addRow("", note)
+        else:
+            self._category_combo.setCurrentIndex(self._category_combo.findData(""))
 
         # Keep the interval valid while it is edited instead of accepting an
         # inverted range that can never match a peak.
         self._rmin_spin.valueChanged.connect(self._rmax_spin.setMinimum)
         self._rmax_spin.valueChanged.connect(self._rmin_spin.setMaximum)
+        self._rmax_spin.setMinimum(self._rmin_spin.value())
+        self._rmin_spin.setMaximum(self._rmax_spin.value())
 
         layout.addLayout(form)
 
@@ -666,9 +829,20 @@ class _AddVibrationDialog(QDialog):
         buttons.rejected.connect(self.reject)
         layout.addWidget(buttons)
 
-    def get_values(self) -> tuple[str, float, float]:
-        return (
-            self._name_edit.text(),
-            self._rmin_spin.value(),
-            self._rmax_spin.value(),
+    def values(self) -> VibrationValues:
+        return VibrationValues(
+            name=self._name_edit.text().strip(),
+            range_min=float(self._rmin_spin.value()),
+            range_max=float(self._rmax_spin.value()),
+            category=str(self._category_combo.currentData() or ""),
+            description=self._description_edit.text().strip(),
         )
+
+    def get_values(self) -> tuple[str, float, float]:
+        """Name and range only — kept for callers written for the old add dialog."""
+        values = self.values()
+        return values.name, values.range_min, values.range_max
+
+
+#: The add dialog grew into the editor; the old name keeps existing imports working.
+_AddVibrationDialog = _VibrationEditorDialog

@@ -72,6 +72,11 @@ molecule, and export a publication-quality PDF report — all in one native app.
   vibration only outlines where it can appear, so the list can be browsed freely;
   double-click it (or press `Enter` / **Assign to peak**) to assign it to the
   selected peak.
+- **Editable vibration library** — every vibration, built-in or custom, can be
+  edited (right-click → *Edit…* or `F2`: label, range, category, note) or deleted.
+  *Reset built-in vibrations to defaults…* restores the shipped library without
+  touching custom entries. Renaming a vibration renames it on the peaks of the open
+  project that carry it; functional-group suggestions still find renamed entries.
 - **Functional-group scoring** — ranked diagnostic groups and structural motifs
   (carbonyls, amides, alcohols, aromatics, alkene subtypes, alkyl-chain motifs, …)
   with confidence, explainability, highlighted regions, and click-to-assign suggestions.
