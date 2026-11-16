@@ -112,7 +112,16 @@ _PORT_TEXT_H = _PORT_H - 2 * _MARGIN - 0.5 * cm  # leave room for footer
 # First-page layouts.
 LAYOUT_STANDARD = "standard"
 LAYOUT_FULL_BLEED = "full_bleed"
-LAYOUT_CHOICES = (LAYOUT_STANDARD, LAYOUT_FULL_BLEED)
+#: A compact protocol: spectrum, metadata, structure and peaks on one A4 page.
+LAYOUT_SINGLE_PAGE = "single_page"
+LAYOUT_CHOICES = (LAYOUT_STANDARD, LAYOUT_FULL_BLEED, LAYOUT_SINGLE_PAGE)
+# Single-page protocol: the spectrum's share of the page and how tall the
+# molecule may grow, so metadata and a typical peak table fit below.
+_SINGLE_PAGE_SPECTRUM_H = 10.0 * cm
+_SINGLE_PAGE_STRUCTURE_H = 4.5 * cm
+# Past this many rows a peak table is laid out in two columns.
+_PEAK_TABLE_SINGLE_COLUMN_ROWS = 14
+_SINGLE_PAGE_SINGLE_COLUMN_ROWS = 6
 
 # Extensions dropped from the identity line drawn on the spectrum — there it
 # reads as a sample identifier, not as a file name. The metadata table on the
@@ -169,6 +178,11 @@ class ReportOptions:
             identity plus the molecular structure into empty space inside the plot.
             LAYOUT_STANDARD is the older layout that keeps the spectrum inside the
             usual 2 cm page margins with nothing drawn on top of it.
+            LAYOUT_SINGLE_PAGE puts the spectrum at the top of one portrait page
+            with the metadata, structure and a two-column peak table below; a
+            long peak table continues on page 2.
+        include_unassigned_peaks: If True, the peak table lists every peak, not
+            only the assigned ones.
     """
 
     include_structures: bool = True
@@ -180,6 +194,7 @@ class ReportOptions:
     diagnostic_regions: tuple[object, ...] = ()
     split_xaxis: bool = True
     layout: str = LAYOUT_FULL_BLEED
+    include_unassigned_peaks: bool = False
     # id(peak) -> (label_x, label_y) in data coordinates, captured from the live
     # viewer so exported labels reproduce the on-screen layout exactly.
     peak_label_placements: dict[int, tuple[float, float]] | None = None
@@ -293,7 +308,7 @@ class PDFGenerator:
             alignment=TA_RIGHT,
         )
 
-        story = []
+        story: list = []
 
         # Use the viewer range when supplied; batch reports otherwise include the
         # complete data while retaining the conventional 400–3800 minimum window.
@@ -301,7 +316,31 @@ class PDFGenerator:
 
         # Page 1: full-page spectrum (no header — maximum graph area)
         full_bleed_painter = None
-        if options.layout == LAYOUT_FULL_BLEED:
+        single_page = options.layout == LAYOUT_SINGLE_PAGE
+        if single_page:
+            # Portrait from the first page: header, then the spectrum across
+            # the top, everything else flows underneath.
+            self._append_header_section(story, project, spectrum, title_style, subtitle_style)
+            self._append_spectrum_section(
+                story,
+                spectrum.wavenumbers,
+                spectrum.intensities,
+                project.peaks,
+                caption_style,
+                dpi=options.dpi,
+                y_unit=spectrum.display_y_unit,
+                is_dip_spectrum=spectrum.is_dip_spectrum,
+                text_width=_PORT_TEXT_W,
+                text_height=_SINGLE_PAGE_SPECTRUM_H,
+                x_min=_x_min,
+                x_max=_x_max,
+                y_view_range=options.view_y_range,
+                diagnostic_regions=options.diagnostic_regions,
+                split_at=2000.0 if options.split_xaxis else None,
+                label_placements=options.peak_label_placements,
+            )
+            story.append(Spacer(1, 0.2 * cm))
+        elif options.layout == LAYOUT_FULL_BLEED:
             full_bleed_painter = self._build_full_bleed_first_page(
                 project,
                 spectrum,
@@ -334,18 +373,19 @@ class PDFGenerator:
                 label_placements=options.peak_label_placements,
             )
 
-        # Switch to portrait for subsequent pages, then page break
-        story.append(NextPageTemplate("portrait"))
-        story.append(PageBreak())
+        if not single_page:
+            # Switch to portrait for subsequent pages, then page break
+            story.append(NextPageTemplate("portrait"))
+            story.append(PageBreak())
 
-        # Page 2+: header first, then metadata+structure, peak table
-        self._append_header_section(
-            story,
-            project,
-            spectrum,
-            title_style,
-            subtitle_style,
-        )
+            # Page 2+: header first, then metadata+structure, peak table
+            self._append_header_section(
+                story,
+                project,
+                spectrum,
+                title_style,
+                subtitle_style,
+            )
 
         if options.include_metadata:
             self._append_metadata_and_structure_section(
@@ -355,6 +395,9 @@ class PDFGenerator:
                 key_style,
                 val_style,
                 options,
+                # Only the single-page protocol changes how the section is laid
+                # out; the other layouts call it exactly as before.
+                **({"structure_max_height": _SINGLE_PAGE_STRUCTURE_H} if single_page else {}),
             )
 
         sorted_peaks = [
@@ -362,6 +405,7 @@ class PDFGenerator:
             for row in build_peak_assignment_rows(
                 project.peaks,
                 is_dip_spectrum=spectrum.is_dip_spectrum,
+                include_unassigned=options.include_unassigned_peaks,
             )
         ]
         if options.include_peak_table and sorted_peaks:
@@ -373,6 +417,7 @@ class PDFGenerator:
                 table_cell_style,
                 table_cell_right,
                 is_dip_spectrum=spectrum.is_dip_spectrum,
+                **({"max_rows_single": _SINGLE_PAGE_SINGLE_COLUMN_ROWS} if single_page else {}),
             )
 
         # Build document with two page templates
@@ -428,6 +473,9 @@ class PDFGenerator:
             )
         else:
             first_template = land_template
+        templates = [first_template, port_template]
+        if single_page:
+            templates = [port_template, land_template]
 
         with atomic_output_path(output_path) as temp_path:
             doc = BaseDocTemplate(
@@ -438,7 +486,7 @@ class PDFGenerator:
                 topMargin=_MARGIN,
                 bottomMargin=_MARGIN + 0.5 * cm,
             )
-            doc.addPageTemplates([first_template, port_template])
+            doc.addPageTemplates(templates)
             doc.build(story)
 
     # ------------------------------------------------------------------
@@ -991,6 +1039,7 @@ class PDFGenerator:
         table_cell_right: ParagraphStyle,
         *,
         is_dip_spectrum: bool = False,
+        max_rows_single: int = _PEAK_TABLE_SINGLE_COLUMN_ROWS,
     ) -> None:
         """Append the peak assignments table."""
         intensity_labels = classify_peak_intensities(
@@ -1024,7 +1073,6 @@ class PDFGenerator:
         story.append(Paragraph("Peak assignments", section_style))
 
         # Short lists read best as a single full-width column.
-        max_rows_single = 14
         if len(data_rows) <= max_rows_single:
             table = Table(
                 [_make_header()] + data_rows,
@@ -1106,6 +1154,8 @@ class PDFGenerator:
         key_style: ParagraphStyle,
         val_style: ParagraphStyle,
         options: ReportOptions,
+        *,
+        structure_max_height: float = _STRUCTURE_COLUMN_MAX_H,
     ) -> None:
         """Metadata table on the left, molecule structure image on the right."""
         # ── Build metadata rows ──────────────────────────────────────────────
@@ -1202,7 +1252,7 @@ class PDFGenerator:
 
         if structure is not None:
             right_cell = self._structure_flowable(
-                structure, right_col_w - 0.3 * cm, _STRUCTURE_COLUMN_MAX_H
+                structure, right_col_w - 0.3 * cm, structure_max_height
             )
             two_col = Table(
                 [[meta_subtable, right_cell]],

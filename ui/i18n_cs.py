@@ -674,4 +674,11 @@ CZECH_TEXTS: dict[str, str] = {
     "Adds a chart of the spectrum to the Spectrum sheet, wavenumbers from 4000 to 400": (
         "Přidá na list Spectrum graf spektra s vlnočty od 4000 do 400"
     ),
+    # ── Report options ──────────────────────────────────────────────────────
+    "Single page: spectrum, metadata, structure and peaks": (
+        "Jedna strana: spektrum, údaje, struktura a píky"
+    ),
+    "List every peak in the report's peak table, not only the assigned ones": (
+        "Uvede v tabulce píků reportu všechny píky, nejen přiřazené"
+    ),
 }

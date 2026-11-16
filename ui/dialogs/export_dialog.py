@@ -92,6 +92,13 @@ class ExportDialog(QDialog):
         self._include_metadata_checkbox = self._report_options_widget._include_metadata_checkbox
         self._include_peak_table_checkbox = self._report_options_widget._include_peak_table_checkbox
         self._include_structures_checkbox = self._report_options_widget._include_structures_checkbox
+        # One "peaks without assignment" box for every format: the dialog's own,
+        # kept in step with the report widget's so a PDF preset still records it.
+        report_box = self._report_options_widget._include_unassigned_checkbox
+        report_box.setVisible(False)
+        self._include_unassigned_checkbox.setChecked(report_box.isChecked())
+        self._include_unassigned_checkbox.toggled.connect(report_box.setChecked)
+        report_box.toggled.connect(self._include_unassigned_checkbox.setChecked)
 
         self._pdf_radio.toggled.connect(self._update_pdf_option_state)
         self._csv_radio.toggled.connect(self._update_unassigned_checkbox_state)
@@ -118,7 +125,7 @@ class ExportDialog(QDialog):
         csv = self._csv_radio.isChecked()
         xlsx = self._xlsx_radio.isChecked()
         spectrum_only = csv and self.csv_mode == MODE_SPECTRUM_ONLY
-        self._include_unassigned_checkbox.setVisible((csv or xlsx) and not spectrum_only)
+        self._include_unassigned_checkbox.setVisible(not spectrum_only)
         self._csv_options.setVisible(csv)
         self._include_chart_checkbox.setVisible(xlsx)
 

@@ -114,6 +114,10 @@ molecule, and export a publication-quality PDF report — all in one native app.
 - **Publication-quality PDF reports** — OMNIC-style spectrum render (Matplotlib),
   peak table, vibration assignments, metadata block, and embedded molecule
   structure. Fully customizable header / footer / spectrum X-range via dialog.
+  Three first-page layouts: the spectrum across the whole page (default), the
+  spectrum inside page margins, or a **single-page protocol** with the spectrum at
+  the top and metadata, structure and a two-column peak table below. The peak table
+  can list every peak, not only the assigned ones; both choices are kept in presets.
 - **Data export** — to `.xlsx` or `.csv`, in the unit shown in the viewer.
   - CSV: the whole analysis (metadata, peaks and spectrum side by side), the peak
     table only, or the spectrum data only (for Origin, MestReNova, Python), with a

@@ -111,6 +111,7 @@ class ReportPresetManager:
             "dpi": options.dpi,
             "split_xaxis": options.split_xaxis,
             "layout": options.layout,
+            "include_unassigned_peaks": options.include_unassigned_peaks,
         }
 
     @staticmethod
@@ -138,4 +139,5 @@ class ReportPresetManager:
             dpi=dpi_value,
             split_xaxis=bool(data.get("split_xaxis", True)),
             layout=layout,
+            include_unassigned_peaks=bool(data.get("include_unassigned_peaks", False)),
         )

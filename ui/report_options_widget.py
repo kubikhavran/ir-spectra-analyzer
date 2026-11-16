@@ -16,7 +16,12 @@ from PySide6.QtWidgets import (
 )
 
 from app.report_presets import ReportPresetManager
-from reporting.pdf_generator import LAYOUT_FULL_BLEED, LAYOUT_STANDARD, ReportOptions
+from reporting.pdf_generator import (
+    LAYOUT_FULL_BLEED,
+    LAYOUT_SINGLE_PAGE,
+    LAYOUT_STANDARD,
+    ReportOptions,
+)
 from ui.i18n import tr
 
 
@@ -61,6 +66,9 @@ class ReportOptionsWidget(QWidget):
             LAYOUT_FULL_BLEED,
         )
         self._layout_combo.addItem("Spectrum inside page margins", LAYOUT_STANDARD)
+        self._layout_combo.addItem(
+            tr("Single page: spectrum, metadata, structure and peaks"), LAYOUT_SINGLE_PAGE
+        )
         self._layout_combo.currentIndexChanged.connect(self._on_options_toggled)
         layout_row.addWidget(QLabel("First page:"))
         layout_row.addWidget(self._layout_combo, stretch=1)
@@ -75,10 +83,15 @@ class ReportOptionsWidget(QWidget):
         self._include_structures_checkbox.setChecked(True)
         self._split_xaxis_checkbox = QCheckBox("Split X-axis at 2000 cm⁻¹")
         self._split_xaxis_checkbox.setChecked(True)
+        self._include_unassigned_checkbox = QCheckBox(tr("Include peaks without assignment"))
+        self._include_unassigned_checkbox.setToolTip(
+            tr("List every peak in the report's peak table, not only the assigned ones")
+        )
         checkbox_layout.addWidget(self._include_metadata_checkbox)
         checkbox_layout.addWidget(self._include_peak_table_checkbox)
         checkbox_layout.addWidget(self._include_structures_checkbox)
         checkbox_layout.addWidget(self._split_xaxis_checkbox)
+        checkbox_layout.addWidget(self._include_unassigned_checkbox)
         checkbox_layout.addStretch()
         root_layout.addLayout(checkbox_layout)
 
@@ -87,6 +100,7 @@ class ReportOptionsWidget(QWidget):
             self._include_peak_table_checkbox,
             self._include_structures_checkbox,
             self._split_xaxis_checkbox,
+            self._include_unassigned_checkbox,
         ):
             checkbox.toggled.connect(self._on_options_toggled)
 
@@ -98,6 +112,7 @@ class ReportOptionsWidget(QWidget):
             include_structures=self._include_structures_checkbox.isChecked(),
             split_xaxis=self._split_xaxis_checkbox.isChecked(),
             layout=str(self._layout_combo.currentData()),
+            include_unassigned_peaks=self._include_unassigned_checkbox.isChecked(),
         )
 
     def current_preset_name(self) -> str | None:
@@ -121,6 +136,7 @@ class ReportOptionsWidget(QWidget):
         self._include_peak_table_checkbox.setEnabled(enabled)
         self._include_structures_checkbox.setEnabled(enabled)
         self._split_xaxis_checkbox.setEnabled(enabled)
+        self._include_unassigned_checkbox.setEnabled(enabled)
 
     def _load_initial_state(self) -> None:
         """Load presets and select the last-used named preset when available."""
@@ -177,6 +193,7 @@ class ReportOptionsWidget(QWidget):
             self._include_peak_table_checkbox.setChecked(options.include_peak_table)
             self._include_structures_checkbox.setChecked(options.include_structures)
             self._split_xaxis_checkbox.setChecked(options.split_xaxis)
+            self._include_unassigned_checkbox.setChecked(options.include_unassigned_peaks)
             layout_index = self._layout_combo.findData(options.layout)
             self._layout_combo.setCurrentIndex(max(layout_index, 0))
         finally:
