@@ -27,7 +27,7 @@ application = str(_app_src)
 appname = "IR Spectra Analyzer"
 
 # Output DMG attributes
-format = "UDBZ"  # bzip2 compressed — good size/speed tradeoff
+format = "UDZO"  # zlib compressed — supported across modern macOS/dmgbuild
 size = "2G"
 
 # Items placed inside the DMG
