@@ -336,3 +336,271 @@ def test_molecule_widget_passes_current_structure_to_editor(qtbot, monkeypatch):
 
     assert captured["smiles"] == "CCO"
     assert captured["mol_block"] == "MOL BLOCK CONTENT"
+
+
+# ---------------------------------------------------------------------------
+# Native Draw tab
+# ---------------------------------------------------------------------------
+
+
+def _click(widget, pos):
+    from PySide6.QtCore import Qt
+    from PySide6.QtTest import QTest
+
+    QTest.mouseClick(widget, Qt.MouseButton.LeftButton, pos=pos)
+
+
+@pytest.fixture
+def native_dialog(qtbot):
+    from ui.dialogs.molecule_editor_dialog import MoleculeEditorDialog
+
+    def _make(**kwargs):
+        dlg = MoleculeEditorDialog(**kwargs)
+        qtbot.addWidget(dlg)
+        dlg.show()
+        qtbot.waitExposed(dlg)
+        return dlg
+
+    return _make
+
+
+def test_editor_is_native_and_offline():
+    from pathlib import Path
+
+    from ui.dialogs import molecule_editor_dialog as module
+
+    source = Path(module.__file__).read_text(encoding="utf-8")
+    for forbidden in ("QtWebEngine", "QWebChannel", "unpkg", "urllib", "JSME"):
+        assert forbidden not in source
+    from ui.widgets.molecule_canvas import MoleculeCanvas
+
+    assert isinstance(module.MoleculeEditorDialog()._canvas, MoleculeCanvas)
+
+
+@requires_rdkit
+def test_draw_tab_layout(native_dialog):
+    dlg = native_dialog()
+    assert dlg.minimumWidth() >= 820
+    assert dlg.minimumHeight() >= 560
+    assert set(dlg._tool_buttons) == {
+        "select",
+        "erase",
+        "bond_single",
+        "bond_double",
+        "bond_triple",
+        "bond_wedge",
+        "bond_hash",
+        "chain",
+    }
+    assert {"cyclopropane", "benzene", "naphthalene", "pyridine", "furan", "thiophene"} <= set(
+        dlg._ring_buttons
+    )
+    assert {"-OH", "-NH2", "-COOH", "-NO2", "-TMS", "-Boc"} <= set(dlg._group_buttons)
+    assert list(dlg._element_buttons)[:4] == ["C", "H", "O", "N"]
+    assert dlg._tool_buttons["bond_single"].isChecked()
+    assert "(W)" in dlg._tool_buttons["bond_wedge"].toolTip()
+
+
+@requires_rdkit
+def test_save_structure_drawn_on_canvas(native_dialog):
+    from PySide6.QtCore import QPoint
+
+    dlg = native_dialog()
+    dlg._ring_buttons["benzene"].click()
+    assert dlg._canvas.tool() == "ring"
+    assert dlg._ring_buttons["benzene"].isChecked()
+    _click(dlg._canvas, QPoint(dlg._canvas.width() // 2, dlg._canvas.height() // 2))
+    assert dlg._formula_label.text() == "Formula: C₆H₆"
+    assert "78.11" in dlg._mw_label.text()
+    assert dlg._smiles_input.text() == "c1ccccc1"
+    dlg._on_ok()
+    assert dlg.result() == dlg.DialogCode.Accepted
+    assert dlg.smiles() == "c1ccccc1"
+    assert "V2000" in dlg.mol_block()
+    assert dlg.png_bytes().startswith(b"\x89PNG")
+
+
+@requires_rdkit
+def test_untouched_structure_is_returned_verbatim(native_dialog):
+    dlg = native_dialog(initial_smiles="OCC")
+    dlg._on_ok()
+    assert dlg.smiles() == "OCC"
+    assert "V2000" in dlg.mol_block()
+
+
+@requires_rdkit
+def test_initial_mol_block_keeps_drawn_2d_layout(native_dialog):
+    from chemistry.mol_editor_model import MolEditorModel
+
+    model = MolEditorModel()
+    a = model.add_free_atom(7.0, -3.0)
+    model.sprout_atom(a, "O", preferred_angle=90.0)
+    mol_block = model.to_mol_block()
+
+    dlg = native_dialog(initial_smiles="CO", initial_mol_block=mol_block)
+    canvas_model = dlg._canvas.model()
+    assert canvas_model.atom_position(0) == pytest.approx((7.0, -3.0), abs=1e-3)
+    assert canvas_model.atom_position(1) == pytest.approx((7.0, -1.5), abs=1e-3)
+    dlg._on_ok()
+    assert dlg.mol_block() == mol_block  # untouched → identical layout
+    assert dlg.smiles() == "CO"
+
+    # After an edit the original atoms keep their coordinates.
+    dlg2 = native_dialog(initial_smiles="CO", initial_mol_block=mol_block)
+    _click(dlg2._canvas, dlg2._canvas._atom_screen(1).toPoint())
+    dlg2._on_ok()
+    assert dlg2.smiles() == "COC"
+    reloaded = MolEditorModel.from_mol_block(dlg2.mol_block())
+    assert reloaded.atom_position(0) == pytest.approx((7.0, -3.0), abs=1e-3)
+    assert reloaded.atom_position(1) == pytest.approx((7.0, -1.5), abs=1e-3)
+
+
+@requires_rdkit
+def test_canvas_edits_update_smiles_tab(native_dialog):
+    dlg = native_dialog(initial_smiles="CC")
+    _click(dlg._canvas, dlg._canvas._atom_screen(1).toPoint())
+    assert dlg._smiles_input.text() == "CCC"
+    assert "SMILES: CCC" in dlg._live_smiles_label.text()
+    dlg._tabs.setCurrentIndex(1)
+    assert dlg._smiles_status.text() == "Valid"
+    dlg._on_ok()
+    assert dlg.smiles() == "CCC"
+
+
+@requires_rdkit
+def test_smiles_tab_changes_load_into_canvas(native_dialog):
+    dlg = native_dialog(initial_smiles="CC")
+    dlg._tabs.setCurrentIndex(1)
+    dlg._smiles_input.setText("OCC(=O)O")
+    dlg._tabs.setCurrentIndex(0)
+    assert dlg._canvas.to_smiles() == "O=C(O)CO"
+    # The user's spelling is kept in the field.
+    assert dlg._smiles_input.text() == "OCC(=O)O"
+    # One undo step brings the previous drawing back.
+    dlg._undo_btn.click()
+    assert dlg._canvas.to_smiles() == "CC"
+
+
+@requires_rdkit
+def test_preview_loads_valid_smiles_into_canvas(native_dialog):
+    dlg = native_dialog()
+    dlg._tabs.setCurrentIndex(1)
+    dlg._smiles_input.setText("c1ccncc1")
+    dlg._preview_btn.click()
+    assert dlg._smiles_status.text() == "Valid"
+    assert dlg._canvas.to_smiles() == "c1ccncc1"
+    dlg._smiles_input.setText("not_a_smiles_xyz!!!")
+    dlg._preview_btn.click()
+    assert dlg._smiles_status.text() == "Invalid SMILES"
+    assert dlg._canvas.to_smiles() == "c1ccncc1"
+
+
+@requires_rdkit
+def test_invalid_smiles_does_not_replace_drawing_on_tab_switch(native_dialog):
+    dlg = native_dialog(initial_smiles="CCO")
+    dlg._tabs.setCurrentIndex(1)
+    dlg._smiles_input.setText("C1CC")
+    dlg._tabs.setCurrentIndex(0)
+    assert dlg._canvas.to_smiles() == "CCO"
+    assert dlg._smiles_status.text() == "Invalid SMILES"
+
+
+@requires_rdkit
+def test_smiles_tab_ok_with_new_text_builds_fresh_mol_block(native_dialog):
+    dlg = native_dialog(initial_smiles="CC")
+    dlg._tabs.setCurrentIndex(1)
+    dlg._smiles_input.setText("CCN")
+    dlg._on_ok()
+    assert dlg.smiles() == "CCN"
+    assert "V2000" in dlg.mol_block()
+    assert " N " in dlg.mol_block()
+
+
+@requires_rdkit
+def test_undo_redo_clean_and_clear_buttons(native_dialog):
+    dlg = native_dialog(initial_smiles="CC")
+    assert not dlg._undo_btn.isEnabled()
+    _click(dlg._canvas, dlg._canvas._atom_screen(1).toPoint())
+    assert dlg._undo_btn.isEnabled()
+    dlg._undo_btn.click()
+    assert dlg._canvas.to_smiles() == "CC"
+    assert dlg._redo_btn.isEnabled()
+    dlg._redo_btn.click()
+    assert dlg._canvas.to_smiles() == "CCC"
+
+    model = dlg._canvas.model()
+    model.move_atom(0, 40.0, 40.0)
+    assert dlg._clean_btn.isEnabled()
+    dlg._clean_btn.click()
+    xs = [model.atom_position(i)[0] for i in range(model.atom_count)]
+    assert max(xs) - min(xs) < 5.0
+    assert dlg._canvas.to_smiles() == "CCC"
+
+    dlg._tabs.setCurrentIndex(0)
+    dlg._on_clear()
+    assert dlg._canvas.model().is_empty()
+    assert dlg._smiles_input.text() == ""
+    assert not dlg._clean_btn.isEnabled()
+    dlg._undo_btn.click()
+    assert dlg._canvas.to_smiles() == "CCC"
+    dlg._on_clear()
+    dlg._on_ok()
+    assert dlg.smiles() == ""
+    assert dlg.mol_block() == ""
+
+
+@requires_rdkit
+def test_palette_follows_keyboard_tool_changes(native_dialog):
+    from PySide6.QtCore import Qt
+    from PySide6.QtTest import QTest
+
+    dlg = native_dialog()
+    dlg._canvas._cursor = None
+    QTest.keyClick(dlg._canvas, Qt.Key.Key_2)
+    assert dlg._tool_buttons["bond_double"].isChecked()
+    dlg._group_buttons["-COOH"].click()
+    assert dlg._canvas.tool() == "group"
+    assert dlg._group_buttons["-COOH"].isChecked()
+    dlg._element_buttons["N"].click()
+    assert dlg._canvas.tool() == "atom"
+    assert dlg._canvas.atom_symbol() == "N"
+
+
+@requires_rdkit
+def test_periodic_table_and_charge_buttons(native_dialog, monkeypatch):
+    from ui.widgets import molecule_canvas
+
+    monkeypatch.setattr(
+        molecule_canvas.PeriodicTableDialog,
+        "get_element",
+        classmethod(lambda cls, parent=None: "Fe"),
+    )
+    dlg = native_dialog(initial_smiles="C")
+    dlg._periodic_btn.click()
+    assert dlg._canvas.tool() == "atom"
+    assert dlg._canvas.atom_symbol() == "Fe"
+    assert dlg._palette_group.checkedButton() is None  # Fe has no palette button
+
+    dlg._element_buttons["O"].click()
+    _click(dlg._canvas, dlg._canvas._atom_screen(0).toPoint())
+    dlg._charge_minus_btn.click()
+    assert dlg._canvas.to_smiles() == "[OH-]"
+    dlg._charge_plus_btn.click()
+    assert dlg._canvas.to_smiles() == "O"
+
+
+@requires_rdkit
+def test_dialog_builds_in_czech(qtbot):
+    from ui import i18n
+    from ui.dialogs.molecule_editor_dialog import MoleculeEditorDialog
+
+    i18n.set_language(i18n.CZECH)
+    try:
+        dlg = MoleculeEditorDialog(initial_smiles="CCO")
+        qtbot.addWidget(dlg)
+        assert dlg.windowTitle() == "Úprava chemické struktury"
+        assert dlg._tabs.tabText(0) == "Kreslení"
+        assert dlg._formula_label.text() == "Vzorec: C₂H₆O"
+        assert dlg._tool_buttons["chain"].toolTip() == "Uhlíkový řetězec (C)"
+    finally:
+        i18n.set_language(i18n.ENGLISH)

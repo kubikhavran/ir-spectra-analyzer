@@ -87,8 +87,11 @@ molecule, and export a publication-quality PDF report — all in one native app.
   and molecule edits all participate. `Ctrl+Z` / `Ctrl+Y`.
 
 ### Chemistry
-- **Embedded JSME molecule editor** (JavaScript structure editor in a Qt WebView)
-  with periodic-table picker and custom-element support (Na, K, Fe, …).
+- **Native molecule editor** (Qt + RDKit, fully offline) — bond, wedge/hash, chain,
+  ring (benzene, naphthalene, pyridine, furan, …) and IR functional-group tools
+  (-OH, -COOH, -NO₂, -CN, …), hover shortcuts (`O`, `N`, `L` = Cl, `R` = Br, `+`/`-`,
+  `1`/`2`/`3`), periodic-table picker, charges, Clean 2D, undo/redo and a live
+  formula / MW / SMILES bar.
 - **SMILES round-trip** via RDKit — paste a SMILES to pre-populate the editor, or
   export the edited structure as SMILES / MOL block.
 - **Structure panel** attaches a molecule to the project — shown in the viewer and
@@ -261,8 +264,8 @@ pytest -q                           # runs the full test suite (offscreen Qt)
    assign it.
 4. **(Optional) Correct baseline** — click **Correct Baseline** → rubber-band.
    `Ctrl+Z` if the result is wrong.
-5. **(Optional) Sketch the molecule** — open the structure panel, use the embedded
-   JSME editor, or paste a SMILES.
+5. **(Optional) Sketch the molecule** — open the structure panel, draw it in the
+   built-in editor, or paste a SMILES (`Ctrl+V` works on the canvas too).
 6. **Review Functional Groups / Consensus** — inspect ranked groups, highlighted
    diagnostic regions, assign suggested vibrations, and use the consensus panel to
    compare chemistry evidence with library matches.
@@ -385,7 +388,7 @@ ir-spectra-analyzer/
 ├── file_io/                # Format registry, SPA / JCAMP readers, export writers
 ├── processing/             # Pure-function signal processing + consensus analysis
 ├── matching/               # Reference DB, similarity search, quality scoring
-├── chemistry/              # RDKit adapters, JSME structure model
+├── chemistry/              # RDKit adapters, editable 2D structure model
 ├── reporting/              # PDF report builder + Matplotlib spectrum renderer
 ├── ui/                     # PySide6 GUI (MainWindow, panels, dialogs, widgets)
 ├── storage/                # SQLite + JSON settings persistence
@@ -510,12 +513,6 @@ The final installer lands in `dist\installer\`.
 Install the [Microsoft Visual C++ Redistributable](https://aka.ms/vs/17/release/vc_redist.x64.exe)
 and relaunch.
 
-**JSME molecule editor won't load elements**
-The first launch downloads the pinned JSME 2024.4.29 release and its GWT
-code-split fragments into `~/.ir-spectra-analyzer/jsme/2024.4.29/`. If you see a
-"Loading JS code failed" dialog, delete that version folder and relaunch; the app
-will re-download and verify the loader.
-
 **`.spa` parsing fails with "unknown magic"**
 The file is probably not a standard OMNIC SPA. Known-good instruments: Nicolet iS5,
 iS10, iS50. Share the file via an issue if it's from a different vendor.
@@ -537,6 +534,5 @@ MIT — see [LICENSE](LICENSE). Free for commercial and academic use.
 
 - **OMNIC** is a registered trademark of Thermo Fisher Scientific. This project
   reads the `.spa` file format but is otherwise unaffiliated.
-- **JSME** molecule editor by Bruno Bienfait and Peter Ertl, distributed under BSD.
 - **RDKit**, **PyQtGraph**, **PySide6**, **ReportLab**, **Matplotlib** — thanks to
   their maintainers for the foundational libraries.

@@ -713,4 +713,79 @@ CZECH_TEXTS: dict[str, str] = {
     "Double-click to edit the chemical structure": "Dvojklikem upravíte chemickou strukturu",
     "Double-click to draw or paste a structure": "Dvojklikem nakreslíte nebo vložíte strukturu",
     "Acquisition & file details": "Podrobnosti měření a souboru",
+    # ── Molecule editor ─────────────────────────────────────────────────────
+    "Edit Molecular Structure": "Úprava chemické struktury",
+    "Draw": "Kreslení",
+    "SMILES": "SMILES",
+    "Enter SMILES (e.g. CCO)": "Zadejte SMILES (např. CCO)",
+    "Enter SMILES to preview": "Zadejte SMILES pro náhled",
+    "Preview": "Náhled",
+    "Valid": "Platný",
+    "Invalid SMILES": "Neplatný SMILES",
+    "RDKit not installed": "RDKit není nainstalován",
+    "Select / Move": "Výběr / přesun",
+    "Erase": "Mazání",
+    "Single Bond": "Jednoduchá vazba",
+    "Double Bond": "Dvojná vazba",
+    "Triple Bond": "Trojná vazba",
+    "Wedge Up": "Klínová vazba (k divákovi)",
+    "Hash Down": "Šrafovaná vazba (od diváka)",
+    "Carbon Chain": "Uhlíkový řetězec",
+    "Clean 2D": "Uspořádat 2D",
+    "Fit View": "Přizpůsobit zobrazení",
+    "Rings": "Kruhy",
+    "IR Groups": "IR skupiny",
+    "Elements": "Prvky",
+    "Charge": "Náboj",
+    "PT…": "PSP…",
+    "Periodic table": "Periodická soustava prvků",
+    "Periodic Table": "Periodická soustava prvků",
+    "Click an element to use it in the drawing.": "Kliknutím vyberete prvek pro kreslení.",
+    "Increase charge (+)": "Zvýšit náboj (+)",
+    "Decrease charge (−)": "Snížit náboj (−)",
+    "Attach {group} to an atom": "Připojit {group} k atomu",
+    "Draw {element} atoms": "Kreslit atomy {element}",
+    "Formula: {formula}": "Vzorec: {formula}",
+    "MW: {mw}": "Mr: {mw}",
+    "Cyclopropane": "Cyklopropan",
+    "Cyclobutane": "Cyklobutan",
+    "Cyclopentane": "Cyklopentan",
+    "Cyclohexane": "Cyklohexan",
+    "Cycloheptane": "Cykloheptan",
+    "Benzene": "Benzen",
+    "Naphthalene": "Naftalen",
+    "Pyridine": "Pyridin",
+    "Furan": "Furan",
+    "Thiophene": "Thiofen",
+    "Pyrrole": "Pyrrol",
+    "Click to draw a bond, pick a ring or paste SMILES (Ctrl+V)": (
+        "Kliknutím nakreslíte vazbu, vyberte kruh nebo vložte SMILES (Ctrl+V)"
+    ),
+    "Atom: type C, O, N, S, P, F, I, H, B, L (Cl), R (Br); +/− charge; Del removes": (
+        "Atom: napište C, O, N, S, P, F, I, H, B, L (Cl), R (Br); +/− náboj; Del smaže"
+    ),
+    "Bond: 1/2/3 order, W wedge, H hash, Del removes": (
+        "Vazba: 1/2/3 násobnost, W klín, H šrafy, Del smaže"
+    ),
+    "Drag atoms to move them, drag empty space to select": (
+        "Tažením atomů je přesunete, tažením v prázdném místě vyberete"
+    ),
+    "Click an atom or bond to delete it": "Kliknutím na atom nebo vazbu je smažete",
+    "Click or drag to draw bonds; click a bond to cycle its order": (
+        "Kreslete kliknutím nebo tažením; klik na vazbu mění její násobnost"
+    ),
+    "Click or drag to draw double bonds": "Kliknutím nebo tažením kreslíte dvojné vazby",
+    "Click or drag to draw triple bonds": "Kliknutím nebo tažením kreslíte trojné vazby",
+    "Wedge bond (towards viewer); click again to flip": (
+        "Klínová vazba (k divákovi); dalším kliknutím ji otočíte"
+    ),
+    "Hashed bond (away from viewer); click again to flip": (
+        "Šrafovaná vazba (od diváka); dalším kliknutím ji otočíte"
+    ),
+    "Drag to draw a carbon chain": "Tažením nakreslíte uhlíkový řetězec",
+    "Click to place {symbol} or replace an atom": "Kliknutím umístíte {symbol} nebo nahradíte atom",
+    "Click empty space, an atom or a bond to add the ring": (
+        "Kruh přidáte kliknutím do prázdna, na atom nebo na vazbu"
+    ),
+    "Click an atom to attach {group}": "Kliknutím na atom připojíte {group}",
 }
