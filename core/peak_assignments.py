@@ -68,6 +68,23 @@ def classify_peak_intensities(peaks: Sequence[Peak], *, is_dip_spectrum: bool) -
     return result
 
 
+def intensity_unit_label(spectrum: Spectrum | None) -> str:
+    """Readable name of the intensity unit, as exported column titles show it.
+
+    Uses the unit the curve is actually on (``display_y_unit``): a file whose
+    header says "Absorbance" over a %T curve is shown — and now exported — as
+    Transmittance. A corrected curve says so: "Transmittance, baseline corrected".
+    """
+    if spectrum is None:
+        return "Intensity"
+    unit = spectrum.display_y_unit
+    label = str(unit.value)
+    is_corrected = bool(getattr(spectrum, "is_baseline_corrected", False))
+    if is_corrected and unit.value != "Baseline Corrected":
+        return f"{label}, baseline corrected"
+    return label
+
+
 def collect_export_metadata(
     project: Project | None,
     spectrum: Spectrum | None,
@@ -121,7 +138,7 @@ def collect_export_metadata(
     _add("Comment", getattr(metadata, "comments", "") or extra.get("omnic_comment"))
 
     if spectrum is not None:
-        _add("Y unit", spectrum.y_unit.value)
+        _add("Y unit", intensity_unit_label(spectrum))
         try:
             wavenumbers = list(spectrum.wavenumbers)
             if wavenumbers:
