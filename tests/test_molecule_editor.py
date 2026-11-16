@@ -763,3 +763,24 @@ def test_more_menu_copy_and_files(native_dialog, isolated_groups, monkeypatch, t
     assert dlg._canvas.to_smiles() == "c1ccncc1"
     dlg._undo_btn.click()
     assert dlg._canvas.to_smiles() == "CC(=O)O"
+
+
+@requires_rdkit
+def test_sugar_and_ether_ring_buttons(native_dialog, isolated_groups):
+    from PySide6.QtCore import QPoint
+
+    dlg = native_dialog(initial_smiles="CCO")
+    for key in ("oxane", "oxolane", "chair", "oxane_chair", "beta_glucopyranose"):
+        assert key in dlg._ring_buttons
+    dlg._ring_buttons["beta_glucopyranose"].click()
+    assert dlg._canvas.tool() == "ring"
+    oxygen = next(
+        i
+        for i in range(dlg._canvas.model().atom_count)
+        if dlg._canvas.model().atom_symbol(i) == "O"
+    )
+    _click(dlg._canvas, dlg._canvas._atom_screen(oxygen).toPoint())
+    assert dlg._canvas.to_smiles() == "CCO[C@@H]1O[C@H](CO)[C@@H](O)[C@H](O)[C@H]1O"
+    dlg._ring_buttons["oxane"].click()
+    _click(dlg._canvas, QPoint(30, 30))
+    assert "C1CCOCC1" in dlg._canvas.to_smiles()

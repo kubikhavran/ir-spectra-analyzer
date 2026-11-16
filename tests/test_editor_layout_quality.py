@@ -279,3 +279,46 @@ def test_editor_preview_point_check():
     assert not _segments_cross((0, 0), (1, 0), (0, 1), (1, 1))
     assert _point_segment((1, 1), (0, 0), (2, 0)) == pytest.approx(1.0)
     assert QPointF(1, 1).x() == 1
+
+
+def test_pdf_report_places_structure_without_border_or_distortion(tmp_path, monkeypatch):
+    import io
+
+    import numpy as np
+
+    from core.project import Project
+    from core.spectrum import SpectralUnit, Spectrum
+    from reporting import pdf_generator
+    from reporting.pdf_generator import PDFGenerator, ReportOptions
+
+    placed: list[tuple[bytes, float, float]] = []
+    original_image = pdf_generator.Image
+
+    def recording_image(source, width=None, height=None, *args, **kwargs):
+        if isinstance(source, io.BytesIO):
+            placed.append((source.getvalue(), float(width), float(height)))
+        return original_image(source, width, height, *args, **kwargs)
+
+    monkeypatch.setattr(pdf_generator, "Image", recording_image)
+    model = MolEditorModel.from_smiles("CC[NH3+].[Cl-]")
+    model.add_ring_template("beta_glucopyranose", target_atom_idx=0)
+    spectrum = Spectrum(
+        wavenumbers=np.linspace(650, 4000, 200),
+        intensities=np.linspace(20, 90, 200),
+        y_unit=SpectralUnit.TRANSMITTANCE,
+    )
+    project = Project(name="glycoside salt", spectrum=spectrum)
+    project.smiles = model.to_smiles()
+    project.mol_block = model.to_mol_block()
+    out = tmp_path / "report.pdf"
+    PDFGenerator().generate(project, out, options=ReportOptions(include_structures=True))
+    assert out.exists()
+
+    structures = [entry for entry in placed if entry[0].startswith(b"\x89PNG")]
+    assert structures, "the structure image was not placed in the report"
+    for png, width, height in structures:
+        image = QImage.fromData(png)
+        # Placed with the picture's own aspect ratio: nothing is stretched.
+        assert height / width == pytest.approx(image.height() / image.width(), rel=0.01)
+        margins, _ = _alpha_margins(png)
+        assert max(margins) <= 0.02 * max(image.width(), image.height()) + 4

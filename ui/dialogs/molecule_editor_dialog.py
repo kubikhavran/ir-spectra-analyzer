@@ -48,6 +48,7 @@ from PySide6.QtWidgets import (
     QListWidgetItem,
     QMenu,
     QPushButton,
+    QScrollArea,
     QSizePolicy,
     QTabWidget,
     QToolButton,
@@ -96,6 +97,20 @@ _RING_BUTTONS: tuple[tuple[str, str], ...] = (
     ("furan", "Furan"),
     ("thiophene", "Thiophene"),
     ("pyrrole", "Pyrrole"),
+)
+# Saturated O/N rings, chairs and sugars (the building blocks of carbohydrates).
+_HETEROCYCLE_BUTTONS: tuple[tuple[str, str], ...] = (
+    ("oxane", "Tetrahydropyran (oxane)"),
+    ("oxolane", "Tetrahydrofuran (oxolane)"),
+    ("dioxane", "1,4-Dioxane"),
+    ("piperidine", "Piperidine"),
+    ("morpholine", "Morpholine"),
+    ("piperazine", "Piperazine"),
+    ("chair", "Cyclohexane chair"),
+    ("oxane_chair", "Pyranose chair (oxane)"),
+    ("beta_glucopyranose", "β-D-Glucopyranose (click an OH or atom to make a glycoside)"),
+    ("alpha_glucopyranose", "α-D-Glucopyranose (click an OH or atom to make a glycoside)"),
+    ("beta_ribofuranose", "β-D-Ribofuranose (click an OH or atom to make a glycoside)"),
 )
 # (group key, button label)
 _GROUP_BUTTONS: tuple[tuple[str, str], ...] = (
@@ -262,7 +277,8 @@ def _ring_icon(ring_type: str, size: int = 34) -> QIcon:
     painter.setFont(font)
     for idx, point in enumerate(points):
         symbol = model.atom_symbol(idx)
-        if symbol == "C":
+        if symbol == "C" or (model.atom_degree(idx) == 1 and model.atom_count > 8):
+            # Sugar OH groups stay plain stubs; letters would crowd the icon.
             continue
         painter.setPen(Qt.PenStyle.NoPen)
         painter.setBrush(QColor(theme.SURFACE))
@@ -567,20 +583,10 @@ class MoleculeEditorDialog(QDialog):
         vbox.setSpacing(4)
 
         vbox.addWidget(_section_label(tr("Rings")))
-        rings = QGridLayout()
-        rings.setSpacing(4)
-        for i, (ring_type, label) in enumerate(_RING_BUTTONS):
-            button = _palette_button(tooltip=tr(label))
-            button.setIcon(_ring_icon(ring_type))
-            button.setIconSize(QSize(34, 34))
-            button.setFixedSize(52, 44)
-            button.clicked.connect(
-                lambda _checked=False, r=ring_type: self._canvas.set_ring_type(r)
-            )
-            self._palette_group.addButton(button)
-            self._ring_buttons[ring_type] = button
-            rings.addWidget(button, i // 3, i % 3)
-        vbox.addLayout(rings)
+        vbox.addLayout(self._ring_grid(_RING_BUTTONS))
+        vbox.addSpacing(6)
+        vbox.addWidget(_section_label(tr("O/N rings, chairs and sugars")))
+        vbox.addLayout(self._ring_grid(_HETEROCYCLE_BUTTONS))
 
         vbox.addSpacing(6)
         vbox.addWidget(_section_label(tr("IR Groups")))
@@ -598,7 +604,29 @@ class MoleculeEditorDialog(QDialog):
             groups.addWidget(button, i // 2, i % 2)
         vbox.addLayout(groups)
         vbox.addStretch(1)
-        return page
+        scroll = QScrollArea()
+        scroll.setObjectName("molecule_templates_scroll")
+        scroll.setWidgetResizable(True)
+        scroll.setFrameShape(QFrame.Shape.NoFrame)
+        scroll.setHorizontalScrollBarPolicy(Qt.ScrollBarPolicy.ScrollBarAlwaysOff)
+        scroll.setWidget(page)
+        return scroll
+
+    def _ring_grid(self, items: tuple[tuple[str, str], ...]) -> QGridLayout:
+        grid = QGridLayout()
+        grid.setSpacing(4)
+        for i, (ring_type, label) in enumerate(items):
+            button = _palette_button(tooltip=tr(label))
+            button.setIcon(_ring_icon(ring_type, 40))
+            button.setIconSize(QSize(40, 40))
+            button.setFixedSize(52, 48)
+            button.clicked.connect(
+                lambda _checked=False, r=ring_type: self._canvas.set_ring_type(r)
+            )
+            self._palette_group.addButton(button)
+            self._ring_buttons[ring_type] = button
+            grid.addWidget(button, i // 3, i % 3)
+        return grid
 
     def _build_salts_page(self) -> QWidget:
         page = QWidget()

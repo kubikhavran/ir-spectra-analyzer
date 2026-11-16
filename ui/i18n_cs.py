@@ -761,16 +761,10 @@ CZECH_TEXTS: dict[str, str] = {
     "Click to draw a bond, pick a ring or paste SMILES (Ctrl+V)": (
         "Kliknutím nakreslíte vazbu, vyberte kruh nebo vložte SMILES (Ctrl+V)"
     ),
-    "Bond: 1/2/3 order, W wedge, H hash, Del removes": (
-        "Vazba: 1/2/3 násobnost, W klín, H šrafy, Del smaže"
-    ),
     "Drag atoms to move them, drag empty space to select": (
         "Tažením atomů je přesunete, tažením v prázdném místě vyberete"
     ),
     "Click an atom or bond to delete it": "Kliknutím na atom nebo vazbu je smažete",
-    "Click or drag to draw bonds; click a bond to cycle its order": (
-        "Kreslete kliknutím nebo tažením; klik na vazbu mění její násobnost"
-    ),
     "Click or drag to draw double bonds": "Kliknutím nebo tažením kreslíte dvojné vazby",
     "Click or drag to draw triple bonds": "Kliknutím nebo tažením kreslíte trojné vazby",
     "Wedge bond (towards viewer); click again to flip": (
@@ -880,4 +874,34 @@ CZECH_TEXTS: dict[str, str] = {
     "{count} to check": "{count} ke kontrole",
     "{where}: too many bonds for this element": "{where}: příliš mnoho vazeb pro tento prvek",
     "{where}: unpaired electron (radical)": "{where}: nepárový elektron (radikál)",
+    # ── Molecule editor: bonds, rings and sugars ────────────────────────────
+    "1,4-Dioxane": "1,4-Dioxan",
+    "Bond: 1/2/3 order, W wedge, H hash, +/− length, Del removes": (
+        "Vazba: 1/2/3 násobnost, W klín, H šrafy, +/− délka, Del smaže"
+    ),
+    "Click or drag to draw bonds (Shift = longer); click a bond: "
+    "single → double → triple → wedge → reversed wedge": (
+        "Kreslete kliknutím nebo tažením (Shift = delší vazba); klik na vazbu: "
+        "jednoduchá → dvojná → trojná → klín → obrácený klín"
+    ),
+    "Cyclohexane chair": "Cyklohexan – židličková konformace",
+    "Longer bond": "Delší vazba",
+    "Morpholine": "Morfolin",
+    "O/N rings, chairs and sugars": "Kruhy s O/N, židličky a cukry",
+    "Piperazine": "Piperazin",
+    "Piperidine": "Piperidin",
+    "Pyranose chair (oxane)": "Pyranosa – židličková konformace (oxan)",
+    "Shorter bond": "Kratší vazba",
+    "Standard length": "Standardní délka",
+    "Tetrahydrofuran (oxolane)": "Tetrahydrofuran (oxolan)",
+    "Tetrahydropyran (oxane)": "Tetrahydropyran (oxan)",
+    "α-D-Glucopyranose (click an OH or atom to make a glycoside)": (
+        "α-D-glukopyranosa (klik na OH nebo atom vytvoří glykosid)"
+    ),
+    "β-D-Glucopyranose (click an OH or atom to make a glycoside)": (
+        "β-D-glukopyranosa (klik na OH nebo atom vytvoří glykosid)"
+    ),
+    "β-D-Ribofuranose (click an OH or atom to make a glycoside)": (
+        "β-D-ribofuranosa (klik na OH nebo atom vytvoří glykosid)"
+    ),
 }
