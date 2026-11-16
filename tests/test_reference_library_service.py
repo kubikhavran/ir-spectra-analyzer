@@ -486,3 +486,38 @@ def test_search_recomputes_vectors_after_a_feature_version_bump(tmp_path):
     # the current version is indexed and the superseded vector is gone
     assert len(db.get_reference_search_rows(feature_version=MATCH_FEATURE_VERSION)) == 1
     assert db.get_reference_search_rows(feature_version=stale_version) == []
+
+
+def test_feature_version_bump_does_not_rescan_library_folder(tmp_path, monkeypatch):
+    """Updating MATCH_FEATURE_VERSION on a populated DB must not trigger a folder walk."""
+    from core.spectrum import Spectrum
+
+    folder = tmp_path / "library"
+    folder.mkdir()
+    db = Database(":memory:")
+    db.initialize()
+    wn = np.linspace(400.0, 4000.0, 400)
+    intensities = np.sin(wn / 300.0) + 1.0
+    ref_id = db.add_reference_spectrum(
+        name="legacy_local",
+        wavenumbers=wn,
+        intensities=intensities,
+        source=str(folder / "legacy_local.spa"),
+    )
+    db.upsert_reference_feature(
+        ref_id,
+        feature_version=MATCH_FEATURE_VERSION - 1,
+        feature_vector=np.ones(8, dtype=np.float32),
+    )
+
+    service = ReferenceLibraryService(db, project_root=tmp_path)
+    service.set_selected_library_folder(folder)
+    monkeypatch.setattr(
+        service,
+        "ensure_project_library_imported",
+        lambda: pytest.fail("should not scan library folder when DB is already populated"),
+    )
+
+    query = Spectrum(wavenumbers=wn, intensities=intensities)
+    outcome = service.search_spectrum(query, top_n=5, auto_import_project_library=True)
+    assert [result.name for result in outcome.results] == ["legacy_local"]

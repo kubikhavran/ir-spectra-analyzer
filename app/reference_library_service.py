@@ -74,6 +74,7 @@ class ReferenceLibraryService:
         # (source_prefix, include_web_refs, (count, max_id)) of the currently
         # loaded search matrix — lets repeated searches skip the BLOB reload.
         self._loaded_search_state: tuple | None = None
+        self._cached_outcome_references: tuple[tuple, tuple[dict, ...]] | None = None
         self._selected_library_folder = self._load_selected_library_folder()
 
     def discover_project_library_folder(self) -> Path | None:
@@ -192,6 +193,14 @@ class ReferenceLibraryService:
         include_web_refs = library_folder is not None
         name_filter = (name_filter or "").strip() or None
 
+        # Backfill persistent search vectors first so a feature-version bump on
+        # an already-imported database does not mistake the library for empty
+        # and trigger a slow recursive folder scan on disk.
+        self._refresh_missing_features(
+            source_prefix=source_prefix,
+            include_web_refs=include_web_refs,
+        )
+
         # Whether the folder needs first-time population is decided on the whole
         # scope, independent of any name filter.
         full_state = self._db.get_reference_library_state(
@@ -207,6 +216,15 @@ class ReferenceLibraryService:
         # explicitly via "Sync Folder".
         if auto_import_project_library and library_folder is not None and full_state[0] == 0:
             imported_summary = self.ensure_project_library_imported()
+            self._refresh_missing_features(
+                source_prefix=source_prefix,
+                include_web_refs=include_web_refs,
+            )
+            full_state = self._db.get_reference_library_state(
+                source_prefix=source_prefix,
+                include_web_refs=include_web_refs,
+                feature_version=MATCH_FEATURE_VERSION,
+            )
 
         if full_state[0] == 0 and not self._db.get_reference_identity_rows():
             return ReferenceSearchOutcome(
@@ -216,19 +234,19 @@ class ReferenceLibraryService:
                 library_folder=library_folder,
             )
 
-        self._refresh_missing_features(
-            source_prefix=source_prefix,
-            include_web_refs=include_web_refs,
-        )
         # Re-fetching every feature BLOB and rebuilding the reference matrix is
         # the dominant per-search cost on large libraries. Skip it entirely
         # when the searchable (name-filtered) library has not changed since the
         # last load.
-        library_state = self._db.get_reference_library_state(
-            source_prefix=source_prefix,
-            include_web_refs=include_web_refs,
-            feature_version=MATCH_FEATURE_VERSION,
-            name_filter=name_filter,
+        library_state = (
+            full_state
+            if name_filter is None
+            else self._db.get_reference_library_state(
+                source_prefix=source_prefix,
+                include_web_refs=include_web_refs,
+                feature_version=MATCH_FEATURE_VERSION,
+                name_filter=name_filter,
+            )
         )
         search_state_key = (source_prefix, include_web_refs, name_filter, library_state)
         if search_state_key != self._loaded_search_state or self._search_engine.n_references == 0:
@@ -250,9 +268,18 @@ class ReferenceLibraryService:
             )
         )
         results = tuple(self._rerank_results(spectrum, coarse_results=coarse_results, top_n=top_n))
+        refs_cache_key = (source_prefix, full_state)
+        if (
+            self._cached_outcome_references is None
+            or self._cached_outcome_references[0] != refs_cache_key
+        ):
+            self._cached_outcome_references = (
+                refs_cache_key,
+                tuple(self.get_library_references()),
+            )
         return ReferenceSearchOutcome(
             results=results,
-            references=tuple(self.get_library_references()),
+            references=self._cached_outcome_references[1],
             imported_summary=imported_summary,
             library_folder=library_folder,
         )
@@ -355,6 +382,7 @@ class ReferenceLibraryService:
         self._search_engine.clear_cache()
         self._reference_spectrum_cache.clear()
         self._loaded_search_state = None
+        self._cached_outcome_references = None
 
     def get_library_references(self) -> list[dict]:
         """Return reference spectra belonging to the active reference-library folder."""
