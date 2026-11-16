@@ -133,3 +133,31 @@ def test_abbreviation_and_salt_tables_parse():
         assert Chem.MolFromSmiles(smiles) is not None, label
     assert pretty_label("CO2Et") == "CO₂Et"
     assert pretty_label("SO3H") == "SO₃H"
+
+
+def test_fragment_to_group_smiles_round_trip():
+    from chemistry.mol_fragments import fragment_to_group_smiles
+
+    fragment = parse_group("CO2Et")
+    assert fragment is not None
+    smiles = fragment_to_group_smiles(fragment)
+    assert smiles.count("*") == 1
+    again = fragment_from_smiles(smiles)
+    assert again is not None
+    assert _attached(again) == _canon("CCOC(C)=O")
+
+
+def test_custom_group_store(tmp_path):
+    from app.custom_groups import CustomGroupStore
+    from storage.settings import Settings
+
+    store = CustomGroupStore(Settings(tmp_path / "settings.json"))
+    assert store.groups() == {}
+    store.save("Pin", "*B1OC(C)(C)C(C)(C)O1")
+    reopened = CustomGroupStore(Settings(tmp_path / "settings.json"))
+    assert reopened.groups() == {"Pin": "*B1OC(C)(C)C(C)(C)O1"}
+    with pytest.raises(ValueError, match="name"):
+        reopened.save("  ", "*C")
+    assert reopened.remove("Pin")
+    assert not reopened.remove("Pin")
+    assert reopened.groups() == {}

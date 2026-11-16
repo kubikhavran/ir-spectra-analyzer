@@ -602,5 +602,164 @@ def test_dialog_builds_in_czech(qtbot):
         assert dlg._tabs.tabText(0) == "Kreslení"
         assert dlg._formula_label.text() == "Vzorec: C₂H₆O"
         assert dlg._tool_buttons["chain"].toolTip() == "Uhlíkový řetězec (C)"
+        assert dlg._left_tabs.tabText(1) == "Soli"
+        assert dlg._charge_label.text() == "Náboj: 0"
+        texts = [
+            a.text() for a in dlg._canvas.build_context_menu(dlg._canvas._atom_screen(0)).actions()
+        ]
+        assert "Vlastnosti atomu…" in texts
     finally:
         i18n.set_language(i18n.ENGLISH)
+
+
+# ---------------------------------------------------------------------------
+# Salts, custom groups, info bar and export
+# ---------------------------------------------------------------------------
+
+
+@pytest.fixture
+def isolated_groups(monkeypatch, tmp_path):
+    from app.custom_groups import CustomGroupStore
+    from storage.settings import Settings
+    from ui.dialogs import molecule_editor_dialog as module
+
+    store = CustomGroupStore(Settings(tmp_path / "settings.json"))
+    monkeypatch.setattr(module, "_create_group_store", lambda: store)
+    return store
+
+
+@requires_rdkit
+def test_salt_button_adds_counter_ion(native_dialog, isolated_groups):
+    from PySide6.QtCore import QPoint
+
+    dlg = native_dialog(initial_smiles="CCN")
+    dlg._left_tabs.setCurrentIndex(1)
+    dlg._salt_buttons["HCl"].click()
+    assert dlg._canvas.placement() is not None
+    _click(dlg._canvas, QPoint(dlg._canvas.width() - 60, 60))
+    assert dlg._canvas.to_smiles() == "CCN.Cl"
+    assert dlg._formula_label.text() == "Formula: C₂H₇N · HCl"
+    dlg._on_ok()
+    assert dlg.smiles() == "CCN.Cl"
+
+
+@requires_rdkit
+def test_ionic_salt_shows_charges(native_dialog, isolated_groups):
+    dlg = native_dialog(initial_smiles="CC[NH3+].[Cl-]")
+    assert dlg._formula_label.text() == "Formula: C₂H₈N⁺ · Cl⁻"
+    assert dlg._charge_label.text() == "Charge: 0"
+    cation = native_dialog(initial_smiles="[NH4+]")
+    assert cation._charge_label.text() == "Charge: +1"
+
+
+@requires_rdkit
+def test_info_bar_mass_dbe_and_warnings(native_dialog, isolated_groups):
+    dlg = native_dialog(initial_smiles="c1ccccc1")
+    assert dlg._dbe_label.text() == "DBE: 4"
+    assert dlg._exact_mass_label.text() == "Exact mass: 78.0470"
+    assert dlg._warning_label.isHidden()
+    model = dlg._canvas.model()
+    with model.compound():
+        for _ in range(3):
+            model.sprout_atom(0)
+    dlg._canvas._after_edit()
+    assert not dlg._warning_label.isHidden()
+    assert "too many bonds" in dlg._warning_label.toolTip()
+
+
+@requires_rdkit
+def test_custom_group_input_place_and_save(native_dialog, isolated_groups, monkeypatch):
+    dlg = native_dialog(initial_smiles="c1ccccc1")
+    dlg._left_tabs.setCurrentIndex(2)
+    dlg._group_input.setText("nonsense!!")
+    assert not dlg._group_place_btn.isEnabled()
+    assert dlg._group_status.text() == "Not recognised"
+    dlg._group_input.setText("CH2CH2OH")
+    assert dlg._group_place_btn.isEnabled()
+    assert dlg._group_status.text() == "*CCO"
+    dlg._group_place_btn.click()
+    _click(dlg._canvas, dlg._canvas._atom_screen(0).toPoint())
+    assert dlg._canvas.to_smiles() == "OCCc1ccccc1"
+
+    monkeypatch.setattr(dlg, "_ask_group_name", lambda default: "Hydroxyethyl")
+    dlg._group_save_btn.click()
+    assert isolated_groups.groups() == {"Hydroxyethyl": "*CCO"}
+    assert dlg._custom_list.count() == 1
+    assert dlg._canvas.custom_groups() == {"Hydroxyethyl": "*CCO"}
+    # The saved name now works as an atom label …
+    assert dlg._canvas.apply_label(dlg._canvas.model().atom_count - 1, "Hydroxyethyl")
+    # … and from the list.
+    dlg._custom_list.setCurrentRow(0)
+    dlg._on_custom_item_clicked(dlg._custom_list.item(0))
+    assert dlg._canvas.placement() is not None
+    dlg._canvas.cancel_placement()
+    dlg._custom_remove_btn.click()
+    assert isolated_groups.groups() == {}
+    assert dlg._custom_list.count() == 0
+
+
+@requires_rdkit
+def test_selection_can_be_saved_as_custom_group(native_dialog, isolated_groups, monkeypatch):
+    dlg = native_dialog(initial_smiles="CCOC(C)=O")
+    monkeypatch.setattr(dlg, "_ask_group_name", lambda default: "OAcX")
+    dlg._canvas.select_atoms({2, 3, 4, 5})
+    assert dlg._canvas.request_save_group()
+    stored = isolated_groups.groups()["OAcX"]
+    from chemistry.mol_fragments import parse_group
+
+    fragment = parse_group("OAcX", {"OAcX": stored})
+    assert fragment is not None
+    assert fragment.atom_count == 4
+    assert stored.count("*") == 1
+
+
+@requires_rdkit
+def test_toolbar_rotate_flip_and_view_toggles(native_dialog, isolated_groups):
+    dlg = native_dialog(initial_smiles="C[C@H](N)O")
+    before = dlg._canvas.model().atom_position(0)
+    dlg._rotate_left_btn.click()
+    assert dlg._canvas.model().atom_position(0) != pytest.approx(before)
+    dlg._flip_h_btn.click()
+    dlg._flip_v_btn.click()
+    dlg._rotate_right_btn.click()
+    assert dlg._canvas.to_smiles() == "C[C@H](N)O"
+    dlg._numbers_btn.click()
+    dlg._stereo_btn.click()
+    assert dlg._canvas.show_atom_numbers()
+    assert dlg._canvas.show_stereo_labels()
+
+
+@requires_rdkit
+def test_more_menu_copy_and_files(native_dialog, isolated_groups, monkeypatch, tmp_path):
+    from PySide6.QtGui import QGuiApplication
+
+    from ui.dialogs import molecule_editor_dialog as module
+
+    dlg = native_dialog(initial_smiles="CC(=O)O")
+    texts = [a.text() for a in dlg._more_btn.menu().actions() if a.text()]
+    assert "Copy InChI" in texts
+    assert "Open MOL/SDF file…" in texts
+    assert dlg._copy_text("smiles") == "CC(=O)O"
+    assert QGuiApplication.clipboard().text() == "CC(=O)O"
+    assert dlg._copy_text("inchikey") == "QTBSBXVTEAMEQO-UHFFFAOYSA-N"
+    assert dlg._copy_text("inchi").startswith("InChI=1S/C2H4O2")
+    assert "V2000" in dlg._copy_text("mol")
+    assert dlg._copy_image()
+
+    target = tmp_path / "out.mol"
+    monkeypatch.setattr(module.QFileDialog, "getSaveFileName", lambda *a, **k: (str(target), ""))
+    assert dlg._save_mol_file()
+    assert "V2000" in target.read_text(encoding="utf-8")
+
+    sdf = tmp_path / "in.sdf"
+    from chemistry.mol_editor_model import MolEditorModel
+
+    sdf.write_text(
+        MolEditorModel.from_smiles("c1ccncc1").to_mol_block() + "$$$$\n" + "junk\n",
+        encoding="utf-8",
+    )
+    monkeypatch.setattr(module.QFileDialog, "getOpenFileName", lambda *a, **k: (str(sdf), ""))
+    assert dlg._open_mol_file()
+    assert dlg._canvas.to_smiles() == "c1ccncc1"
+    dlg._undo_btn.click()
+    assert dlg._canvas.to_smiles() == "CC(=O)O"

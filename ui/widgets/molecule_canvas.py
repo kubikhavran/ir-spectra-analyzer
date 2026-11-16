@@ -285,6 +285,14 @@ class MoleculeCanvas(QWidget):
         self.fit_to_view()
         return True
 
+    def replace_mol_block(self, mol_block: str) -> bool:
+        """Replace the drawing with a MOL block as one undoable step."""
+        if not self._model.load_mol_block(mol_block, record_undo=True):
+            return False
+        self._after_edit()
+        self.fit_to_view()
+        return True
+
     def to_smiles(self) -> str:
         return self._model.to_smiles()
 

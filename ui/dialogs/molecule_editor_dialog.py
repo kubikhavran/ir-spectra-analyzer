@@ -8,21 +8,45 @@ Provides two tabs:
 Both tabs stay in sync: edits on the canvas update the SMILES field, and a
 valid SMILES typed on the SMILES tab is loaded into the canvas when the user
 clicks *Preview* or switches back to *Draw*.
+
+The Draw tab follows what professional sketchers (Ketcher, Marvin, ChemDraw,
+PubChem Sketcher) offer: ring and functional-group templates, salts and
+solvents, user-defined groups typed as abbreviations / condensed formulas /
+SMILES, copy-paste of structure parts, atom properties (charge, isotope,
+hydrogens, radicals), rotate/flip, stereo (R/S, E/Z) and atom-number display,
+MOL/InChI export and a structure check.
 """
 
 from __future__ import annotations
 
+from pathlib import Path
+
 from PySide6.QtCore import QPointF, QRectF, QSize, Qt
-from PySide6.QtGui import QColor, QFont, QIcon, QImage, QPainter, QPen, QPixmap, QPolygonF
+from PySide6.QtGui import (
+    QColor,
+    QFont,
+    QGuiApplication,
+    QIcon,
+    QImage,
+    QPainter,
+    QPen,
+    QPixmap,
+    QPolygonF,
+)
 from PySide6.QtWidgets import (
     QButtonGroup,
     QDialog,
     QDialogButtonBox,
+    QFileDialog,
     QFrame,
     QGridLayout,
     QHBoxLayout,
+    QInputDialog,
     QLabel,
     QLineEdit,
+    QListWidget,
+    QListWidgetItem,
+    QMenu,
     QPushButton,
     QSizePolicy,
     QTabWidget,
@@ -31,7 +55,15 @@ from PySide6.QtWidgets import (
     QWidget,
 )
 
+from app.custom_groups import CustomGroupStore
 from chemistry.mol_editor_model import MolEditorModel
+from chemistry.mol_fragments import (
+    SALTS_AND_SOLVENTS,
+    Fragment,
+    fragment_from_smiles,
+    fragment_to_group_smiles,
+    parse_group,
+)
 from ui import icons, theme
 from ui.i18n import tr
 from ui.widgets.molecule_canvas import (
@@ -166,6 +198,24 @@ def _tool_icon(tool: str) -> QIcon:
             cx, cy = 5 + 14 * t, 19 - 14 * t
             h = 0.6 + 2.8 * t
             painter.drawLine(QPointF(cx - h, cy - h), QPointF(cx + h, cy + h))
+    elif tool in ("rotate_left", "rotate_right"):
+        painter.drawArc(
+            QRectF(5, 5, 14, 14), 30 * 16 if tool == "rotate_left" else 150 * 16, 270 * 16
+        )
+        tip = QPointF(17.5, 7.5) if tool == "rotate_left" else QPointF(6.5, 7.5)
+        side = -1 if tool == "rotate_left" else 1
+        painter.drawLine(tip, tip + QPointF(side * 4.0, -1.0))
+        painter.drawLine(tip, tip + QPointF(side * 1.0, 4.0))
+    elif tool in ("flip_h", "flip_v"):
+        if tool == "flip_v":
+            painter.translate(12, 12)
+            painter.rotate(90)
+            painter.translate(-12, -12)
+        painter.drawLine(QPointF(12, 3), QPointF(12, 21))
+        painter.setBrush(QColor(theme.TEXT))
+        painter.drawPolygon(QPolygonF([QPointF(9.5, 6), QPointF(9.5, 18), QPointF(3, 18)]))
+        painter.setBrush(Qt.BrushStyle.NoBrush)
+        painter.drawPolygon(QPolygonF([QPointF(14.5, 6), QPointF(14.5, 18), QPointF(21, 18)]))
     elif tool == "chain":
         painter.drawPolyline(
             QPolygonF(
@@ -243,6 +293,16 @@ def _section_label(text: str) -> QLabel:
     return label
 
 
+def _create_group_store() -> CustomGroupStore:
+    """Where custom groups live (tests replace this with a temporary store)."""
+    return CustomGroupStore()
+
+
+def _first_mol_record(text: str) -> str:
+    """The first record of an SDF file (a plain MOL file is returned as is)."""
+    return text.split("$$$$", 1)[0]
+
+
 class MoleculeEditorDialog(QDialog):
     """Dialog for editing a molecular structure.
 
@@ -271,6 +331,11 @@ class MoleculeEditorDialog(QDialog):
         self._ring_buttons: dict[str, QToolButton] = {}
         self._group_buttons: dict[str, QToolButton] = {}
         self._element_buttons: dict[str, QToolButton] = {}
+        self._salt_buttons: dict[str, QToolButton] = {}
+        try:
+            self._group_store: CustomGroupStore | None = _create_group_store()
+        except OSError:
+            self._group_store = None
 
         self._build_ui()
         self._connect_signals()
@@ -352,6 +417,47 @@ class MoleculeEditorDialog(QDialog):
         self._fit_btn.clicked.connect(self._canvas.fit_to_view)
         for button in (self._undo_btn, self._redo_btn, self._clean_btn, self._fit_btn):
             toolbar.addWidget(button)
+
+        toolbar.addSpacing(4)
+        self._rotate_left_btn = self._action_button(
+            _tool_icon("rotate_left"), tr("Rotate left 15°"), "Alt+←"
+        )
+        self._rotate_right_btn = self._action_button(
+            _tool_icon("rotate_right"), tr("Rotate right 15°"), "Alt+→"
+        )
+        self._flip_h_btn = self._action_button(
+            _tool_icon("flip_h"), tr("Flip horizontally"), "Alt+H"
+        )
+        self._flip_v_btn = self._action_button(_tool_icon("flip_v"), tr("Flip vertically"), "Alt+V")
+        self._rotate_left_btn.clicked.connect(lambda: self._canvas.rotate_selection(15.0))
+        self._rotate_right_btn.clicked.connect(lambda: self._canvas.rotate_selection(-15.0))
+        self._flip_h_btn.clicked.connect(lambda: self._canvas.flip_selection(horizontal=True))
+        self._flip_v_btn.clicked.connect(lambda: self._canvas.flip_selection(horizontal=False))
+        for button in (
+            self._rotate_left_btn,
+            self._rotate_right_btn,
+            self._flip_h_btn,
+            self._flip_v_btn,
+        ):
+            toolbar.addWidget(button)
+
+        toolbar.addSpacing(4)
+        self._numbers_btn = _palette_button("1·2", tooltip=tr("Show atom numbers"))
+        self._numbers_btn.setFixedSize(38, 34)
+        self._numbers_btn.toggled.connect(self._canvas.set_show_atom_numbers)
+        self._stereo_btn = _palette_button("R/S", tooltip=tr("Show R/S and E/Z labels"))
+        self._stereo_btn.setFixedSize(38, 34)
+        self._stereo_btn.toggled.connect(self._canvas.set_show_stereo_labels)
+        toolbar.addWidget(self._numbers_btn)
+        toolbar.addWidget(self._stereo_btn)
+
+        self._more_btn = _palette_button(
+            tr("More"), tooltip=tr("Export, import and hydrogens"), checkable=False
+        )
+        self._more_btn.setFixedHeight(34)
+        self._more_btn.setPopupMode(QToolButton.ToolButtonPopupMode.InstantPopup)
+        self._more_btn.setMenu(self._build_more_menu())
+        toolbar.addWidget(self._more_btn)
         toolbar.addStretch(1)
         vbox.addLayout(toolbar)
 
@@ -390,14 +496,37 @@ class MoleculeEditorDialog(QDialog):
         self._hint_label.setStyleSheet(theme.CAPTION_STYLE)
         self._hint_label.setAlignment(Qt.AlignmentFlag.AlignRight | Qt.AlignmentFlag.AlignVCenter)
         self._hint_label.setSizePolicy(QSizePolicy.Policy.Ignored, QSizePolicy.Policy.Preferred)
+        self._exact_mass_label = QLabel()
+        self._exact_mass_label.setObjectName("molecule_exact_mass_label")
+        self._charge_label = QLabel()
+        self._charge_label.setObjectName("molecule_charge_label")
+        self._dbe_label = QLabel()
+        self._dbe_label.setObjectName("molecule_dbe_label")
+        self._dbe_label.setToolTip(tr("Double bond equivalents: rings + π bonds"))
+        self._warning_label = QLabel()
+        self._warning_label.setObjectName("molecule_warning_label")
+        self._warning_label.setStyleSheet(
+            f"color: {theme.DANGER}; background: {theme.DANGER_SOFT}; border-radius: 4px; "
+            "padding: 1px 6px; font-weight: 600;"
+        )
         for info_label in (self._formula_label, self._mw_label):
             info_label.setStyleSheet(f"color: {theme.TEXT}; font-weight: 600;")
+        for info_label in (self._exact_mass_label, self._charge_label, self._dbe_label):
+            info_label.setStyleSheet(f"color: {theme.TEXT};")
         self._live_smiles_label.setStyleSheet(f"color: {theme.TEXT_MUTED};")
         info.addWidget(self._formula_label)
         info.addWidget(self._mw_label)
-        info.addWidget(self._live_smiles_label, 2)
-        info.addWidget(self._hint_label, 3)
+        info.addWidget(self._exact_mass_label)
+        info.addWidget(self._charge_label)
+        info.addWidget(self._dbe_label)
+        info.addStretch(1)
+        info.addWidget(self._warning_label)
         vbox.addLayout(info)
+        info2 = QHBoxLayout()
+        info2.setSpacing(14)
+        info2.addWidget(self._live_smiles_label, 2)
+        info2.addWidget(self._hint_label, 3)
+        vbox.addLayout(info2)
 
         self._update_info_bar()
         self._sync_palette(self._canvas.tool())
@@ -414,9 +543,27 @@ class MoleculeEditorDialog(QDialog):
     def _build_left_panel(self) -> QFrame:
         panel = QFrame()
         panel.setObjectName("molSidePanel")
-        panel.setFixedWidth(176)
-        vbox = QVBoxLayout(panel)
-        vbox.setContentsMargins(8, 6, 8, 8)
+        panel.setFixedWidth(196)
+        outer = QVBoxLayout(panel)
+        outer.setContentsMargins(4, 4, 4, 4)
+        self._left_tabs = QTabWidget()
+        self._left_tabs.setObjectName("molecule_template_tabs")
+        self._left_tabs.setDocumentMode(True)
+        self._left_tabs.setUsesScrollButtons(False)
+        self._left_tabs.tabBar().setExpanding(True)
+        self._left_tabs.setStyleSheet(
+            "QTabBar::tab { padding: 4px 4px; min-width: 0px; margin: 0px; }"
+        )
+        self._left_tabs.addTab(self._build_templates_page(), tr("Templates"))
+        self._left_tabs.addTab(self._build_salts_page(), tr("Salts"))
+        self._left_tabs.addTab(self._build_custom_page(), tr("Custom"))
+        outer.addWidget(self._left_tabs)
+        return panel
+
+    def _build_templates_page(self) -> QWidget:
+        page = QWidget()
+        vbox = QVBoxLayout(page)
+        vbox.setContentsMargins(4, 4, 4, 4)
         vbox.setSpacing(4)
 
         vbox.addWidget(_section_label(tr("Rings")))
@@ -426,7 +573,7 @@ class MoleculeEditorDialog(QDialog):
             button = _palette_button(tooltip=tr(label))
             button.setIcon(_ring_icon(ring_type))
             button.setIconSize(QSize(34, 34))
-            button.setFixedSize(48, 44)
+            button.setFixedSize(52, 44)
             button.clicked.connect(
                 lambda _checked=False, r=ring_type: self._canvas.set_ring_type(r)
             )
@@ -451,7 +598,98 @@ class MoleculeEditorDialog(QDialog):
             groups.addWidget(button, i // 2, i % 2)
         vbox.addLayout(groups)
         vbox.addStretch(1)
-        return panel
+        return page
+
+    def _build_salts_page(self) -> QWidget:
+        page = QWidget()
+        vbox = QVBoxLayout(page)
+        vbox.setContentsMargins(4, 4, 4, 4)
+        vbox.setSpacing(4)
+        caption = QLabel(tr("Click, then click in the drawing to add a counter-ion or solvent."))
+        caption.setWordWrap(True)
+        caption.setStyleSheet(theme.CAPTION_STYLE)
+        vbox.addWidget(caption)
+        grid = QGridLayout()
+        grid.setSpacing(4)
+        for i, (label, smiles) in enumerate(SALTS_AND_SOLVENTS):
+            button = _palette_button(label, tooltip=smiles, checkable=False)
+            button.setFixedHeight(28)
+            button.setSizePolicy(QSizePolicy.Policy.Expanding, QSizePolicy.Policy.Fixed)
+            button.clicked.connect(
+                lambda _checked=False, lab=label, smi=smiles: self._place_salt(lab, smi)
+            )
+            self._salt_buttons[label] = button
+            grid.addWidget(button, i // 3, i % 3)
+        vbox.addLayout(grid)
+        vbox.addStretch(1)
+        return page
+
+    def _build_custom_page(self) -> QWidget:
+        page = QWidget()
+        vbox = QVBoxLayout(page)
+        vbox.setContentsMargins(4, 4, 4, 4)
+        vbox.setSpacing(4)
+        caption = QLabel(
+            tr("Abbreviation, condensed formula or SMILES; * marks where it attaches.")
+        )
+        caption.setWordWrap(True)
+        caption.setStyleSheet(theme.CAPTION_STYLE)
+        vbox.addWidget(caption)
+        self._group_input = QLineEdit()
+        self._group_input.setObjectName("molecule_group_input")
+        self._group_input.setPlaceholderText("OMe, CH2CH2OH, *OCC(C)C")
+        self._group_input.textChanged.connect(self._on_group_input_changed)
+        self._group_input.returnPressed.connect(self._on_group_place)
+        vbox.addWidget(self._group_input)
+        self._group_status = QLabel()
+        self._group_status.setObjectName("molecule_group_status")
+        self._group_status.setWordWrap(True)
+        self._group_status.setStyleSheet(theme.CAPTION_STYLE)
+        vbox.addWidget(self._group_status)
+        row = QHBoxLayout()
+        row.setSpacing(4)
+        self._group_place_btn = QPushButton(tr("Place"))
+        self._group_place_btn.setToolTip(tr("Attach to the atom you click next"))
+        self._group_place_btn.clicked.connect(self._on_group_place)
+        self._group_save_btn = QPushButton(tr("Save…"))
+        self._group_save_btn.setToolTip(tr("Keep this group in the list below"))
+        self._group_save_btn.clicked.connect(self._on_group_save)
+        for button in (self._group_place_btn, self._group_save_btn):
+            button.setEnabled(False)
+            row.addWidget(button)
+        vbox.addLayout(row)
+
+        vbox.addSpacing(6)
+        vbox.addWidget(_section_label(tr("Saved groups")))
+        self._custom_list = QListWidget()
+        self._custom_list.setObjectName("molecule_custom_groups")
+        self._custom_list.itemClicked.connect(self._on_custom_item_clicked)
+        vbox.addWidget(self._custom_list, 1)
+        self._custom_remove_btn = QPushButton(tr("Remove"))
+        self._custom_remove_btn.clicked.connect(self._on_custom_remove)
+        vbox.addWidget(self._custom_remove_btn)
+        tip = QLabel(tr("Tip: select atoms, right-click and choose Save as custom group."))
+        tip.setWordWrap(True)
+        tip.setStyleSheet(theme.CAPTION_STYLE)
+        vbox.addWidget(tip)
+        self._refresh_custom_groups()
+        return page
+
+    def _build_more_menu(self) -> QMenu:
+        menu = QMenu(self)
+        menu.setObjectName("molecule_more_menu")
+        menu.addAction(tr("Copy SMILES"), lambda: self._copy_text("smiles"))
+        menu.addAction(tr("Copy MOL block"), lambda: self._copy_text("mol"))
+        menu.addAction(tr("Copy InChI"), lambda: self._copy_text("inchi"))
+        menu.addAction(tr("Copy InChIKey"), lambda: self._copy_text("inchikey"))
+        menu.addAction(tr("Copy as image"), self._copy_image)
+        menu.addSeparator()
+        menu.addAction(tr("Open MOL/SDF file…"), self._open_mol_file)
+        menu.addAction(tr("Save MOL file…"), self._save_mol_file)
+        menu.addSeparator()
+        menu.addAction(tr("Show all hydrogens"), self._canvas.add_explicit_hydrogens)
+        menu.addAction(tr("Hide explicit hydrogens"), self._canvas.remove_explicit_hydrogens)
+        return menu
 
     def _build_right_panel(self) -> QFrame:
         panel = QFrame()
@@ -554,6 +792,7 @@ class MoleculeEditorDialog(QDialog):
         self._canvas.structure_changed.connect(self._on_canvas_changed)
         self._canvas.tool_changed.connect(self._sync_palette)
         self._canvas.hint_changed.connect(self._hint_label.setText)
+        self._canvas.save_group_requested.connect(self._on_save_group_requested)
         self._tabs.currentChanged.connect(self._on_tab_changed)
 
     def _load_initial_structure(self) -> None:
@@ -593,17 +832,193 @@ class MoleculeEditorDialog(QDialog):
 
     def _update_info_bar(self) -> None:
         model = self._canvas.model()
-        formula = model.molecular_formula() or "—"
+        formula = model.display_formula() or "—"
         weight = model.molecular_weight()
         mw = f"{weight:.2f} g/mol" if weight else "—"
         smiles = model.to_smiles() or "—"
         self._formula_label.setText(tr("Formula: {formula}").format(formula=formula))
         self._mw_label.setText(tr("MW: {mw}").format(mw=mw))
+        exact = model.exact_mass()
+        self._exact_mass_label.setText(
+            tr("Exact mass: {mass}").format(mass=f"{exact:.4f}" if exact else "—")
+        )
+        charge = model.net_charge()
+        self._charge_label.setText(
+            tr("Charge: {charge}").format(charge=f"{charge:+d}" if charge else "0")
+        )
+        self._dbe_label.setText(tr("DBE: {dbe}").format(dbe=model.unsaturation()))
+        problems = self._problem_messages()
+        self._warning_label.setVisible(bool(problems))
+        self._warning_label.setText(
+            "⚠ " + tr("{count} to check").format(count=len(problems)) if problems else ""
+        )
+        self._warning_label.setToolTip("\n".join(problems))
         self._live_smiles_label.setText(f"SMILES: {smiles}")
         self._live_smiles_label.setToolTip(smiles)
         self._undo_btn.setEnabled(model.can_undo())
         self._redo_btn.setEnabled(model.can_redo())
         self._clean_btn.setEnabled(not model.is_empty())
+
+    def _problem_messages(self) -> list[str]:
+        model = self._canvas.model()
+        messages = []
+        for kind, atom in model.structure_problems():
+            if atom is None:
+                continue
+            where = tr("Atom {n} ({symbol})").format(n=atom + 1, symbol=model.atom_symbol(atom))
+            if kind == "valence":
+                messages.append(tr("{where}: too many bonds for this element").format(where=where))
+            elif kind == "radical":
+                messages.append(tr("{where}: unpaired electron (radical)").format(where=where))
+        return messages
+
+    # -- salts & custom groups -----------------------------------------
+
+    def _place_salt(self, label: str, smiles: str) -> None:
+        fragment = fragment_from_smiles(smiles, label=label)
+        if fragment is None:
+            return
+        fragment.attach = None  # always a separate molecule / ion
+        self._canvas.begin_placement(fragment, label)
+        self._canvas.setFocus(Qt.FocusReason.OtherFocusReason)
+
+    def _custom_groups(self) -> dict[str, str]:
+        return self._group_store.groups() if self._group_store is not None else {}
+
+    def _refresh_custom_groups(self) -> None:
+        groups = self._custom_groups()
+        self._canvas.set_custom_groups(groups)
+        self._custom_list.clear()
+        for name, smiles in sorted(groups.items(), key=lambda kv: kv[0].lower()):
+            item = QListWidgetItem(name)
+            item.setToolTip(smiles)
+            item.setData(Qt.ItemDataRole.UserRole, smiles)
+            self._custom_list.addItem(item)
+        self._custom_remove_btn.setEnabled(bool(groups))
+
+    def _parse_group_input(self) -> Fragment | None:
+        return parse_group(self._group_input.text(), self._custom_groups())
+
+    def _on_group_input_changed(self, text: str) -> None:
+        fragment = self._parse_group_input() if text.strip() else None
+        valid = fragment is not None
+        self._group_place_btn.setEnabled(valid)
+        self._group_save_btn.setEnabled(valid and self._group_store is not None)
+        if not text.strip():
+            self._group_status.setText("")
+        elif fragment is None:
+            self._group_status.setText(tr("Not recognised"))
+        else:
+            self._group_status.setText(fragment_to_group_smiles(fragment))
+
+    def _on_group_place(self) -> None:
+        fragment = self._parse_group_input()
+        if fragment is None:
+            return
+        self._canvas.begin_placement(fragment, self._group_input.text().strip())
+        self._canvas.setFocus(Qt.FocusReason.OtherFocusReason)
+
+    def _ask_group_name(self, default: str) -> str:
+        name, ok = QInputDialog.getText(
+            self, tr("Save Custom Group"), tr("Name of the group:"), text=default
+        )
+        return name.strip() if ok else ""
+
+    def _store_group(self, name: str, fragment: Fragment) -> bool:
+        if self._group_store is None or not name:
+            return False
+        try:
+            self._group_store.save(name, fragment_to_group_smiles(fragment))
+        except (OSError, ValueError):
+            self._group_status.setText(tr("The group could not be saved"))
+            return False
+        self._refresh_custom_groups()
+        self._left_tabs.setCurrentIndex(2)
+        return True
+
+    def _on_group_save(self) -> None:
+        fragment = self._parse_group_input()
+        if fragment is None:
+            return
+        name = self._ask_group_name(self._group_input.text().strip().lstrip("*"))
+        self._store_group(name, fragment)
+
+    def _on_save_group_requested(self, fragment: object) -> None:
+        if not isinstance(fragment, Fragment):
+            return
+        name = self._ask_group_name("")
+        self._store_group(name, fragment)
+
+    def _on_custom_item_clicked(self, item: QListWidgetItem) -> None:
+        fragment = fragment_from_smiles(str(item.data(Qt.ItemDataRole.UserRole)), label=item.text())
+        if fragment is None:
+            return
+        self._canvas.begin_placement(fragment, item.text())
+        self._canvas.setFocus(Qt.FocusReason.OtherFocusReason)
+
+    def _on_custom_remove(self) -> None:
+        item = self._custom_list.currentItem()
+        if item is None or self._group_store is None:
+            return
+        try:
+            self._group_store.remove(item.text())
+        except OSError:
+            return
+        self._refresh_custom_groups()
+
+    # -- export / import -----------------------------------------------
+
+    def _copy_text(self, kind: str) -> str:
+        model = self._canvas.model()
+        if kind == "smiles":
+            text = model.to_smiles()
+        elif kind == "mol":
+            text = model.to_mol_block()
+        else:
+            inchi, key = model.inchi()
+            text = inchi if kind == "inchi" else key
+        if text:
+            QGuiApplication.clipboard().setText(text)
+        return text
+
+    def _copy_image(self) -> bool:
+        png = self._canvas.render_to_png_bytes(800, 600)
+        if not png:
+            return False
+        QGuiApplication.clipboard().setImage(QImage.fromData(png))
+        return True
+
+    def _open_mol_file(self) -> bool:
+        path, _ = QFileDialog.getOpenFileName(
+            self, tr("Open Structure"), "", tr("MOL / SDF files (*.mol *.sdf *.sd);;All files (*)")
+        )
+        if not path:
+            return False
+        try:
+            text = Path(path).read_text(encoding="utf-8", errors="replace")
+        except OSError:
+            self._hint_label.setText(tr("The file could not be read"))
+            return False
+        if not self._canvas.replace_mol_block(_first_mol_record(text)):
+            self._hint_label.setText(tr("The file holds no readable structure"))
+            return False
+        return True
+
+    def _save_mol_file(self) -> bool:
+        mol_block = self._canvas.to_mol_block()
+        if not mol_block:
+            return False
+        path, _ = QFileDialog.getSaveFileName(
+            self, tr("Save Structure"), "structure.mol", tr("MOL files (*.mol)")
+        )
+        if not path:
+            return False
+        try:
+            Path(path).write_text(mol_block, encoding="utf-8")
+        except OSError:
+            self._hint_label.setText(tr("The file could not be saved"))
+            return False
+        return True
 
     def _sync_palette(self, tool: str) -> None:
         """Check the palette button that matches the canvas' active tool."""

@@ -505,3 +505,21 @@ def _has_valence_problem(mol: Chem.Mol) -> bool:
 def is_valid_group_smiles(smiles: str) -> bool:
     """True when *smiles* can be stored as a custom group."""
     return fragment_from_smiles(smiles) is not None
+
+
+def fragment_to_group_smiles(fragment: Fragment) -> str:
+    """SMILES with ``*`` on the attachment atom, as stored for custom groups."""
+    rw = Chem.RWMol(fragment.mol)
+    if fragment.attach is not None:
+        dummy = rw.AddAtom(Chem.Atom(0))
+        rw.AddBond(fragment.attach, dummy, Chem.BondType.SINGLE)
+    mol = rw.GetMol()
+    blocker = rdBase.BlockLogs()
+    try:
+        try:
+            Chem.SanitizeMol(mol)
+        except Exception:  # noqa: BLE001
+            mol.UpdatePropertyCache(strict=False)
+        return str(Chem.MolToSmiles(mol))
+    finally:
+        del blocker

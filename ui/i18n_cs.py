@@ -761,9 +761,6 @@ CZECH_TEXTS: dict[str, str] = {
     "Click to draw a bond, pick a ring or paste SMILES (Ctrl+V)": (
         "Kliknutím nakreslíte vazbu, vyberte kruh nebo vložte SMILES (Ctrl+V)"
     ),
-    "Atom: type C, O, N, S, P, F, I, H, B, L (Cl), R (Br); +/− charge; Del removes": (
-        "Atom: napište C, O, N, S, P, F, I, H, B, L (Cl), R (Br); +/− náboj; Del smaže"
-    ),
     "Bond: 1/2/3 order, W wedge, H hash, Del removes": (
         "Vazba: 1/2/3 násobnost, W klín, H šrafy, Del smaže"
     ),
@@ -788,4 +785,99 @@ CZECH_TEXTS: dict[str, str] = {
         "Kruh přidáte kliknutím do prázdna, na atom nebo na vazbu"
     ),
     "Click an atom to attach {group}": "Kliknutím na atom připojíte {group}",
+    # ── Molecule editor: professional features ──────────────────────────────
+    "Atom: type C, O, N, S, P, F, I, H, B, L (Cl), R (Br); +/− charge; "
+    "Enter = label or group; Del removes": (
+        "Atom: napište C, O, N, S, P, F, I, H, B, L (Cl), R (Br); +/− náboj; "
+        "Enter = popisek nebo skupina; Del smaže"
+    ),
+    "Abbreviation, condensed formula or SMILES; * marks where it attaches.": (
+        "Zkratka, zkrácený vzorec nebo SMILES; * označuje místo připojení."
+    ),
+    "Atom Properties": "Vlastnosti atomu",
+    "Atom properties…": "Vlastnosti atomu…",
+    "Atom {n} ({symbol})": "Atom {n} ({symbol})",
+    "Attach to the atom you click next": "Připojí se k atomu, na který kliknete",
+    "Bond": "Vazba",
+    "Charge: {charge}": "Náboj: {charge}",
+    "Click an atom to attach {name}, or empty space to place it; Esc cancels": (
+        "Kliknutím na atom připojíte {name}, do prázdna jej umístíte samostatně; Esc zruší"
+    ),
+    "Click to place {name}; Esc cancels": "Kliknutím umístíte {name}; Esc zruší",
+    "Click, then click in the drawing to add a counter-ion or solvent.": (
+        "Klikněte a pak klikněte do kresby — přidá se protiion nebo rozpouštědlo."
+    ),
+    "Copy": "Kopírovat",
+    "Copy InChI": "Kopírovat InChI",
+    "Copy InChIKey": "Kopírovat InChIKey",
+    "Copy MOL block": "Kopírovat MOL",
+    "Copy SMILES": "Kopírovat SMILES",
+    "Copy as image": "Kopírovat jako obrázek",
+    "Copy structure": "Kopírovat strukturu",
+    "Cut": "Vyjmout",
+    "DBE: {dbe}": "DBE: {dbe}",
+    "Delete atom": "Smazat atom",
+    "Delete bond": "Smazat vazbu",
+    "Delete selection": "Smazat výběr",
+    "Double bond equivalents: rings + π bonds": "Stupeň nenasycenosti: kruhy + π vazby",
+    "Duplicate": "Duplikovat",
+    "Edit label…": "Upravit popisek…",
+    "Element": "Prvek",
+    "Exact mass: {mass}": "Přesná hmotnost: {mass}",
+    "Export, import and hydrogens": "Export, import a vodíky",
+    "Flip horizontally": "Překlopit vodorovně",
+    "Flip vertically": "Překlopit svisle",
+    "Hide explicit hydrogens": "Skrýt explicitní vodíky",
+    "Hydrogens": "Vodíky",
+    "Isotope (mass number)": "Izotop (nukleonové číslo)",
+    "Keep this group in the list below": "Uloží skupinu do seznamu níže",
+    "MOL / SDF files (*.mol *.sdf *.sd);;All files (*)": (
+        "Soubory MOL / SDF (*.mol *.sdf *.sd);;Všechny soubory (*)"
+    ),
+    "MOL files (*.mol)": "Soubory MOL (*.mol)",
+    "More": "Další",
+    "Name of the group:": "Název skupiny:",
+    "Not recognised": "Nerozpoznáno",
+    "Open MOL/SDF file…": "Otevřít soubor MOL/SDF…",
+    "Open Structure": "Otevřít strukturu",
+    "Paste": "Vložit",
+    "Place": "Umístit",
+    "Radical": "Radikál",
+    "Remove": "Odebrat",
+    "Rotate left 15°": "Otočit doleva o 15°",
+    "Rotate right 15°": "Otočit doprava o 15°",
+    "Salts": "Soli",
+    "Save Custom Group": "Uložit vlastní skupinu",
+    "Save MOL file…": "Uložit soubor MOL…",
+    "Save Structure": "Uložit strukturu",
+    "Save as custom group…": "Uložit jako vlastní skupinu…",
+    "Saved groups": "Uložené skupiny",
+    "Save…": "Uložit…",
+    "Select all": "Vybrat vše",
+    "Selection ({count} atoms)": "Výběr ({count} atomů)",
+    "Show R/S and E/Z labels": "Zobrazit označení R/S a E/Z",
+    "Show all hydrogens": "Zobrazit všechny vodíky",
+    "Show atom numbers": "Zobrazit čísla atomů",
+    "Show hydrogens as atoms": "Zobrazit vodíky jako atomy",
+    "Templates": "Šablony",
+    "The clipboard holds no structure": "Ve schránce není žádná struktura",
+    "The file could not be read": "Soubor se nepodařilo přečíst",
+    "The file could not be saved": "Soubor se nepodařilo uložit",
+    "The file holds no readable structure": "Soubor neobsahuje čitelnou strukturu",
+    "The group could not be saved": "Skupinu se nepodařilo uložit",
+    "Tip: select atoms, right-click and choose Save as custom group.": (
+        "Tip: vyberte atomy, klikněte pravým tlačítkem a zvolte Uložit jako vlastní skupinu."
+    ),
+    "Type an element, group (OMe, CO2Et, NHBoc) or SMILES with *; Enter applies": (
+        "Napište prvek, skupinu (OMe, CO2Et, NHBoc) nebo SMILES s *; Enter potvrdí"
+    ),
+    "Unknown label: {text}": "Neznámý popisek: {text}",
+    "automatic": "automaticky",
+    "divalent ••": "dvojmocný ••",
+    "monovalent •": "jednomocný •",
+    "natural": "přirozený",
+    "none": "žádný",
+    "{count} to check": "{count} ke kontrole",
+    "{where}: too many bonds for this element": "{where}: příliš mnoho vazeb pro tento prvek",
+    "{where}: unpaired electron (radical)": "{where}: nepárový elektron (radikál)",
 }

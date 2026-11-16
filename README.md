@@ -92,6 +92,16 @@ molecule, and export a publication-quality PDF report — all in one native app.
   (-OH, -COOH, -NO₂, -CN, …), hover shortcuts (`O`, `N`, `L` = Cl, `R` = Br, `+`/`-`,
   `1`/`2`/`3`), periodic-table picker, charges, Clean 2D, undo/redo and a live
   formula / MW / SMILES bar.
+  - **Salts and mixtures** — several molecules side by side (e.g. amine · HCl,
+    Na⁺ salts, solvates) with a per-component formula (`C₂H₇N · HCl`), net charge,
+    exact mass and DBE; a *Salts* palette adds counter-ions and solvents.
+  - **Copy & attach parts** — select atoms, `Ctrl+C`, then `Ctrl+V` and click any
+    atom: the copied part is bonded there through its original attachment point.
+  - **Custom groups** — type `OMe`, `CO2Et`, `NHBoc`, `CH2CH2OH` or SMILES with `*`
+    on an atom (`Enter` / double-click), and save your own groups for later.
+  - **Atom properties** — charge, isotope (e.g. ²H for C–D bands), H count and
+    radicals; structure check, R/S and E/Z labels, atom numbers, rotate/flip,
+    explicit hydrogens, MOL/SDF open & save, InChI/InChIKey and image copy.
 - **SMILES round-trip** via RDKit — paste a SMILES to pre-populate the editor, or
   export the edited structure as SMILES / MOL block.
 - **Structure panel** attaches a molecule to the project — shown in the viewer and
