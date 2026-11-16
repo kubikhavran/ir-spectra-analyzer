@@ -183,6 +183,7 @@ class MolEditorModel:
         self._undo: deque[Chem.RWMol] = deque(maxlen=UNDO_LIMIT)
         self._redo: list[Chem.RWMol] = []
         self._revision = 0
+        self._compound_depth = 0
         self._ring_cache: tuple[int, list[tuple[tuple[int, ...], tuple[int, ...]]]] | None = None
 
     # ------------------------------------------------------------------
@@ -299,6 +300,49 @@ class MolEditorModel:
                 Chem.AssignChiralTypesFromBondDirs(mol, replaceExistingTags=True)
             Chem.AssignStereochemistry(mol, cleanIt=True, force=True)
         return mol
+
+    def paste_text(self, text: str) -> bool:
+        """Insert a SMILES string or MOL block next to the current drawing (undoable)."""
+        raw = text or ""
+        text = raw.strip()
+        if not text:
+            return False
+        other = MolEditorModel()
+        is_mol_block = "M  END" in text or "V2000" in text or "V3000" in text
+        loaded = (
+            other.load_mol_block(raw, record_undo=False)
+            if is_mol_block
+            else other.load_smiles(text, record_undo=False)
+        )
+        if not loaded or other.is_empty():
+            return False
+        if self.is_empty():
+            self._push_undo()
+            self._set_mol(Chem.RWMol(other._mol))
+            return True
+        bounds = self.bounds()
+        other_bounds = other.bounds()
+        if bounds is None or other_bounds is None:  # pragma: no cover - checked above
+            return False
+        dx = bounds[2] + 2 * BOND_LENGTH - other_bounds[0]
+        dy = (bounds[1] + bounds[3]) / 2 - (other_bounds[1] + other_bounds[3]) / 2
+        self._push_undo()
+        index_map: dict[int, int] = {}
+        for atom in other._mol.GetAtoms():
+            x, y = other.atom_position(atom.GetIdx())
+            index_map[atom.GetIdx()] = self._add_atom(Chem.Atom(atom), x + dx, y + dy)
+        for bond in other._mol.GetBonds():
+            self._mol.AddBond(
+                index_map[bond.GetBeginAtomIdx()],
+                index_map[bond.GetEndAtomIdx()],
+                bond.GetBondType(),
+            )
+            new_bond = self._mol.GetBondBetweenAtoms(
+                index_map[bond.GetBeginAtomIdx()], index_map[bond.GetEndAtomIdx()]
+            )
+            new_bond.SetBondDir(bond.GetBondDir())
+        self._touch()
+        return True
 
     def rdkit_mol(self) -> Chem.Mol:
         """Return a read-only copy of the underlying molecule."""
@@ -498,7 +542,20 @@ class MolEditorModel:
         self._push_undo()
         self._set_mol(self._empty_mol())
 
+    @contextmanager
+    def compound(self) -> Iterator[None]:
+        """Group several edits into a single undo step."""
+        if self._compound_depth == 0:
+            self._push_undo()
+        self._compound_depth += 1
+        try:
+            yield
+        finally:
+            self._compound_depth -= 1
+
     def _push_undo(self) -> None:
+        if self._compound_depth:
+            return
         self._undo.append(Chem.RWMol(self._mol))
         self._redo.clear()
 
@@ -821,6 +878,31 @@ class MolEditorModel:
 
         The number of bonds is ``max(1, round(dist / (BOND_LENGTH·cos 30°)))``.
         """
+        points = self.chain_coordinates(start_x, start_y, end_x, end_y, start_atom_idx)
+        self._push_undo()
+        created: list[int] = []
+        if start_atom_idx is None:
+            prev = self._add_atom(self._make_atom("C"), *points[0])
+            created.append(prev)
+        else:
+            prev = start_atom_idx
+        for x, y in points[1:]:
+            idx = self._add_atom(self._make_atom("C"), x, y)
+            self._add_bond(prev, idx, 1)
+            created.append(idx)
+            prev = idx
+        self._touch()
+        return created
+
+    def chain_coordinates(
+        self,
+        start_x: float,
+        start_y: float,
+        end_x: float,
+        end_y: float,
+        start_atom_idx: int | None = None,
+    ) -> list[tuple[float, float]]:
+        """Zig-zag points (start included) that :meth:`add_chain` would create."""
         if start_atom_idx is not None:
             start_x, start_y = self.atom_position(start_atom_idx)
         n_bonds = self.chain_length(start_x, start_y, end_x, end_y)
@@ -839,27 +921,14 @@ class MolEditorModel:
                 rel = (nx - start_x) * vx + (ny - start_y) * vy
                 side = -1.0 if rel > 0 else 1.0
         elif vy < 0:
-            side = -1.0  # first zig points "up" on screen-friendly layouts
+            side = -1.0  # first zig points up
         step = BOND_LENGTH * math.cos(math.radians(30))
         offset = BOND_LENGTH * math.sin(math.radians(30))
-
-        self._push_undo()
-        created: list[int] = []
-        if start_atom_idx is None:
-            prev = self._add_atom(self._make_atom("C"), start_x, start_y)
-            created.append(prev)
-        else:
-            prev = start_atom_idx
+        points = [(start_x, start_y)]
         for k in range(1, n_bonds + 1):
             h = offset * side if k % 2 == 1 else 0.0
-            x = start_x + ux * step * k + vx * h
-            y = start_y + uy * step * k + vy * h
-            idx = self._add_atom(self._make_atom("C"), x, y)
-            self._add_bond(prev, idx, 1)
-            created.append(idx)
-            prev = idx
-        self._touch()
-        return created
+            points.append((start_x + ux * step * k + vx * h, start_y + uy * step * k + vy * h))
+        return points
 
     @staticmethod
     def chain_length(start_x: float, start_y: float, end_x: float, end_y: float) -> int:
@@ -887,6 +956,19 @@ class MolEditorModel:
         )
         del template
         return coords
+
+    @staticmethod
+    def ring_template_bonds(ring_type: str) -> list[tuple[int, int, int]]:
+        """``(atom_a, atom_b, order)`` of a template, matching the preview coordinates."""
+        template = _kekulized_template(RING_TEMPLATES[ring_type].smiles)
+        return [
+            (
+                b.GetBeginAtomIdx(),
+                b.GetEndAtomIdx(),
+                2 if b.GetBondType() == Chem.BondType.DOUBLE else 1,
+            )
+            for b in template.GetBonds()
+        ]
 
     def add_ring_template(
         self,

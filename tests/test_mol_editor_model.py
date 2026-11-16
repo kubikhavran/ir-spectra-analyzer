@@ -477,3 +477,43 @@ def test_bond_ring_center_for_ring_and_chain_bonds():
     assert model.bond_ring_center(chain_bond) is None
     ring_bond = model.find_bond(1, 2)
     assert model.bond_ring_center(ring_bond) is not None
+
+
+def test_compound_groups_edits_into_one_undo_step():
+    model = MolEditorModel()
+    with model.compound():
+        a = model.add_free_atom(0.0, 0.0)
+        model.sprout_atom(a, "O")
+        model.sprout_atom(a, "N")
+    assert model.to_smiles() == "NCO"
+    assert model.undo()
+    assert model.is_empty()
+    assert not model.can_undo()
+
+
+def test_chain_coordinates_match_add_chain():
+    model = MolEditorModel()
+    preview = model.chain_coordinates(0.0, 0.0, 6.0, 1.0)
+    atoms = model.add_chain(0.0, 0.0, 6.0, 1.0)
+    placed = [c for i in atoms for c in model.atom_position(i)]
+    assert placed == pytest.approx([c for point in preview for c in point])
+
+
+def test_ring_template_bonds_match_coordinates():
+    bonds = MolEditorModel.ring_template_bonds("benzene")
+    assert len(bonds) == 6
+    assert sorted(order for _a, _b, order in bonds) == [1, 1, 1, 2, 2, 2]
+
+
+def test_paste_text_inserts_next_to_existing_drawing():
+    model = MolEditorModel.from_smiles("CCO")
+    assert model.paste_text("c1ccccc1")
+    assert model.to_smiles() == _canon("CCO.c1ccccc1")
+    bounds_left = max(model.atom_position(i)[0] for i in range(3))
+    assert min(model.atom_position(i)[0] for i in range(3, 9)) > bounds_left
+    assert model.undo()
+    assert model.to_smiles() == "CCO"
+    mol_block = MolEditorModel.from_smiles("O").to_mol_block()
+    assert model.paste_text(mol_block)
+    assert model.to_smiles() == _canon("CCO.O")
+    assert not model.paste_text("not a smiles !!")
