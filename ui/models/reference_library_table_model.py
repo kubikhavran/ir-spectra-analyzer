@@ -9,6 +9,7 @@ from PySide6.QtCore import QAbstractTableModel, QModelIndex, QSortFilterProxyMod
 from PySide6.QtWidgets import QTableView
 
 from matching.quality import match_quality_label
+from ui.i18n import tr
 
 COL_NAME = 0
 COL_SIMILARITY = 1
@@ -130,7 +131,7 @@ class ReferenceLibraryTableModel(QAbstractTableModel):
             and role == Qt.ItemDataRole.DisplayRole
             and 0 <= section < len(HEADERS)
         ):
-            return HEADERS[section]
+            return tr(HEADERS[section])
         return super().headerData(section, orientation, role)
 
     def sort(self, column: int, order: Qt.SortOrder = Qt.SortOrder.AscendingOrder) -> None:

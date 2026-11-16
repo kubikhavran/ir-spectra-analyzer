@@ -16,6 +16,8 @@ from PySide6.QtWidgets import (
     QWidget,
 )
 
+from ui.score_row_delegate import NAME_ROLE, SCORE_ROLE, ScoreRowDelegate
+
 if TYPE_CHECKING:
     from core.peak import Peak
 
@@ -53,6 +55,9 @@ class FunctionalGroupPanel(QWidget):
         layout.addWidget(self._show_regions_checkbox)
 
         self._group_list = QListWidget()
+        self._group_list.setItemDelegate(ScoreRowDelegate(self._group_list))
+        self._group_list.setAlternatingRowColors(True)
+        self._group_list.setHorizontalScrollBarPolicy(Qt.ScrollBarPolicy.ScrollBarAlwaysOff)
         self._group_list.currentRowChanged.connect(self._on_group_row_changed)
         layout.addWidget(self._group_list, stretch=3)
 
@@ -120,7 +125,8 @@ class FunctionalGroupPanel(QWidget):
         for result in results:
             item = QListWidgetItem(f"{result.group_name}  —  {result.score:.1f}%")
             item.setData(256, result)
-            item.setForeground(QColor(result.color))
+            item.setData(NAME_ROLE, str(result.group_name))
+            item.setData(SCORE_ROLE, float(result.score))
             self._group_list.addItem(item)
 
         selected_row = 0

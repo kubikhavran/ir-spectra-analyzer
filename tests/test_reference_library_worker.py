@@ -51,7 +51,7 @@ def test_reference_library_sync_worker_imports_fixture_folder(file_db):
 def test_reference_library_search_worker_finds_exact_fixture_match(file_db):
     fixture_root = Path(__file__).resolve().parent / "fixtures"
     folder = fixture_root / "reference library_1"
-    query = FormatRegistry().read(folder / "FER58-SE.SPA")
+    query = FormatRegistry().read(folder / "ref01.SPA")
     worker = ReferenceLibrarySearchWorker(
         db_path=file_db.db_path,
         project_root=fixture_root,
@@ -72,4 +72,4 @@ def test_reference_library_search_worker_finds_exact_fixture_match(file_db):
     assert len(completed) == 1
     outcome = completed[0]
     assert outcome.results
-    assert outcome.results[0].name == "FER58-SE"
+    assert outcome.results[0].name == "ref01"

@@ -12,7 +12,7 @@ import pytest
 
 from app.reference_import import ReferenceImportService
 
-_FIXTURE = Path("tests/fixtures/reference library_1/FER58-SE.SPA")
+_FIXTURE = Path("tests/fixtures/reference library_1/ref01.SPA")
 
 
 def _service() -> ReferenceImportService:

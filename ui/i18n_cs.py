@@ -1,0 +1,605 @@
+"""
+Czech UI texts.
+
+Klíč je anglický text přesně tak, jak stojí v kódu; hodnota je český překlad.
+Text, který tu chybí, zůstane v aplikaci anglicky — proto sem patří každý nový
+řetězec rozhraní. Zástupné symboly ``{name}`` musí zůstat beze změny.
+
+Chemické názvy (vibrace, funkční skupiny) se záměrně nepřekládají: jsou to
+data, stejná v aplikaci i v reportu.
+"""
+
+from __future__ import annotations
+
+CZECH_TEXTS: dict[str, str] = {
+    # ── Menu ────────────────────────────────────────────────────────────────
+    "&File": "&Soubor",
+    "&Edit": "Ú&pravy",
+    "&Database": "&Databáze",
+    "&View": "&Zobrazení",
+    "&Help": "&Nápověda",
+    "&Language": "&Jazyk",
+    "System": "Podle systému",
+    "New &Window": "Nové &okno",
+    "&Open Spectrum...": "&Otevřít spektrum...",
+    "Open &Project...": "Otevřít &projekt...",
+    "&Save Project": "&Uložit projekt",
+    "Save Project &As...": "Uložit projekt &jako...",
+    "Open &Recent": "&Naposledy otevřené",
+    "(empty)": "(prázdné)",
+    "E&xit": "&Konec",
+    "&Undo": "&Zpět",
+    "&Redo": "Z&novu",
+    "&About": "&O aplikaci",
+    "&Reset Layout": "&Obnovit rozložení panelů",
+    "Put every panel back where it was when first installed": (
+        "Vrátí všechny panely tam, kde byly po instalaci"
+    ),
+    "Panel layout reset": "Rozložení panelů obnoveno",
+    "Reference Library...": "Knihovna referencí...",
+    "Set Annotated Projects Folder...": "Nastavit složku vyhodnocených projektů...",
+    "Add Current Spectrum to Reference Library": "Přidat aktuální spektrum do knihovny referencí",
+    "Auto-add Saved Projects to Reference Library": (
+        "Ukládané projekty automaticky přidávat do knihovny referencí"
+    ),
+    "Batch Import References...": "Hromadný import referencí...",
+    "Batch Export PDF Reports...": "Hromadný export PDF reportů...",
+    "Batch Generate Projects...": "Hromadné vytvoření projektů...",
+    "Batch Export Project PDFs...": "Hromadný export PDF z projektů...",
+    "Batch Import References": "Hromadný import referencí",
+    "Batch Export PDF Reports": "Hromadný export PDF reportů",
+    "Batch Generate Projects": "Hromadné vytvoření projektů",
+    "Batch Export Project PDFs": "Hromadný export PDF z projektů",
+    "Open a second workspace so another spectrum or project can stay open alongside this one": (
+        "Otevře druhé okno, takže vedle tohoto může zůstat otevřené další spektrum nebo projekt"
+    ),
+    "Save to the project file already open; asks for a name the first time": (
+        "Uloží do otevřeného souboru projektu; na název se zeptá jen poprvé"
+    ),
+    "Folder of previously analysed .irproj files used by 'Apply assignments from match'": (
+        "Složka dříve vyhodnocených souborů .irproj, ze které čerpá „Použít přiřazení ze shody“"
+    ),
+    "Make the loaded spectrum searchable by Match Spectrum without copying its file "
+    "into the reference library folder": (
+        "Zpřístupní načtené spektrum pro porovnání, aniž by se jeho soubor kopíroval "
+        "do složky knihovny referencí"
+    ),
+    "On Save Project, also store the spectrum in the reference library so the next "
+    "similar sample matches it": (
+        "Při uložení projektu uloží spektrum i do knihovny referencí, takže se s ním "
+        "příští podobný vzorek porovná"
+    ),
+    # ── Toolbar ─────────────────────────────────────────────────────────────
+    "Main Toolbar": "Hlavní lišta",
+    "Open": "Otevřít",
+    "Save": "Uložit",
+    "Undo": "Zpět",
+    "Redo": "Znovu",
+    "Select": "Výběr",
+    "Zoom": "Lupa",
+    "Pan": "Posun",
+    "Add Peak": "Přidat pík",
+    "Detect Peaks": "Najít píky",
+    "Sensitivity": "Citlivost",
+    "Arrange Labels": "Rozmístit popisky",
+    "Clear Peaks": "Smazat píky",
+    "Correct Baseline": "Korekce baseline",
+    "Match Spectrum": "Porovnat s knihovnou",
+    "Export": "Export",
+    "Open a spectrum file (Ctrl+O)": "Otevřít soubor se spektrem (Ctrl+O)",
+    "Save the project to its file (Ctrl+S)": "Uložit projekt do jeho souboru (Ctrl+S)",
+    "Undo the last step (Ctrl+Z)": "Vrátit poslední krok (Ctrl+Z)",
+    "Redo the step just undone (Ctrl+Y)": "Zopakovat vrácený krok (Ctrl+Y)",
+    "Select — click a peak or its label to select it (S)": (
+        "Výběr — kliknutím na pík nebo jeho popisek ho vyberete (S)"
+    ),
+    "Zoom — drag a rectangle to zoom in (Z)": "Lupa — tažením obdélníku přiblížíte (Z)",
+    "Pan — drag to move the view, wheel to zoom (P)": (
+        "Posun — tažením posunete zobrazení, kolečkem přiblížíte (P)"
+    ),
+    "Add Peak — click any point of the spectrum to label it "
+    "(hold Ctrl to snap to the apex of the band under the pointer) (A)": (
+        "Přidat pík — kliknutím označíte libovolný bod spektra "
+        "(s klávesou Ctrl se pík přichytí na vrchol pásu pod kurzorem) (A)"
+    ),
+    "Find peaks automatically at the sensitivity set beside this button.\n"
+    "Peaks that already carry an assignment are kept.": (
+        "Automaticky najde píky s citlivostí nastavenou vedle tlačítka.\n"
+        "Píky, které už mají přiřazení, zůstanou zachované."
+    ),
+    "Detection sensitivity: 1 marks only the dominant bands, "
+    "10 also the faintest ones.\n"
+    "After Detect Peaks, moving the slider re-detects straight away.": (
+        "Citlivost detekce: 1 označí jen nejvýraznější pásy, 10 i ty nejslabší.\n"
+        "Po stisku Najít píky se při posunutí píky ihned přepočítají."
+    ),
+    "Stagger overlapping peak labels": "Rozmístí překrývající se popisky píků",
+    "Remove every peak (Ctrl+Z brings them back)": "Odstraní všechny píky (Ctrl+Z je vrátí)",
+    "Remove a rubber-band baseline (Ctrl+Z to undo)": (
+        "Odstraní základní linii metodou rubber-band (Ctrl+Z vrátí zpět)"
+    ),
+    "Compare the spectrum with the reference library (Ctrl+M)": (
+        "Porovná spektrum s knihovnou referencí (Ctrl+M)"
+    ),
+    "Export a PDF report, CSV or Excel file (Ctrl+E)": (
+        "Export PDF reportu, CSV nebo souboru Excel (Ctrl+E)"
+    ),
+    # ── Docks ───────────────────────────────────────────────────────────────
+    "Vibration Presets": "Vibrace",
+    "Peaks": "Píky",
+    "Metadata": "Údaje",
+    "Match Results": "Shody",
+    "Functional Groups": "Funkční skupiny",
+    "Consensus": "Souhrn",
+    "Structure": "Struktura",
+    # ── Welcome page ────────────────────────────────────────────────────────
+    "Drop a spectrum here": "Přetáhněte sem spektrum",
+    "OMNIC .spa, JCAMP-DX .jdx / .dx, or a saved .irproj project": (
+        "OMNIC .spa, JCAMP-DX .jdx / .dx nebo uložený projekt .irproj"
+    ),
+    "Open Spectrum…": "Otevřít spektrum…",
+    "Open Project…": "Otevřít projekt…",
+    "Recent files": "Naposledy otevřené",
+    # ── Spectrum viewer ─────────────────────────────────────────────────────
+    "Wavenumber (cm⁻¹)": "Vlnočet (cm⁻¹)",
+    "Absorbance": "Absorbance",
+    "Transmittance": "Transmitance",
+    "Reflectance": "Reflektance",
+    "Single Beam": "Jednopaprskové spektrum",
+    "Baseline Corrected": "Po korekci baseline",
+    "baseline corrected": "po korekci baseline",
+    "as loaded": "jak bylo načteno",
+    "Range:": "Rozsah:",
+    "Full": "Celé",
+    "Show the whole spectrum": "Zobrazí celé spektrum",
+    "Show {window} cm⁻¹ with the intensity axis fitted to it": (
+        "Zobrazí {window} cm⁻¹ a osu intenzity přizpůsobí tomuto výřezu"
+    ),
+    "Split view": "Dělený pohled",
+    "Show fingerprint region (400–2000 cm⁻¹) expanded": (
+        "Zobrazí oblast otisku prstu (400–2000 cm⁻¹) roztaženě"
+    ),
+    "Show as:": "Zobrazit jako:",
+    "Redraw the spectrum in another intensity unit.\n"
+    "The loaded data is not changed; overlays follow the same unit.": (
+        "Překreslí spektrum v jiné jednotce intenzity.\n"
+        "Načtená data se nemění; překrytá reference se zobrazí ve stejné jednotce."
+    ),
+    "Tidy labels": "Uklidit popisky",
+    "Hide the labels of weaker peaks where labels would overlap.\n"
+    "They come back as you zoom in; selected and assigned peaks always stay.": (
+        "Skryje popisky slabších píků tam, kde by se popisky překrývaly.\n"
+        "Při přiblížení se vrátí; vybrané a přiřazené píky zůstávají vždy."
+    ),
+    "Crosshair": "Nitkový kříž",
+    "Follow the pointer with a hairline and show the values of the curve under it": (
+        "Sleduje kurzor svislou linkou a ukazuje hodnoty křivky pod ním"
+    ),
+    "Reference overlay:": "Překrytá reference:",
+    "Opacity:": "Krytí:",
+    "Reference spectrum opacity": "Krytí referenčního spektra",
+    "Clear": "Skrýt",
+    "Remove the reference overlay from the plot": "Odstraní překrytou referenci z grafu",
+    "band found": "pás nalezen",
+    "band expected, weak or absent": "pás očekávaný, slabý nebo chybí",
+    "required band missing": "povinný pás chybí",
+    "range of the selected vibration": "rozsah vybrané vibrace",
+    # ── Status bar ──────────────────────────────────────────────────────────
+    "Ready": "Připraveno",
+    "Baseline corrected": "Po korekci baseline",
+    "{count} labels hidden": "{count} popisků skryto",
+    "Labels of weaker peaks are hidden where they would overlap. Zoom in to see them.": (
+        "Popisky slabších píků jsou skryté tam, kde by se překrývaly. Přiblížením se zobrazí."
+    ),
+    "No peaks": "Žádné píky",
+    "{total} peaks · {assigned} assigned": "{total} píků · {assigned} přiřazeno",
+    "No project loaded": "Není načtený žádný projekt",
+    "No spectrum loaded": "Není načtené žádné spektrum",
+    "Project loaded: {name}": "Projekt načten: {name}",
+    "Project saved: {name}": "Projekt uložen: {name}",
+    "Sensitivity {level} — press Detect Peaks to apply it": (
+        "Citlivost {level} — použije se po stisku Najít píky"
+    ),
+    "Detected {count} peaks at sensitivity {level}": (
+        "Nalezeno {count} píků při citlivosti {level}"
+    ),
+    "({count} assigned kept)": "({count} přiřazených ponecháno)",
+    "Baseline corrected (Ctrl+Z to undo)": "Baseline zkorigována (Ctrl+Z vrátí zpět)",
+    "PDF exported: {name}": "PDF exportováno: {name}",
+    "CSV exported: {name}": "CSV exportováno: {name}",
+    "Excel exported: {name}": "Excel exportován: {name}",
+    "Peak: {position} cm⁻¹  |  {intensity}": "Pík: {position} cm⁻¹  |  {intensity}",
+    'Assigned "{name}" to peak at {position} cm⁻¹': (
+        "Vibrace „{name}“ přiřazena píku {position} cm⁻¹"
+    ),
+    'Removed "{name}" from peak at {position} cm⁻¹': (
+        "Vibrace „{name}“ odebrána z píku {position} cm⁻¹"
+    ),
+    'Assigned suggested vibration "{name}" to {position} cm⁻¹': (
+        "Navržená vibrace „{name}“ přiřazena píku {position} cm⁻¹"
+    ),
+    "Updated vibration text for {position} cm⁻¹": "Text vibrace u píku {position} cm⁻¹ upraven",
+    "Cleared vibration text for {position} cm⁻¹": "Text vibrace u píku {position} cm⁻¹ smazán",
+    "Deleted peak at {position} cm⁻¹": "Pík {position} cm⁻¹ smazán",
+    "Deleted {count} peaks": "Smazáno {count} píků",
+    "Peaks cleared": "Píky smazány",
+    "No peaks available to arrange": "Nejsou žádné píky k rozmístění",
+    "No peak labels available to arrange": "Nejsou žádné popisky k rozmístění",
+    "Peak labels are already arranged": "Popisky píků už jsou rozmístěné",
+    "Peak labels arranged": "Popisky píků rozmístěny",
+    "Select a peak first, then double-click a vibration to assign it.": (
+        "Nejdřív vyberte pík, potom dvojklikem přiřaďte vibraci."
+    ),
+    "Select a peak first, then double-click a preset.": (
+        "Nejdřív vyberte pík, potom dvojklikem zvolte vibraci."
+    ),
+    "Select a peak first, then double-click a suggestion.": (
+        "Nejdřív vyberte pík, potom dvojklikem zvolte návrh."
+    ),
+    "Selected peak is outside the suggested vibration range.": (
+        "Vybraný pík leží mimo rozsah navržené vibrace."
+    ),
+    "No matching vibration preset found for this suggestion.": (
+        "K tomuto návrhu se nenašla odpovídající vibrace."
+    ),
+    "Proposed structure updated": "Navržená struktura upravena",
+    "Reference search is already running": "Porovnávání s knihovnou už běží",
+    "Matching spectrum against reference library…": "Porovnávám spektrum s knihovnou referencí…",
+    "Matching failed": "Porovnání se nezdařilo",
+    "Matching failed:": "Porovnání se nezdařilo:",
+    "Matching result ignored because the project or filter changed.": (
+        "Výsledek porovnání byl zahozen, protože se mezitím změnil projekt nebo filtr."
+    ),
+    "Choose a reference library folder first in Database -> Reference Library.": (
+        "Nejdřív zvolte složku knihovny referencí: Databáze → Knihovna referencí."
+    ),
+    "No reference spectra available. Sync or import the selected library first.": (
+        "Nejsou k dispozici žádná referenční spektra. Nejdřív knihovnu "
+        "synchronizujte nebo naimportujte."
+    ),
+    "Matched against {count} references": "Porovnáno s {count} referencemi",
+    "Saved projects are added to the reference library": (
+        "Ukládané projekty se přidávají do knihovny referencí"
+    ),
+    "Saved projects are no longer added to the reference library": (
+        "Ukládané projekty se už do knihovny referencí nepřidávají"
+    ),
+    "Annotated projects folder: {name}": "Složka vyhodnocených projektů: {name}",
+    "Reference imported: {name}": "Reference naimportována: {name}",
+    "Functional-group analysis unavailable: {error}": (
+        "Analýza funkčních skupin není dostupná: {error}"
+    ),
+    "Could not add to reference library: {error}": (
+        "Nepodařilo se přidat do knihovny referencí: {error}"
+    ),
+    # ── Messages and file dialogs ───────────────────────────────────────────
+    "Unsaved Changes": "Neuložené změny",
+    "The current project has unsaved changes. Save them before continuing?": (
+        "Aktuální projekt obsahuje neuložené změny. Uložit je před pokračováním?"
+    ),
+    "Open Error": "Chyba při otevírání",
+    "Save Error": "Chyba při ukládání",
+    "Export Error": "Chyba při exportu",
+    "Match Error": "Chyba při porovnání",
+    "Import Error": "Chyba při importu",
+    "Apply Error": "Chyba při přenosu přiřazení",
+    "Operation in Progress": "Operace probíhá",
+    "Reference matching is still running. Please wait for it to finish before closing.": (
+        "Porovnávání s knihovnou ještě běží. Před zavřením prosím počkejte na dokončení."
+    ),
+    "Failed to open recent file:": "Soubor se nepodařilo otevřít:",
+    "Failed to save project:": "Projekt se nepodařilo uložit:",
+    "Failed to open project:": "Projekt se nepodařilo otevřít:",
+    "Failed to load spectrum:": "Spektrum se nepodařilo načíst:",
+    "Failed to export PDF:": "PDF se nepodařilo exportovat:",
+    "Failed to export CSV:": "CSV se nepodařilo exportovat:",
+    "Failed to export Excel:": "Excel se nepodařilo exportovat:",
+    "Failed to import reference:": "Referenci se nepodařilo naimportovat:",
+    "Open IR Spectrum": "Otevřít IR spektrum",
+    "Open IR Project": "Otevřít IR projekt",
+    "Save IR Project": "Uložit IR projekt",
+    "Export PDF Report": "Export PDF reportu",
+    "Export CSV": "Export CSV",
+    "Export Excel": "Export do Excelu",
+    "Import Reference Spectrum": "Import referenčního spektra",
+    # ── Peak table ──────────────────────────────────────────────────────────
+    "Position (cm⁻¹)": "Poloha (cm⁻¹)",
+    "Intensity": "Intenzita",
+    "Rel.": "Rel.",
+    "Vibration": "Vibrace",
+    "Copy all": "Kopírovat vše",
+    "Copy entire peak table to clipboard (TSV)": "Zkopíruje celou tabulku píků do schránky (TSV)",
+    "Relative band strength: w = weak, m = medium, s = strong, vs = very strong": (
+        "Relativní intenzita pásu: w = slabý, m = střední, s = silný, vs = velmi silný"
+    ),
+    "Double-click to edit the vibration text": "Dvojklikem upravíte text vibrace",
+    # ── Vibration panel ─────────────────────────────────────────────────────
+    "All functional groups": "Všechny funkční skupiny",
+    "Show only vibrations diagnostic for one functional group "
+    "(e.g. when you already know the molecule contains an acid)": (
+        "Zobrazí jen vibrace charakteristické pro jednu funkční skupinu "
+        "(např. když už víte, že molekula obsahuje kyselinu)"
+    ),
+    "Filter vibrations…": "Hledat vibraci…",
+    "Grouped by type": "Seskupeno podle typu",
+    "Sorted by wavenumber": "Seřazeno podle vlnočtu",
+    "How the list is arranged: in sections by vibration type, with the "
+    "vibrations that fit the selected peak on top, or as one list "
+    "ordered by wavenumber.": (
+        "Uspořádání seznamu: v sekcích podle typu vibrace, s vibracemi odpovídajícími "
+        "vybranému píku nahoře, nebo jako jeden seznam seřazený podle vlnočtu."
+    ),
+    "Click a vibration to see its range in the spectrum": (
+        "Kliknutím na vibraci zobrazíte její rozsah ve spektru"
+    ),
+    "Active peak: {position} cm⁻¹ · double-click to assign": (
+        "Vybraný pík: {position} cm⁻¹ · dvojklikem přiřadíte"
+    ),
+    "Fits peak {position} cm⁻¹": "Odpovídá píku {position} cm⁻¹",
+    "Custom vibrations": "Vlastní vibrace",
+    "Stretching ν": "Valenční ν",
+    "Bending δ": "Deformační δ",
+    "Out-of-plane γ": "Mimorovinné γ",
+    "Rocking and wagging": "Kývavé a vějířové",
+    "Overtones and combinations": "Svrchní tóny a kombinace",
+    "Protecting groups": "Chránicí skupiny",
+    "Other": "Ostatní",
+    "Click to fold or unfold this section": "Kliknutím sekci sbalíte nebo rozbalíte",
+    "Assign to selected peak": "Přiřadit vybranému píku",
+    "Assign to peak {position} cm⁻¹": "Přiřadit píku {position} cm⁻¹",
+    "Assign the highlighted vibration to the selected peak.\n"
+    "Double-clicking the vibration or pressing Enter does the same.": (
+        "Přiřadí označenou vibraci vybranému píku.\n"
+        "Totéž udělá dvojklik na vibraci nebo klávesa Enter."
+    ),
+    "Show vibration range in spectrum": "Zobrazovat rozsah vibrace ve spektru",
+    "Outline the wavenumber window a clicked vibration can occupy. "
+    "Turn off to keep the spectrum clear.": (
+        "Vyznačí oblast vlnočtů, ve které se kliknutá vibrace může objevit. "
+        "Vypnutím zůstane spektrum čisté."
+    ),
+    "Add custom vibration…": "Přidat vlastní vibraci…",
+    "Add a permanent custom vibration entry": "Přidá trvalou vlastní vibraci",
+    "Add Custom Vibration": "Přidat vlastní vibraci",
+    "Label:": "Popis:",
+    "Range min:": "Rozsah od:",
+    "Range max:": "Rozsah do:",
+    "Edit Peak Vibration": "Upravit vibraci píku",
+    "Vibration:": "Vibrace:",
+    "Insert Greek letters": "Vložit řecká písmena",
+    "Convert the selection, or previous character, to subscript": (
+        "Převede výběr nebo předchozí znak na dolní index"
+    ),
+    "Convert the selection, or previous character, to superscript": (
+        "Převede výběr nebo předchozí znak na horní index"
+    ),
+    # ── Match results ───────────────────────────────────────────────────────
+    "No results": "Žádné výsledky",
+    "{total} candidates ({saved} saved)": "{total} kandidátů ({saved} s uloženým projektem)",
+    "{saved} of {total} candidates saved": "{saved} z {total} kandidátů má uložený projekt",
+    "No saved project among {total} candidates": ("Žádný z {total} kandidátů nemá uložený projekt"),
+    "No annotated projects folder set": "Není nastavená složka vyhodnocených projektů",
+    "Similarity score is an internal spectral metric "
+    "(coarse cosine search + fine rerank). Not equivalent to OMNIC HQI.": (
+        "Skóre podobnosti je vlastní spektrální metrika "
+        "(hrubé kosinové hledání + jemné přeřazení). Neodpovídá hodnotě HQI z OMNICu."
+    ),
+    "Import Reference...": "Importovat referenci...",
+    "Name filter:": "Filtr názvu:",
+    "e.g. NIT — limits Match Spectrum, empty = all": ("např. NIT — omezí porovnání, prázdné = vše"),
+    "Only matches with a saved project (.irproj)": "Jen shody s uloženým projektem (.irproj)",
+    "Show only matches that have a saved .irproj in the annotated projects "
+    "folder — those are the ones you can apply assignments from": (
+        "Zobrazí jen shody, které mají ve složce vyhodnocených projektů uložený .irproj — "
+        "z těch lze převzít přiřazení"
+    ),
+    "Reference": "Reference",
+    "Match": "Shoda",
+    "Skeleton": "Skelet",
+    "Similarity over the skeleton region 400–1600 cm⁻¹ only. "
+    "▲ marks a skeleton score at least 10 points above the overall one — "
+    "typically the same skeleton carrying a different substituent.": (
+        "Podobnost jen v oblasti skeletu 400–1600 cm⁻¹. "
+        "▲ označuje skóre skeletu alespoň o 10 bodů vyšší než celkové — "
+        "typicky stejný skelet s jiným substituentem."
+    ),
+    "Bands with no counterpart within 8 cm⁻¹ in the other spectrum, strongest first": (
+        "Pásy, které v druhém spektru nemají protějšek do 8 cm⁻¹, od nejsilnějšího"
+    ),
+    "Apply assignments from match": "Použít přiřazení ze shody",
+    "Copy vibration assignments and structure from the selected match's "
+    "saved project onto the current spectrum (nearest peaks, blanks only)": (
+        "Zkopíruje přiřazení vibrací a strukturu z uloženého projektu vybrané shody "
+        "na aktuální spektrum (nejbližší píky, jen dosud nepřiřazené)"
+    ),
+    # ── Metadata ────────────────────────────────────────────────────────────
+    "Sample:": "Vzorek:",
+    "File:": "Soubor:",
+    "Operator:": "Operátor:",
+    "Instrument:": "Přístroj:",
+    "Acquired:": "Změřeno:",
+    "Client:": "Zadavatel:",
+    "Order:": "Zakázka:",
+    "Comment:": "Poznámka:",
+    "sample designation, e.g. LF_647": "označení vzorku, např. LF_647",
+    "file identifier, defaults to the file name": "označení souboru, výchozí je název souboru",
+    "e.g. Nicolet iS 50": "např. Nicolet iS 50",
+    # ── Functional groups / consensus ───────────────────────────────────────
+    "No functional-group analysis": "Analýza funkčních skupin není k dispozici",
+    "Show highlighted regions in spectrum": "Zobrazovat vyznačené oblasti ve spektru",
+    "Select a functional group to inspect its evidence.": (
+        "Vyberte funkční skupinu a zobrazí se, o co se opírá."
+    ),
+    "Select a peak to see assignment suggestions for it.": (
+        "Vyberte pík a zobrazí se pro něj návrhy přiřazení."
+    ),
+    "Diagnostic vibrations": "Diagnostické vibrace",
+    "Confidence score is a heuristic ranking from diagnostic IR bands. "
+    "It is not a statistically calibrated probability.": (
+        "Skóre je heuristické pořadí podle diagnostických IR pásů. "
+        "Není to statisticky kalibrovaná pravděpodobnost."
+    ),
+    "No consensus analysis": "Souhrn není k dispozici",
+    "Run matching or inspect functional groups to build consensus.": (
+        "Spusťte porovnání nebo si projděte funkční skupiny, souhrn se pak sestaví."
+    ),
+    "Confirmed, uncertain, and conflicting evidence will appear here.": (
+        "Zde se zobrazí potvrzené, nejisté a protichůdné poznatky."
+    ),
+    "Top hypotheses": "Nejpravděpodobnější hypotézy",
+    "Top spectral matches": "Nejlepší shody v knihovně",
+    "Select a hypothesis to inspect its evidence.": (
+        "Vyberte hypotézu a zobrazí se, o co se opírá."
+    ),
+    "Consensus combines functional-group evidence, library matches, and assigned "
+    "peaks. It is an interpretation aid, not a definitive identification.": (
+        "Souhrn spojuje poznatky o funkčních skupinách, shody v knihovně a přiřazené píky. "
+        "Je to pomůcka pro interpretaci, ne definitivní identifikace."
+    ),
+    # ── Structure ───────────────────────────────────────────────────────────
+    "No structure assigned": "Struktura není přiřazena",
+    "Edit Structure...": "Upravit strukturu...",
+    # ── Export dialog ───────────────────────────────────────────────────────
+    "PDF Report": "PDF report",
+    "CSV (peaks table)": "CSV (tabulka píků)",
+    "Excel (.xlsx)": "Excel (.xlsx)",
+    "Include peaks without assignment": "Zahrnout píky bez přiřazení",
+    "Preset:": "Předvolba:",
+    "Current defaults": "Aktuální výchozí",
+    "Save Preset...": "Uložit předvolbu...",
+    "Delete Preset": "Smazat předvolbu",
+    "Include metadata": "Zahrnout údaje o měření",
+    "Include peak table": "Zahrnout tabulku píků",
+    "Include structures": "Zahrnout struktury",
+    "First page:": "První strana:",
+    "Spectrum across the whole page + structure and sample name in the plot": (
+        "Spektrum přes celou stranu + struktura a název vzorku v grafu"
+    ),
+    "Spectrum inside page margins": "Spektrum uvnitř okrajů strany",
+    "Split X-axis at 2000 cm⁻¹": "Dělená osa X na 2000 cm⁻¹",
+    "OK": "OK",
+    "Cancel": "Zrušit",
+    "Close": "Zavřít",
+    # ── Reference library dialog ────────────────────────────────────────────
+    "Reference Library": "Knihovna referencí",
+    "Filters": "Filtry",
+    "Name contains:": "Název obsahuje:",
+    "Y unit:": "Jednotka Y:",
+    "Imported:": "Importováno:",
+    "All": "Vše",
+    "All time": "Kdykoliv",
+    "Last 7 days": "Posledních 7 dní",
+    "Last 30 days": "Posledních 30 dní",
+    "Last 3 months": "Poslední 3 měsíce",
+    "Last 6 months": "Posledních 6 měsíců",
+    "Last year": "Poslední rok",
+    "Custom range…": "Vlastní období…",
+    "From:": "Od:",
+    "To:": "Do:",
+    "e.g. PAR or KLH": "např. PAR nebo KLH",
+    "Show current spectrum": "Zobrazit aktuální spektrum",
+    "Select a row to preview": "Vyberte řádek pro náhled",
+    "Reference library folder: not selected": "Složka knihovny referencí: nevybrána",
+    "Similarity search: choose a reference folder first": (
+        "Hledání podobných: nejdřív zvolte složku referencí"
+    ),
+    "Library is empty — use Import File… or Choose Folder… to add references.": (
+        "Knihovna je prázdná — reference přidáte přes Importovat soubor… nebo Zvolit složku…"
+    ),
+    "Library": "Knihovna",
+    "Selected reference": "Vybraná reference",
+    "Similarity search": "Hledání podobných",
+    "Choose Folder...": "Zvolit složku...",
+    "Sync Folder": "Synchronizovat složku",
+    "Import File...": "Importovat soubor...",
+    "Import Web Reference...": "Importovat z webu...",
+    "Rename": "Přejmenovat",
+    "Delete": "Smazat",
+    "Clear Library": "Vyprázdnit knihovnu",
+    "Find Similar to Current": "Najít podobné aktuálnímu",
+    "Find Similar to Selected": "Najít podobné vybranému",
+    "Open in Main Window": "Otevřít v hlavním okně",
+    "Show All": "Zobrazit vše",
+    "Rename the selected reference (F2)": "Přejmenuje vybranou referenci (F2)",
+    "Delete the selected reference(s) (Delete)": "Smaže vybrané reference (Delete)",
+    "Remove every reference spectrum, so you can re-import a folder from scratch": (
+        "Odstraní všechna referenční spektra, aby šla složka naimportovat znovu od začátku"
+    ),
+    "Rank the library by similarity to the active spectrum": (
+        "Seřadí knihovnu podle podobnosti s aktuálním spektrem"
+    ),
+    "Rank the library by similarity to the selected reference": (
+        "Seřadí knihovnu podle podobnosti s vybranou referencí"
+    ),
+    "Load the selected reference's source file into the main spectrum viewer (Enter)": (
+        "Načte zdrojový soubor vybrané reference do hlavního okna (Enter)"
+    ),
+    "Name": "Název",
+    "Similarity": "Podobnost",
+    "Quality": "Kvalita",
+    "Description": "Popis",
+    "Imported": "Importováno",
+    "Source": "Zdroj",
+    "Current spectrum": "Aktuální spektrum",
+    "Reference library folder: {path}": "Složka knihovny referencí: {path}",
+    "Reference library folder: syncing…": "Složka knihovny referencí: synchronizuji…",
+    "Similarity search: not run yet": "Hledání podobných: zatím nespuštěno",
+    "Similarity search: running…": "Hledání podobných: probíhá…",
+    "Similarity search: load a spectrum to rank the library": (
+        "Hledání podobných: nejdřív načtěte spektrum"
+    ),
+    "Similarity search: ranked {count} library spectra": (
+        "Hledání podobných: seřazeno {count} spekter knihovny"
+    ),
+    "Imported {imported} references and matched against {count} spectra": (
+        "Naimportováno {imported} referencí, porovnáno s {count} spektry"
+    ),
+    # ── Batch dialogs ───────────────────────────────────────────────────────
+    "Folder:": "Složka:",
+    "Input:": "Vstup:",
+    "Output:": "Výstup:",
+    "Browse...": "Procházet...",
+    "Browse Input...": "Vybrat vstup...",
+    "Browse Output...": "Vybrat výstup...",
+    "Import": "Importovat",
+    "Generate": "Vytvořit",
+    "Export...": "Exportovat...",
+    "Status": "Stav",
+    "Reason": "Důvod",
+    "Peak Count": "Počet píků",
+    "Reference Name": "Název reference",
+    "Output PDF": "Výstupní PDF",
+    "Output Project": "Výstupní projekt",
+    "When output exists:": "Když výstup už existuje:",
+    "Skip existing": "Přeskočit existující",
+    "Overwrite existing": "Přepsat existující",
+    "Rename automatically": "Automaticky přejmenovat",
+    "Auto-detect peaks": "Automaticky najít píky",
+    "Detect peaks for import report": "Najít píky pro přehled importu",
+    "Show a detected-peak count for each imported spectrum; matching still uses full spectra.": (
+        "U každého importovaného spektra ukáže počet nalezených píků; "
+        "porovnání dál pracuje s celými spektry."
+    ),
+    "Skip unchanged files already imported from the same path": (
+        "Přeskočit nezměněné soubory, které už byly z téže cesty naimportovány"
+    ),
+    "Files with the same display name in different folders are still imported.": (
+        "Soubory se stejným názvem v různých složkách se naimportují."
+    ),
+    "Select a folder and click Import.": "Vyberte složku a klikněte na Importovat.",
+    "Choose input and output folders, then click Export.": (
+        "Zvolte vstupní a výstupní složku a klikněte na Export."
+    ),
+    "Choose input and output folders, then click Generate.": (
+        "Zvolte vstupní a výstupní složku a klikněte na Vytvořit."
+    ),
+    "Choose a folder containing .irproj files": "Zvolte složku se soubory .irproj",
+    "Choose a folder containing .spa files": "Zvolte složku se soubory .spa",
+    "Choose a folder containing SPA or JCAMP files": "Zvolte složku se soubory SPA nebo JCAMP",
+    "Choose a folder for exported PDFs": "Zvolte složku pro exportovaná PDF",
+    "Choose a folder for generated projects": "Zvolte složku pro vytvořené projekty",
+    # ── About ───────────────────────────────────────────────────────────────
+    "About": "O aplikaci",
+    "About IR Spectra Analyzer": "O aplikaci IR Spectra Analyzer",
+    "Professional IR spectrum analysis tool": "Profesionální nástroj pro analýzu IR spekter",
+}

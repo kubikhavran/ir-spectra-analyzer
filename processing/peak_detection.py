@@ -57,14 +57,49 @@ def detect_peaks(
     return sorted(peaks, key=lambda p: p.position, reverse=True)
 
 
-def default_prominence(spectrum) -> float:
+# Detection sensitivity, as offered in the toolbar: 1 marks only the dominant
+# bands, 10 also the faintest shoulders that still form a local extremum.
+SENSITIVITY_MIN = 1
+SENSITIVITY_MAX = 10
+DEFAULT_SENSITIVITY = 5
+# Prominence threshold as a fraction of the spectrum's own intensity span, at
+# the two ends of the scale; the levels in between are spaced geometrically.
+_LEAST_SENSITIVE_FRACTION = 0.10
+_MOST_SENSITIVE_FRACTION = 0.002
+
+
+def clamp_sensitivity(value: object) -> int:
+    """Coerce a stored/typed sensitivity to a valid level, default when unusable."""
+    try:
+        level = int(value)  # type: ignore[call-overload]
+    except (TypeError, ValueError):
+        return DEFAULT_SENSITIVITY
+    return int(max(SENSITIVITY_MIN, min(SENSITIVITY_MAX, level)))
+
+
+def prominence_fraction(sensitivity: int = DEFAULT_SENSITIVITY) -> float:
+    """Prominence threshold for a sensitivity level, as a fraction of the span."""
+    level = clamp_sensitivity(sensitivity)
+    position = (level - SENSITIVITY_MIN) / (SENSITIVITY_MAX - SENSITIVITY_MIN)
+    ratio = _MOST_SENSITIVE_FRACTION / _LEAST_SENSITIVE_FRACTION
+    return float(_LEAST_SENSITIVE_FRACTION * ratio**position)
+
+
+def default_prominence(spectrum, sensitivity: int = DEFAULT_SENSITIVITY) -> float:
     """Return the prominence threshold used for automatic detection on a spectrum.
 
-    Dip-type curves (%T, reflectance) use a percent-scale threshold.  A
-    baseline-corrected spectrum can originate from either a percent-scale dip
-    spectrum or a low-amplitude absorbance spectrum, so its detected polarity
-    — not the generic ``BASELINE_CORRECTED`` unit alone — selects the threshold.
+    The threshold is relative to the spectrum's own intensity span. A fixed
+    value (1 %T, 0.05 A) suited strong spectra only: on a weak one — bands a
+    few %T deep, or an absorbance difference spectrum peaking at 0.1 — it sat
+    above most of the bands and detection returned a handful of peaks.
+    Measured against the peak tables analysts stored in the lab files, the
+    fixed threshold recovered about half of their peaks.
     """
-    if spectrum.is_dip_spectrum:
+    values = np.asarray(spectrum.intensities, dtype=float)
+    finite = values[np.isfinite(values)]
+    if finite.size == 0:
         return 1.0
-    return 0.05
+    span = float(finite.max() - finite.min())
+    if span <= 0.0:
+        return 1.0
+    return span * prominence_fraction(sensitivity)

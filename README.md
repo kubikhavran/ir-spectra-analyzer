@@ -36,16 +36,22 @@ molecule, and export a publication-quality PDF report — all in one native app.
 - **OMNIC-style interactive viewer** built on PyQtGraph (>1000 FPS, inverted x-axis,
   in-ticks, white background matching OMNIC's default look).
 - **Tool modes** — Select / Pan / Zoom / Add Peak — toggle from the toolbar or keyboard.
-- **Rubber-band baseline correction** (lower-convex-hull algorithm), fully undoable.
+- **Rubber-band baseline correction**, fully undoable: the lower hull is subtracted
+  from absorbance; for %T the upper hull is divided out, so the result is still %T
+  with its baseline at 100 %.
 - **Multi-spectrum overlay** with legend and independent color assignment.
 - **Unit conversion** between Absorbance / Transmittance / Reflectance / Single-Beam.
 
 ### Peak picking & interpretation
-- **Automatic peak detection** (SciPy `find_peaks` with tunable prominence / width).
-- **Manual click-to-add** and drag-to-reposition of individual peaks.
-- **Curated vibration preset library** with sourced diagnostic bands and direct
-  peak-to-vibration assignment. Double-click a peak to assign, or filter-highlight
-  peaks that fall inside a preset's range.
+- **Automatic peak detection** (SciPy `find_peaks`) with a **Sensitivity** slider
+  (1–10) next to the button. The threshold is relative to the spectrum's own
+  intensity span; moving the slider right after a detection re-detects live.
+- **Manual click-to-add** — label any point of the spectrum exactly where you click
+  (`Ctrl`+click snaps to the band apex); labels can be dragged.
+- **Curated vibration preset library** with sourced diagnostic bands. Clicking a
+  vibration only outlines where it can appear, so the list can be browsed freely;
+  double-click it (or press `Enter` / **Assign to peak**) to assign it to the
+  selected peak.
 - **Functional-group scoring** — ranked diagnostic groups and structural motifs
   (carbonyls, amides, alcohols, aromatics, alkene subtypes, alkyl-chain motifs, …)
   with confidence, explainability, highlighted regions, and click-to-assign suggestions.
@@ -207,11 +213,12 @@ pytest -q                           # runs the full test suite (offscreen Qt)
 
 1. **Load a spectrum** — `File → Open`, pick a `.spa` file. The viewer auto-scales
    and the metadata panel populates from the OMNIC type-27 text block.
-2. **Detect peaks** — click **Detect Peaks** on the toolbar. Tune prominence /
-   width in the dialog if needed. Or switch to **Add Peak** mode and click directly
-   on the spectrum.
-3. **Assign vibrations** — pick a preset in the vibration panel to highlight peaks
-   that fall in its range, then double-click a peak to assign.
+2. **Detect peaks** — click **Detect Peaks** on the toolbar and drag the
+   **Sensitivity** slider until the peak set looks right. Or switch to **Add Peak**
+   mode and click directly on the spectrum.
+3. **Assign vibrations** — select a peak, browse the vibration panel (a click shows
+   the vibration's range in the spectrum), then double-click the vibration to
+   assign it.
 4. **(Optional) Correct baseline** — click **Correct Baseline** → rubber-band.
    `Ctrl+Z` if the result is wrong.
 5. **(Optional) Sketch the molecule** — open the structure panel, use the embedded
@@ -276,15 +283,22 @@ folder of `.spa` files on disk.
 
 | Shortcut | Action |
 |----------|--------|
-| `Ctrl+O` | Open `.spa` spectrum |
-| `Ctrl+S` / `Ctrl+Shift+S` | Save / Save As project |
+| `Ctrl+O` | Open a spectrum (`.spa`, `.jdx`, `.dx`) |
+| `Ctrl+S` | Save the project to its file (asks for a name only the first time) |
+| `Ctrl+Shift+S` | Save the project under a new name |
+| `Ctrl+Shift+N` | New window |
 | `Ctrl+Z` / `Ctrl+Y` | Undo / Redo |
-| `Ctrl+E` | Export PDF report |
-| `Delete` | Delete selected peak |
+| `Ctrl+M` | Match the spectrum against the reference library |
+| `Ctrl+E` | Export (PDF report, CSV, Excel) |
+| `Delete` | Delete the selected peak(s) |
 | `A` | Switch to Add-Peak tool |
 | `S` | Switch to Select tool |
 | `P` | Switch to Pan tool |
 | `Z` | Switch to Zoom tool |
+
+In the Add-Peak tool a click labels exactly the point under the pointer, so any
+point of the spectrum can be marked; hold `Ctrl` to snap to the apex of the band.
+`Shift`+click on a peak label deletes that peak.
 
 ---
 
@@ -400,11 +414,11 @@ runs on `windows-latest` to produce an installer and attach it to the
 matching GitHub Release:
 
 ```bash
-git tag v0.29.0
-git push origin v0.29.0
+git tag v0.30.0
+git push origin v0.30.0
 ```
 
-A few minutes later `IR-Spectra-Analyzer-Setup-0.29.0.exe` appears on the
+A few minutes later `IR-Spectra-Analyzer-Setup-0.30.0.exe` appears on the
 [Releases page](https://github.com/kubikhavran/ir-spectra-analyzer/releases).
 
 To build locally on a **macOS** machine:
@@ -418,13 +432,13 @@ pip install pyinstaller dmgbuild
 python scripts/build_icon.py
 
 # 3. Bundle to dist/IR Spectra Analyzer.app/
-IR_SPECTRA_VERSION=0.29.0 pyinstaller packaging/ir-spectra-analyzer-mac.spec --clean --noconfirm
+IR_SPECTRA_VERSION=0.30.0 pyinstaller packaging/ir-spectra-analyzer-mac.spec --clean --noconfirm
 
 # 4. Wrap in a DMG
 dmgbuild -s packaging/dmg_settings.py \
-  -D version=0.29.0 -D arch=arm64 \
+  -D version=0.30.0 -D arch=arm64 \
   "IR Spectra Analyzer" \
-  "dist/IR-Spectra-Analyzer-0.29.0-arm64.dmg"
+  "dist/IR-Spectra-Analyzer-0.30.0-arm64.dmg"
 ```
 
 To build locally on a **Windows** machine:

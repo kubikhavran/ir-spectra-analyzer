@@ -14,6 +14,9 @@ if _PROJECT_ROOT not in sys.path:
 # Force Qt to use the offscreen platform so all tests run headless.
 # Must be set before any PySide6 import, which is why it lives here.
 os.environ.setdefault("QT_QPA_PLATFORM", "offscreen")
+# The tests assert the English source texts; keep the UI in English even on a
+# machine whose system language is Czech.
+os.environ.setdefault("IR_SPECTRA_LANGUAGE", "en")
 
 
 # The lab reference library under tests/fixtures/reference library_1/ holds the

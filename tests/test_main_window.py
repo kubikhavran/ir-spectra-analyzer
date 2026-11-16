@@ -648,7 +648,10 @@ def test_preset_assigned_to_peak_updates_label(qtbot):
     peak.label = preset.name
     table.set_peaks([peak])  # refresh
 
-    assert table._table.item(0, 2).text() == "C-H stretch"
+    # The assignment is shown in the Vibration column; the old "Label" column,
+    # which only repeated the position, gave way to the relative band strength.
+    assert table._table.item(0, 3).text() == "C-H stretch"
+    assert table._table.item(0, 2).text() == "vs"
 
 
 def test_peak_table_emits_vibration_edit_request_on_double_click(qtbot):

@@ -314,7 +314,7 @@ def test_loaded_spectrum_defaults_instrument_to_nicolet(qtbot, tmp_path):
     import os
 
     window = _make_window(qtbot)
-    fixture = "tests/fixtures/reference library_1/FER58-SE.SPA"
+    fixture = "tests/fixtures/reference library_1/ref01.SPA"
     if not os.path.exists(fixture):
         pytest.skip("fixture not available")
     window._load_spectrum(fixture)
@@ -736,11 +736,11 @@ def test_pdf_metadata_names_the_title_as_sample_and_keeps_file_separate(qtbot):
     spectrum = _make_spectrum()
     project = Project(name="proj", spectrum=spectrum)
     project.metadata.title = "LF_647"
-    project.metadata.file_name = "FER60-SE"
+    project.metadata.file_name = "ref03"
 
     rows = dict(_metadata_table_rows(project, spectrum))
     assert rows["Sample"] == "LF_647"
-    assert rows["File"] == "FER60-SE"
+    assert rows["File"] == "ref03"
 
 
 def test_export_metadata_rows_match_the_pdf_sample_and_file(qtbot):
@@ -751,11 +751,11 @@ def test_export_metadata_rows_match_the_pdf_sample_and_file(qtbot):
     spectrum = _make_spectrum()
     project = Project(name="proj", spectrum=spectrum)
     project.metadata.title = "LF_647"
-    project.metadata.file_name = "FER60-SE"
+    project.metadata.file_name = "ref03"
 
     rows = dict(collect_export_metadata(project, spectrum))
     assert rows["Sample"] == "LF_647"
-    assert rows["File"] == "FER60-SE"
+    assert rows["File"] == "ref03"
 
 
 def test_metadata_panel_labels_title_as_sample_and_stem_as_file(qtbot):
@@ -774,10 +774,10 @@ def test_metadata_panel_labels_title_as_sample_and_stem_as_file(qtbot):
     assert labels == ["Sample:", "File:"]
 
     panel._title_edit.setText("LF_647")
-    panel._file_edit.setText("FER60-SE")
+    panel._file_edit.setText("ref03")
     metadata = panel.current_metadata()
     assert metadata.title == "LF_647"
-    assert metadata.file_name == "FER60-SE"
+    assert metadata.file_name == "ref03"
 
 
 # ── Overlay control bar readability ───────────────────────────────────────────
@@ -862,10 +862,10 @@ def _measurement_window(qtbot, tmp_path):
 
     lib = tmp_path / "reference library"
     lib.mkdir()
-    shutil.copy("tests/fixtures/reference library_1/FER60-SE.SPA", lib)
+    shutil.copy("tests/fixtures/reference library_1/ref03.SPA", lib)
     work = tmp_path / "measurements"
     work.mkdir()
-    for name in ("PAR1636-SE.SPA", "PAR1637-SE.SPA"):
+    for name in ("ref14.SPA", "ref15.SPA"):
         shutil.copy(f"tests/fixtures/reference library_1/{name}", work)
 
     db = Database(":memory:")
@@ -888,19 +888,19 @@ def test_saving_a_project_makes_the_next_sample_match_it(qtbot, tmp_path):
 
     window, work = _measurement_window(qtbot, tmp_path)
 
-    window._load_spectrum(str(work / "PAR1637-SE.SPA"))
+    window._load_spectrum(str(work / "ref15.SPA"))
     window._project.smiles = "CCOC(C)=O"
-    saved = work / "PAR1637-SE.irproj"
+    saved = work / "ref15.irproj"
     with patch("ui.main_window.QFileDialog.getSaveFileName", return_value=(str(saved), "")):
         window._on_save_project()
     assert "reference library" in window.statusBar().currentMessage()
 
-    window._load_spectrum(str(work / "PAR1636-SE.SPA"))
+    window._load_spectrum(str(work / "ref14.SPA"))
     window._on_match_spectrum()
-    assert "PAR1637-SE" in [result.name for result in window._current_match_results]
+    assert "ref15" in [result.name for result in window._current_match_results]
 
     # the match also carries its saved project, so assignments can be applied
-    match = next(r for r in window._current_match_results if r.name == "PAR1637-SE")
+    match = next(r for r in window._current_match_results if r.name == "ref15")
     assert window._match_results_panel.has_saved_project(match)
     window._on_apply_assignments_from_match(match)
     assert window._project.smiles == "CCOC(C)=O"
@@ -913,27 +913,27 @@ def test_auto_registration_can_be_turned_off(qtbot, tmp_path):
     window, work = _measurement_window(qtbot, tmp_path)
     window._auto_register_action.setChecked(False)
 
-    window._load_spectrum(str(work / "PAR1637-SE.SPA"))
+    window._load_spectrum(str(work / "ref15.SPA"))
     with patch(
         "ui.main_window.QFileDialog.getSaveFileName",
-        return_value=(str(work / "PAR1637-SE.irproj"), ""),
+        return_value=(str(work / "ref15.irproj"), ""),
     ):
         window._on_save_project()
 
-    window._load_spectrum(str(work / "PAR1636-SE.SPA"))
+    window._load_spectrum(str(work / "ref14.SPA"))
     window._on_match_spectrum()
-    assert "PAR1637-SE" not in [r.name for r in window._current_match_results]
+    assert "ref15" not in [r.name for r in window._current_match_results]
 
 
 @pytest.mark.lab_fixtures
 def test_add_current_spectrum_to_library_action(qtbot, tmp_path):
     """The manual action covers spectra the analyst does not save as a project."""
     window, work = _measurement_window(qtbot, tmp_path)
-    window._load_spectrum(str(work / "PAR1637-SE.SPA"))
+    window._load_spectrum(str(work / "ref15.SPA"))
 
     window._on_add_current_spectrum_to_library()
-    assert "PAR1637-SE" in window.statusBar().currentMessage()
+    assert "ref15" in window.statusBar().currentMessage()
 
-    window._load_spectrum(str(work / "PAR1636-SE.SPA"))
+    window._load_spectrum(str(work / "ref14.SPA"))
     window._on_match_spectrum()
-    assert "PAR1637-SE" in [r.name for r in window._current_match_results]
+    assert "ref15" in [r.name for r in window._current_match_results]

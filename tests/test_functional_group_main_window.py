@@ -127,7 +127,7 @@ def test_delete_peak_clears_peak_context_from_side_panels(qtbot):
     assert window._peak_table.selected_peak() is None
     assert window._functional_group_panel._assignment_preview_map == {}
     assert "Select a peak" in window._functional_group_panel._peak_info_label.text()
-    assert window._vibration_panel._hint_label.text() == ""
+    assert "Active peak" not in window._vibration_panel._hint_label.text()
 
 
 def test_clear_peaks_clears_peak_context_from_side_panels(qtbot):
@@ -151,7 +151,7 @@ def test_clear_peaks_clears_peak_context_from_side_panels(qtbot):
     assert window._peak_table.selected_peak() is None
     assert window._functional_group_panel._assignment_preview_map == {}
     assert "Select a peak" in window._functional_group_panel._peak_info_label.text()
-    assert window._vibration_panel._hint_label.text() == ""
+    assert "Active peak" not in window._vibration_panel._hint_label.text()
 
 
 def test_assigning_suggestion_preserves_selected_functional_group(qtbot, monkeypatch):

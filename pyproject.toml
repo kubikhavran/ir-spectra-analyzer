@@ -1,11 +1,14 @@
 [project]
 name = "ir-spectra-analyzer"
-version = "0.29.0"
+version = "0.30.0"
 description = "Professional desktop software for IR spectrum analysis and interpretation"
 requires-python = ">=3.11"
 
 dependencies = [
-    "PySide6>=6.7.0",
+    # 6.12.0 over-releases None/True/False on every QGraphicsItem call. Python
+    # 3.11 (the release interpreter) has no immortal singletons, so the process
+    # aborts with "none_dealloc"/"bool_dealloc" after a few dozen label redraws.
+    "PySide6>=6.7.0,<6.12",
     "pyqtgraph>=0.13.7",
     "numpy>=1.26.0",
     "scipy>=1.13.0",

@@ -39,7 +39,7 @@ def _save_project(path: Path, *, smiles: str = SMILES, points: int = 400) -> Pat
 
 def test_reads_structure_without_parsing_the_whole_project(tmp_path: Path) -> None:
     """The scan stops after the structure fields — proven by corrupting the rest."""
-    path = _save_project(tmp_path / "FER60-SE.irproj")
+    path = _save_project(tmp_path / "ref03.irproj")
     text = path.read_text(encoding="utf-8")
     marker = text.index('"spectrum"')
     # Everything from the spectrum on is now unparseable JSON. A full json.load
@@ -107,11 +107,11 @@ def test_structure_cache_rereads_only_after_the_file_changes(tmp_path: Path) -> 
 
 def test_preview_service_renders_and_caches(tmp_path: Path) -> None:
     """A name maps to PNG bytes, and a second hover costs no extra render."""
-    path = _save_project(tmp_path / "FER60-SE.irproj")
+    path = _save_project(tmp_path / "ref03.irproj")
     service = StructurePreviewService()
-    service.set_project_paths({"fer60-se": path})
+    service.set_project_paths({"ref03": path})
 
-    png = service.preview_png("FER60-SE")
+    png = service.preview_png("ref03")
     assert png is not None
     assert png[:4] == b"\x89PNG"
 
@@ -126,7 +126,7 @@ def test_preview_service_renders_and_caches(tmp_path: Path) -> None:
 
     module.StructurePreviewService._render = _counting_render
     try:
-        assert service.preview_png("fer60-se") == png  # case-insensitive + cached
+        assert service.preview_png("ref03") == png  # case-insensitive + cached
         assert renders == []
     finally:
         module.StructurePreviewService._render = original
@@ -163,9 +163,9 @@ def test_panel_shows_the_structure_on_hover(qtbot, tmp_path: Path) -> None:
 
     from ui.match_results_panel import MatchResultsPanel
 
-    path = _save_project(tmp_path / "FER60-SE.irproj")
+    path = _save_project(tmp_path / "ref03.irproj")
     service = StructurePreviewService()
-    service.set_project_paths({"fer60-se": path})
+    service.set_project_paths({"ref03": path})
 
     asked: list[str] = []
 
@@ -178,13 +178,13 @@ def test_panel_shows_the_structure_on_hover(qtbot, tmp_path: Path) -> None:
     panel.set_structure_preview_provider(_provider)
     panel.set_results(
         [
-            SimpleNamespace(ref_id=1, name="FER60-SE", score=0.9, fingerprint_score=0.9),
+            SimpleNamespace(ref_id=1, name="ref03", score=0.9, fingerprint_score=0.9),
             SimpleNamespace(ref_id=2, name="NO-PROJECT", score=0.5, fingerprint_score=0.5),
         ]
     )
 
     panel._list.itemEntered.emit(panel._list.item(0))
-    assert asked == ["FER60-SE"]
+    assert asked == ["ref03"]
     popup = panel._preview_popup
     assert popup is not None
     assert popup.isVisible()
@@ -192,7 +192,7 @@ def test_panel_shows_the_structure_on_hover(qtbot, tmp_path: Path) -> None:
 
     # A match with nothing saved hides whatever was on screen.
     panel._list.itemEntered.emit(panel._list.item(1))
-    assert asked == ["FER60-SE", "NO-PROJECT"]
+    assert asked == ["ref03", "NO-PROJECT"]
     assert not popup.isVisible()
 
 
@@ -208,7 +208,7 @@ def test_main_window_feeds_the_panel_from_the_annotated_projects_folder(
 
     folder = tmp_path / "annotated"
     folder.mkdir()
-    _save_project(folder / "FER60-SE.irproj")
+    _save_project(folder / "ref03.irproj")
 
     settings = Settings(tmp_path / "settings.json")
     settings.load()
@@ -224,9 +224,7 @@ def test_main_window_feeds_the_panel_from_the_annotated_projects_folder(
     panel.candidate_selected.disconnect(window._on_match_candidate_selected)
 
     window._refresh_saved_project_names()
-    panel.set_results(
-        [SimpleNamespace(ref_id=1, name="FER60-SE", score=0.9, fingerprint_score=0.9)]
-    )
+    panel.set_results([SimpleNamespace(ref_id=1, name="ref03", score=0.9, fingerprint_score=0.9)])
 
     panel._list.itemEntered.emit(panel._list.item(0))
 
@@ -255,16 +253,14 @@ def test_new_results_take_the_preview_off_screen(qtbot, tmp_path: Path) -> None:
 
     from ui.match_results_panel import MatchResultsPanel
 
-    path = _save_project(tmp_path / "FER60-SE.irproj")
+    path = _save_project(tmp_path / "ref03.irproj")
     service = StructurePreviewService()
-    service.set_project_paths({"fer60-se": path})
+    service.set_project_paths({"ref03": path})
 
     panel = MatchResultsPanel()
     qtbot.addWidget(panel)
     panel.set_structure_preview_provider(service.preview_png)
-    panel.set_results(
-        [SimpleNamespace(ref_id=1, name="FER60-SE", score=0.9, fingerprint_score=0.9)]
-    )
+    panel.set_results([SimpleNamespace(ref_id=1, name="ref03", score=0.9, fingerprint_score=0.9)])
 
     panel._list.itemEntered.emit(panel._list.item(0))
     assert panel._preview_popup is not None

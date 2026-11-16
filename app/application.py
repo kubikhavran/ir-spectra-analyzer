@@ -64,12 +64,39 @@ class Application:
         """Initialize all components and show the first window."""
         self._db.initialize()
         self._settings.load()
+        self._apply_language()
         self.new_window()
         if startup_path is not None:
             self.open_path(startup_path)
         pending, self._pending_open_paths = self._pending_open_paths, []
         for path in pending:
             self.open_path(path)
+
+    def _apply_language(self) -> None:
+        """Pick the UI language before the first window builds its texts.
+
+        Dialogs are translated as they appear, by one application-wide filter,
+        so each dialog does not need to know about languages itself.
+        """
+        from PySide6.QtCore import QEvent, QObject  # noqa: PLC0415
+        from PySide6.QtWidgets import QApplication, QDialog  # noqa: PLC0415
+
+        from ui import i18n  # noqa: PLC0415
+
+        if i18n.set_language(i18n.resolve_language(self._settings.get("language"))) == i18n.ENGLISH:
+            return
+        app = QApplication.instance()
+        if app is None:
+            return
+
+        class _DialogTranslator(QObject):
+            def eventFilter(self, watched, event) -> bool:  # noqa: N802
+                if event.type() == QEvent.Type.Show and isinstance(watched, QDialog):
+                    i18n.translate_tree(watched)
+                return False
+
+        self._dialog_translator = _DialogTranslator(app)
+        app.installEventFilter(self._dialog_translator)
 
     def open_path(self, path: str | Path) -> None:
         """Open an OS/CLI-supplied spectrum or project.
@@ -99,6 +126,7 @@ class Application:
         # directly keep their current lifetime.
         window.setAttribute(Qt.WidgetAttribute.WA_DeleteOnClose, True)
         window.new_window_requested.connect(self.new_window)
+        window.open_path_requested.connect(self.open_path)
         window.destroyed.connect(lambda _=None, w=window: self._forget_window(w))
         self._windows.append(window)
         window.show()

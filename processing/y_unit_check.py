@@ -134,8 +134,12 @@ def is_dip_shaped(intensities: np.ndarray, declared: SpectralUnit) -> bool:
         return False
 
     if declared == SpectralUnit.BASELINE_CORRECTED:
-        # Zkorigované %T: baseline u nuly, pásy jako záporné propady.
-        return profile.low < -5.0 and profile.high <= 5.0
+        # Zkorigované %T: baseline u nuly, pásy jako záporné propady. Rubber-band
+        # odečte obálku, takže %T křivka skončí celá pod nulou a absorbance celá
+        # nad ní — rozhoduje tedy strana, na kterou křivka vybíhá, ne hloubka.
+        # Dřívější pevná mez -5 minula každé slabé spektrum (pásy mělčí než
+        # 5 %T): po korekci se obrátily popisky, detekce peaků i porovnání.
+        return profile.low < 0.0 and -profile.low > profile.high
 
     if profile.high <= _DIP_MIN_TOP or profile.low < _DIP_MIN_BOTTOM or profile.high > _DIP_MAX_TOP:
         return False

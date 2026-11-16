@@ -9,6 +9,7 @@ from PySide6.QtGui import QColor
 from PySide6.QtWidgets import QLabel, QListWidget, QListWidgetItem, QVBoxLayout, QWidget
 
 from matching.quality import match_quality_label
+from ui.score_row_delegate import NAME_ROLE, SCORE_ROLE, ScoreRowDelegate
 
 
 class ConsensusPanel(QWidget):
@@ -62,6 +63,8 @@ class ConsensusPanel(QWidget):
         layout.addWidget(self._hypothesis_caption)
 
         self._hypothesis_list = QListWidget()
+        self._hypothesis_list.setItemDelegate(ScoreRowDelegate(self._hypothesis_list))
+        self._hypothesis_list.setHorizontalScrollBarPolicy(Qt.ScrollBarPolicy.ScrollBarAlwaysOff)
         self._hypothesis_list.currentRowChanged.connect(self._on_hypothesis_row_changed)
         layout.addWidget(self._hypothesis_list, stretch=3)
 
@@ -80,6 +83,8 @@ class ConsensusPanel(QWidget):
         layout.addWidget(self._match_caption)
 
         self._match_list = QListWidget()
+        self._match_list.setItemDelegate(ScoreRowDelegate(self._match_list))
+        self._match_list.setHorizontalScrollBarPolicy(Qt.ScrollBarPolicy.ScrollBarAlwaysOff)
         self._match_list.currentRowChanged.connect(self._on_match_row_changed)
         layout.addWidget(self._match_list, stretch=2)
 
@@ -112,13 +117,16 @@ class ConsensusPanel(QWidget):
         for hypothesis in analysis.hypotheses:
             item = QListWidgetItem(f"{hypothesis.title}  —  {hypothesis.score:.1f}%")
             item.setData(Qt.ItemDataRole.UserRole, hypothesis)
-            item.setForeground(self._score_color(hypothesis.score))
+            item.setData(NAME_ROLE, str(hypothesis.title))
+            item.setData(SCORE_ROLE, float(hypothesis.score))
             self._hypothesis_list.addItem(item)
 
         for match in analysis.top_matches:
             quality = match_quality_label(match.score / 100.0)
             item = QListWidgetItem(f"{match.label}  —  {match.score:.1f}%  ({quality})")
             item.setData(Qt.ItemDataRole.UserRole, match)
+            item.setData(NAME_ROLE, str(match.label))
+            item.setData(SCORE_ROLE, float(match.score))
             item.setToolTip(match.details)
             self._match_list.addItem(item)
 

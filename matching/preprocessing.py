@@ -21,7 +21,9 @@ import numpy as np
 from scipy.ndimage import gaussian_filter1d
 from scipy.signal import savgol_filter
 
+from core.spectrum import SpectralUnit
 from processing.interpolation import resample
+from processing.y_unit_check import is_dip_shaped
 
 # Exponent applied to the peak-normalized signal. Values below 1 compress the
 # dynamic range, so one dominant band cannot swamp the shared fingerprint.
@@ -63,11 +65,7 @@ def prepare_for_matching(
     signal = resample(wavenumbers, intensities, target_axis).astype(np.float64, copy=False)
     signal = np.nan_to_num(signal, nan=0.0, posinf=0.0, neginf=0.0)
 
-    sig_min = float(np.nanmin(signal))
-    sig_max = float(np.nanmax(signal))
-    _is_corrected_t = sig_min < -5.0 and sig_max <= 5.0  # corrected %T has negative dips
-
-    if _is_transmittance_like(y_unit) or _is_corrected_t:
+    if _absorptions_are_dips(intensities, signal, y_unit):
         signal = float(np.nanmax(signal)) - signal
     else:
         signal = signal - float(np.nanmin(signal))
@@ -107,6 +105,39 @@ def _axis_step(target_axis: np.ndarray) -> float:
     if target_axis.size < 2:
         return 0.0
     return float(abs(target_axis[1] - target_axis[0]))
+
+
+def _absorptions_are_dips(
+    intensities: np.ndarray, resampled: np.ndarray, y_unit: object | None
+) -> bool:
+    """True when the absorption bands of this spectrum point downwards.
+
+    The declared unit is not enough. Many lab files carry a %T curve under an
+    "Absorbance" header, and a baseline-corrected spectrum has no polarity of
+    its own. The viewer already reads both from the numbers; matching has to
+    agree with it, otherwise the spectrum on screen is compared upside down
+    and the right reference drops out of the hit list.
+    """
+    if _is_transmittance_like(y_unit):
+        return True
+    unit = _spectral_unit(y_unit)
+    if unit is not None:
+        return bool(is_dip_shaped(intensities, unit))
+    # Unit unknown: only the unmistakable shape of corrected %T counts.
+    return float(np.nanmin(resampled)) < -5.0 and float(np.nanmax(resampled)) <= 5.0
+
+
+def _spectral_unit(y_unit: object | None) -> SpectralUnit | None:
+    """Coerce a stored unit (enum or its text) to a SpectralUnit, if it is one."""
+    if isinstance(y_unit, SpectralUnit):
+        return y_unit
+    text = getattr(y_unit, "value", y_unit)
+    if text is None:
+        return None
+    try:
+        return SpectralUnit(str(text))
+    except ValueError:
+        return None
 
 
 def _is_transmittance_like(y_unit: object | None) -> bool:

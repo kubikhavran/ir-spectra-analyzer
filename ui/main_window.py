@@ -19,7 +19,7 @@ from datetime import datetime
 from pathlib import Path
 from typing import TYPE_CHECKING
 
-from PySide6.QtCore import QMetaObject, Qt, QThread, Signal
+from PySide6.QtCore import QByteArray, QEvent, QMetaObject, Qt, QThread, QTimer, Signal
 from PySide6.QtGui import QKeySequence, QShortcut, QUndoStack
 from PySide6.QtWidgets import (
     QApplication,
@@ -32,6 +32,7 @@ from PySide6.QtWidgets import (
     QMenu,
     QMessageBox,
     QPlainTextEdit,
+    QTabWidget,
     QTextEdit,
 )
 
@@ -39,8 +40,10 @@ from app.report_presets import ReportPresetManager
 from processing.consensus_analysis import build_consensus_analysis
 from storage.database import Database
 from storage.settings import Settings
+from ui import i18n
 from ui.consensus_panel import ConsensusPanel
 from ui.functional_group_panel import FunctionalGroupPanel
+from ui.i18n import tr
 from ui.metadata_panel import MetadataPanel
 from ui.molecule_widget import MoleculeWidget
 from ui.peak_table_widget import PeakTableWidget
@@ -48,6 +51,7 @@ from ui.spectrum_widget import SpectrumWidget
 from ui.toolbar import MainToolbar
 from ui.vibration_panel import VibrationPanel
 from ui.vibration_text_edit import VibrationTextEditDialog
+from ui.welcome_overlay import WelcomeOverlay
 
 if TYPE_CHECKING:
     from core.peak import Peak
@@ -66,9 +70,18 @@ class MainWindow(QMainWindow):
     #: Asks the controller for another independent window. MainWindow does not
     #: create windows itself — Application owns their lifetime.
     new_window_requested = Signal()
+    #: Asks the controller to open one more dropped file — it decides whether
+    #: that needs another window.
+    open_path_requested = Signal(str)
+
+    #: File types the window opens when dropped on it or picked from "recent".
+    _OPENABLE_SUFFIXES = (".spa", ".jdx", ".dx", ".irproj")
 
     _MATCH_RESULTS_LIMIT = 20
     _ASSIGNMENT_TRANSFER_TOLERANCE = 8.0  # cm⁻¹ window for copying assignments
+    _DETECT_UNDO_TEXT = "Detect peaks"
+    # A detected peak this close to an already assigned one is the same band.
+    _DETECT_KEEP_TOLERANCE = 4.0  # cm⁻¹
 
     def __init__(
         self,
@@ -112,9 +125,19 @@ class MainWindow(QMainWindow):
         self._setup_docks()
         self._setup_statusbar()
         self._connect_signals()
+        self._setup_welcome()
+        self.setAcceptDrops(True)
 
         delete_sc = QShortcut(QKeySequence.StandardKey.Delete, self)
         delete_sc.activated.connect(self._on_delete_peak)
+
+        self._layout_restored = False
+        i18n.translate_tree(self)
+        # Remembered after everything exists, so "Reset Layout" has the
+        # arrangement the application ships with to go back to.
+        self._default_window_state = self.saveState()
+        self._restore_window_layout()
+        self._update_status_chips()
 
     def _setup_menu(self) -> None:
         """Create the main menu bar."""
@@ -129,16 +152,23 @@ class MainWindow(QMainWindow):
         new_window_action.triggered.connect(self.new_window_requested)
         file_menu.addSeparator()
 
-        open_action = file_menu.addAction("&Open SPA...")
+        open_action = file_menu.addAction("&Open Spectrum...")
         open_action.setShortcut("Ctrl+O")
         open_action.triggered.connect(self._on_open_file)
 
         open_project_action = file_menu.addAction("Open &Project...")
         open_project_action.triggered.connect(self._on_open_project)
 
-        save_project_action = file_menu.addAction("&Save Project...")
+        save_project_action = file_menu.addAction("&Save Project")
         save_project_action.setShortcut("Ctrl+S")
-        save_project_action.triggered.connect(self._on_save_project)
+        save_project_action.setToolTip(
+            "Save to the project file already open; asks for a name the first time"
+        )
+        save_project_action.triggered.connect(self._on_save_project_quick)
+
+        save_as_action = file_menu.addAction("Save Project &As...")
+        save_as_action.setShortcut("Ctrl+Shift+S")
+        save_as_action.triggered.connect(self._on_save_project)
 
         self._recent_menu = file_menu.addMenu("Open &Recent")
         # Rebuilt on every open: the list lives in the shared settings, so a file
@@ -192,6 +222,8 @@ class MainWindow(QMainWindow):
 
         # View menu — populated after docks are created
         self._view_menu = menu_bar.addMenu("&View")
+        self._language_menu = QMenu("&Language", self)
+        self._setup_language_menu()
 
         help_menu = menu_bar.addMenu("&Help")
         about_action = help_menu.addAction("&About")
@@ -212,9 +244,59 @@ class MainWindow(QMainWindow):
             self._toolbar._detect_action.triggered.connect(self._on_detect_peaks)
         if self._toolbar._clear_peaks_action is not None:
             self._toolbar._clear_peaks_action.triggered.connect(self._on_clear_peaks)
+        self._toolbar.set_sensitivity(self._settings.get("peak_sensitivity"))
+        self._toolbar.sensitivity_changed.connect(self._on_sensitivity_changed)
+        self._toolbar.save_requested.connect(self._on_save_project_quick)
+        self._toolbar.undo_requested.connect(self._undo_stack.undo)
+        self._toolbar.redo_requested.connect(self._undo_stack.redo)
+        for stack_signal in (
+            self._undo_stack.canUndoChanged,
+            self._undo_stack.canRedoChanged,
+            self._undo_stack.undoTextChanged,
+            self._undo_stack.redoTextChanged,
+        ):
+            stack_signal.connect(lambda *_: self._sync_history_buttons())
         self._toolbar.correct_baseline.connect(self._on_correct_baseline)
         self._toolbar.arrange_labels.connect(self._on_arrange_peak_labels)
         self._toolbar.match_spectrum.connect(self._on_match_spectrum)
+
+    def _sync_history_buttons(self) -> None:
+        """Keep the toolbar's Undo/Redo buttons in step with the undo stack."""
+        try:
+            self._toolbar.set_history_state(
+                can_undo=self._undo_stack.canUndo(),
+                can_redo=self._undo_stack.canRedo(),
+                undo_text=self._undo_stack.undoText(),
+                redo_text=self._undo_stack.redoText(),
+            )
+        except RuntimeError:
+            # Signals can still arrive while Qt is tearing the window down.
+            return
+
+    def _setup_language_menu(self) -> None:
+        """View → Language: system / English / Čeština (applies after a restart)."""
+        from PySide6.QtGui import QActionGroup  # noqa: PLC0415
+
+        stored = self._settings.get("language")
+        current = stored if stored in (i18n.ENGLISH, i18n.CZECH) else i18n.SYSTEM
+        group = QActionGroup(self._language_menu)
+        group.setExclusive(True)
+        for code, label in i18n.LANGUAGES:
+            action = self._language_menu.addAction(label)
+            action.setCheckable(True)
+            action.setChecked(code == current)
+            group.addAction(action)
+            action.triggered.connect(lambda _checked=False, c=code: self._on_language_chosen(c))
+
+    def _on_language_chosen(self, code: str) -> None:
+        """Remember the language; the texts switch the next time the app starts."""
+        self._settings.set("language", None if code == i18n.SYSTEM else code)
+        QMessageBox.information(
+            self,
+            "Language / Jazyk",
+            "The language changes the next time the application starts.\n"
+            "Jazyk se změní při příštím spuštění aplikace.",
+        )
 
     def _setup_central_widget(self) -> None:
         """Set SpectrumWidget as the central widget."""
@@ -231,6 +313,12 @@ class MainWindow(QMainWindow):
 
         # Left dock: Vibration Presets
         self._vibration_panel = VibrationPanel(db=self._db, parent=self)
+        # Grouped by type unless the user switched back to the plain
+        # wavenumber order; the choice is remembered.
+        self._vibration_panel.set_view_mode(self._settings.get("vibration_list_mode"))
+        self._vibration_panel.view_mode_changed.connect(
+            lambda mode: self._settings.set("vibration_list_mode", mode)
+        )
         self._dock_vibration = QDockWidget("Vibration Presets", self)
         self._dock_vibration.setAllowedAreas(Qt.DockWidgetArea.AllDockWidgetAreas)
         self._dock_vibration.setFeatures(dock_features)
@@ -302,19 +390,98 @@ class MainWindow(QMainWindow):
         self.tabifyDockWidget(self._dock_metadata, self._dock_structure)
 
         # Populate View menu with toggle actions for every dock
-        for dock in (
-            self._dock_vibration,
-            self._dock_peaks,
-            self._dock_metadata,
-            self._dock_match,
-            self._dock_functional_groups,
-            self._dock_consensus,
-            self._dock_structure,
+        for name, dock in (
+            ("dockVibration", self._dock_vibration),
+            ("dockPeaks", self._dock_peaks),
+            ("dockMetadata", self._dock_metadata),
+            ("dockMatch", self._dock_match),
+            ("dockFunctionalGroups", self._dock_functional_groups),
+            ("dockConsensus", self._dock_consensus),
+            ("dockStructure", self._dock_structure),
         ):
+            dock.setObjectName(name)  # saveState/restoreState identify docks by name
             self._view_menu.addAction(dock.toggleViewAction())
+        self._view_menu.addSeparator()
+        reset_layout_action = self._view_menu.addAction("&Reset Layout")
+        reset_layout_action.setToolTip("Put every panel back where it was when first installed")
+        reset_layout_action.triggered.connect(self._on_reset_layout)
+        self._view_menu.addMenu(self._language_menu)
+
+        self.setTabPosition(Qt.DockWidgetArea.AllDockWidgetAreas, QTabWidget.TabPosition.North)
+        # The right-hand tabs follow the order of the work; the first one —
+        # what was measured — is the one in front when the window opens, not
+        # the still-empty structure panel that happened to be added last.
+        self._dock_metadata.raise_()
+        QTimer.singleShot(0, self._raise_first_tab)
+
+        # Band markers belong to the Functional Groups tab: they are drawn
+        # while that tab is in front and stay out of the spectrum otherwise.
+        self._fg_regions_checked = True
+        self._dock_functional_groups.visibilityChanged.connect(
+            lambda _visible: self._sync_functional_group_regions()
+        )
 
         self._reload_vibration_presets()
         self._load_functional_group_tags()
+
+    def _raise_first_tab(self) -> None:
+        try:
+            if not self._layout_restored:
+                # Wide enough for all five tab titles to be read in full. Only
+                # for the stock arrangement — a remembered layout is the user's.
+                self.resizeDocks([self._dock_metadata], [500], Qt.Orientation.Horizontal)
+                self.resizeDocks([self._dock_vibration], [300], Qt.Orientation.Horizontal)
+            self._dock_metadata.raise_()
+            self._sync_functional_group_regions()
+        except RuntimeError:  # window already closed (tests, quick open/close)
+            return
+
+    def _functional_group_dock_in_front(self) -> bool:
+        """True while the Functional Groups panel is actually on screen."""
+        if not self.isVisible():
+            return True  # not shown yet: nothing is hidden behind another tab
+        return not self._dock_functional_groups.visibleRegion().isEmpty()
+
+    def _sync_functional_group_regions(self) -> None:
+        """Draw the band markers only while their panel is in front and switched on."""
+        try:
+            self._spectrum_widget.set_diagnostic_regions_visible(
+                self._fg_regions_checked and self._functional_group_dock_in_front()
+            )
+        except RuntimeError:
+            return
+
+    def _on_reset_layout(self) -> None:
+        """View → Reset Layout."""
+        self.restoreState(self._default_window_state)
+        self._raise_first_tab()
+        self.statusBar().showMessage(tr("Panel layout reset"))
+
+    def _restore_window_layout(self) -> None:
+        """Bring back the window size and panel arrangement of the last session."""
+        self._layout_restored = False
+        for key, restore in (
+            ("window_geometry", self.restoreGeometry),
+            ("window_state", self.restoreState),
+        ):
+            stored = self._settings.get(key)
+            if not isinstance(stored, str) or not stored:
+                continue
+            try:
+                if restore(QByteArray.fromBase64(stored.encode("ascii"))):
+                    self._layout_restored = True
+            except Exception:  # noqa: BLE001 — a stale layout must never block start-up
+                continue
+
+    def _save_window_layout(self) -> None:
+        """Remember the window size and panel arrangement for the next start."""
+        try:
+            self._settings.set(
+                "window_geometry", bytes(self.saveGeometry().toBase64()).decode("ascii")
+            )
+            self._settings.set("window_state", bytes(self.saveState().toBase64()).decode("ascii"))
+        except Exception:  # noqa: BLE001 — remembering the layout is best-effort
+            pass
 
     def _load_functional_group_tags(self) -> None:
         """Provide functional-group tag filters to the vibration panel.
@@ -365,22 +532,78 @@ class MainWindow(QMainWindow):
         self._refresh_functional_group_assignment_preview()
 
     def _setup_statusbar(self) -> None:
-        """Set up status bar with cursor position label."""
-        self._status_cursor = QLabel("Ready")
-        self.statusBar().addPermanentWidget(self._status_cursor)
+        """Status bar: transient messages left, the standing facts right."""
+        self._status_hidden_labels = QLabel("")
+        self._status_hidden_labels.setProperty("chip", "true")
+        self._status_hidden_labels.setToolTip(
+            tr("Labels of weaker peaks are hidden where they would overlap. Zoom in to see them.")
+        )
+        self._status_peaks = QLabel("")
+        self._status_unit = QLabel("")
+        self._status_unit.setProperty("chip", "true")
+        self._status_baseline = QLabel(tr("Baseline corrected"))
+        self._status_baseline.setProperty("chip", "true")
+        self._status_cursor = QLabel(tr("Ready"))
+        self._status_cursor.setMinimumWidth(190)
+        self._status_cursor.setAlignment(
+            Qt.AlignmentFlag.AlignRight | Qt.AlignmentFlag.AlignVCenter
+        )
+        for widget in (
+            self._status_hidden_labels,
+            self._status_peaks,
+            self._status_baseline,
+            self._status_unit,
+            self._status_cursor,
+        ):
+            self.statusBar().addPermanentWidget(widget)
 
         self._spectrum_widget.cursor_moved.connect(
-            lambda wn, _: self._status_cursor.setText(f"{wn:.2f} cm\u207b\u00b9")
+            lambda wn, intensity: self._status_cursor.setText(
+                self._spectrum_widget.cursor_readout(wn, intensity)
+            )
+        )
+        self._spectrum_widget.hidden_labels_changed.connect(
+            lambda _count: self._update_status_chips()
+        )
+        self._spectrum_widget._unit_combo.currentIndexChanged.connect(
+            lambda _index: self._update_status_chips()
         )
 
         self._undo_stack.indexChanged.connect(self._on_undo_redo)
         self._undo_stack.cleanChanged.connect(lambda _clean: self._update_window_title())
+
+    def _update_status_chips(self) -> None:
+        """Refresh the standing facts: peaks, unit, baseline state, hidden labels."""
+        project = self._project
+        spectrum = None
+        if project is not None:
+            spectrum = project.corrected_spectrum or project.spectrum
+        has_spectrum = spectrum is not None
+
+        hidden = self._spectrum_widget.hidden_label_count()
+        self._status_hidden_labels.setVisible(has_spectrum and hidden > 0)
+        if hidden > 0:
+            self._status_hidden_labels.setText(tr("{count} labels hidden").format(count=hidden))
+
+        self._status_peaks.setVisible(has_spectrum)
+        self._status_peaks.setText(self._peak_table.summary_text() if has_spectrum else "")
+
+        self._status_baseline.setVisible(
+            bool(spectrum is not None and spectrum.is_baseline_corrected)
+        )
+
+        self._status_unit.setVisible(has_spectrum)
+        if spectrum is not None:
+            shown_unit = self._spectrum_widget.display_unit() or spectrum.display_y_unit
+            self._status_unit.setText(tr(shown_unit.value))
 
     def _on_undo_redo(self) -> None:
         """Refresh UI state after undo/redo operations."""
         if self._project is None or self._project.spectrum is None:
             return
         self._project_revision += 1
+        # Whatever the status line said described the state before this step.
+        self.statusBar().clearMessage()
         preferred_peak = self._peak_table.selected_peak()
         preferred_group_id = self._current_functional_group_id()
         spectrum = (
@@ -390,6 +613,7 @@ class MainWindow(QMainWindow):
         )
         # Keep the user's current zoom/pan — adding a peak while zoomed in must
         # not snap the graph back to the full view.
+        curve_changed = spectrum is not self._spectrum_widget.source_spectrum()
         self._spectrum_widget.set_spectrum(spectrum, preserve_view=True)
         current_smiles = getattr(self._molecule_widget, "_current_smiles", "")
         current_mol_block = getattr(self._molecule_widget, "_current_mol_block", "")
@@ -402,8 +626,14 @@ class MainWindow(QMainWindow):
                 image_bytes=self._project.structure_image,
             )
         self._refresh_peak_views(preferred_peak)
+        if curve_changed:
+            # Baseline correction (or its undo) swapped the curve for one on a
+            # different Y scale. The wavenumber zoom is still meaningful, the
+            # old intensity range is not — keeping it showed an empty plot.
+            self._spectrum_widget.fit_y_to_view()
         self._refresh_functional_group_analysis(preferred_group_id=preferred_group_id)
         self._update_window_title()
+        self._update_status_chips()
 
     def _has_unsaved_changes(self) -> bool:
         """Return whether replacing/closing the current project would lose work."""
@@ -451,15 +681,15 @@ class MainWindow(QMainWindow):
             return True
         answer = QMessageBox.warning(
             self,
-            "Unsaved Changes",
-            "The current project has unsaved changes. Save them before continuing?",
+            tr("Unsaved Changes"),
+            tr("The current project has unsaved changes. Save them before continuing?"),
             QMessageBox.StandardButton.Save
             | QMessageBox.StandardButton.Discard
             | QMessageBox.StandardButton.Cancel,
             QMessageBox.StandardButton.Save,
         )
         if answer == QMessageBox.StandardButton.Save:
-            return self._on_save_project()
+            return self._on_save_project_quick()
         return bool(answer == QMessageBox.StandardButton.Discard)
 
     def _connect_signals(self) -> None:
@@ -594,6 +824,8 @@ class MainWindow(QMainWindow):
         )
         self._refresh_functional_group_analysis()
         self._update_window_title()
+        self._update_welcome()
+        self._update_status_chips()
 
     def _sync_project_metadata_from_panel(self) -> None:
         if self._project is None:
@@ -607,7 +839,9 @@ class MainWindow(QMainWindow):
                 return
             self._load_spectrum(path)
         except Exception as exc:  # noqa: BLE001
-            QMessageBox.critical(self, "Open Error", f"Failed to open recent file:\n{exc}")
+            QMessageBox.critical(
+                self, tr("Open Error"), tr("Failed to open recent file:") + f"\n{exc}"
+            )
 
     def _load_project_from_path(self, path: str) -> None:
         from pathlib import Path  # noqa: PLC0415
@@ -620,7 +854,7 @@ class MainWindow(QMainWindow):
         self._apply_project_to_ui(project, recent_path=path)
         self._current_project_path = path
         self._mark_project_saved()
-        self.statusBar().showMessage(f"Project loaded: {Path(path).name}")
+        self.statusBar().showMessage(tr("Project loaded: {name}").format(name=Path(path).name))
 
     def _on_metadata_changed(self, metadata) -> None:
         if self._project is None:
@@ -645,12 +879,29 @@ class MainWindow(QMainWindow):
         """Handle File → Open SPA action."""
         path, _ = QFileDialog.getOpenFileName(
             self,
-            "Open IR Spectrum",
-            "",
-            "OMNIC SPA Files (*.spa *.SPA);;All Files (*)",
+            tr("Open IR Spectrum"),
+            self._last_open_dir(),
+            "IR spectra (*.spa *.SPA *.jdx *.JDX *.dx *.DX);;"
+            "OMNIC SPA Files (*.spa *.SPA);;JCAMP-DX Files (*.jdx *.JDX *.dx *.DX);;"
+            "All Files (*)",
         )
         if path:
+            self._remember_open_dir(path)
             self._load_spectrum(path)
+
+    def _last_open_dir(self) -> str:
+        """Folder the last spectrum/project was opened from, "" when unknown."""
+        stored = self._settings.get("last_open_dir")
+        if stored and Path(stored).is_dir():
+            return str(stored)
+        return ""
+
+    def _remember_open_dir(self, path: str) -> None:
+        """Persist the folder of a just-opened file for the next open dialog."""
+        try:
+            self._settings.set("last_open_dir", str(Path(path).parent))
+        except Exception:  # noqa: BLE001 — remembering the folder is best-effort
+            pass
 
     def _default_export_basename(self) -> str:
         """Return the filename stem to pre-fill in save/export dialogs.
@@ -699,36 +950,55 @@ class MainWindow(QMainWindow):
             directory = self._last_save_dir()
         return str(directory / f"{basename}{extension}")
 
-    def _on_save_project(self) -> bool:
-        """Handle File → Save Project action."""
+    def _on_save_project_quick(self) -> bool:
+        """Handle File → Save Project: write to the open project file, no dialog.
+
+        Falls back to Save As while the project has never been saved, so the
+        first Ctrl+S still asks where the file should go.
+        """
         if self._project is None:
-            self.statusBar().showMessage("No project loaded")
+            self.statusBar().showMessage(tr("No project loaded"))
+            return False
+        if not self._current_project_path:
+            return self._on_save_project()
+        return self._save_project_to(self._current_project_path)
+
+    def _on_save_project(self) -> bool:
+        """Handle File → Save Project As action."""
+        if self._project is None:
+            self.statusBar().showMessage(tr("No project loaded"))
             return False
 
         path, _ = QFileDialog.getSaveFileName(
             self,
-            "Save IR Project",
+            tr("Save IR Project"),
             self._current_project_path or self._suggested_save_path(".irproj"),
             "IR Project Files (*.irproj);;JSON files (*.json)",
         )
         if not path:
             return False
+        return self._save_project_to(path)
 
+    def _save_project_to(self, path: str) -> bool:
+        """Write the project to ``path`` and run the after-save bookkeeping."""
         from pathlib import Path  # noqa: PLC0415
 
         from storage.project_serializer import ProjectSerializer  # noqa: PLC0415
 
+        project = self._project
+        if project is None:
+            return False
         try:
             self._sync_project_metadata_from_panel()
-            ProjectSerializer().save(self._project, path)
+            ProjectSerializer().save(project, path)
         except Exception as e:  # noqa: BLE001
-            QMessageBox.critical(self, "Save Error", f"Failed to save project:\n{e}")
+            QMessageBox.critical(self, tr("Save Error"), tr("Failed to save project:") + f"\n{e}")
             return False
 
         self._current_project_path = path
         self._mark_project_saved()
         self._remember_save_dir(path)
-        self.statusBar().showMessage(f"Project saved: {Path(path).name}")
+        self.statusBar().showMessage(tr("Project saved: {name}").format(name=Path(path).name))
         try:
             self._add_to_recent(path)
             # A project saved into the annotated folder becomes applicable to
@@ -745,17 +1015,18 @@ class MainWindow(QMainWindow):
         """Handle File → Open Project action."""
         path, _ = QFileDialog.getOpenFileName(
             self,
-            "Open IR Project",
-            "",
+            tr("Open IR Project"),
+            self._last_open_dir(),
             "IR Project Files (*.irproj);;JSON files (*.json);;All Files (*)",
         )
         if not path:
             return
+        self._remember_open_dir(path)
 
         try:
             self._load_project_from_path(path)
         except Exception as e:  # noqa: BLE001
-            QMessageBox.critical(self, "Open Error", f"Failed to open project:\n{e}")
+            QMessageBox.critical(self, tr("Open Error"), tr("Failed to open project:") + f"\n{e}")
 
     def _load_spectrum(self, path: str) -> None:
         """Load a spectrum file and update the UI."""
@@ -798,7 +1069,7 @@ class MainWindow(QMainWindow):
                 message = f"{message} — ⚠ {unit_warning}"
             self.statusBar().showMessage(message)
         except Exception as e:  # noqa: BLE001
-            QMessageBox.critical(self, "Error", f"Failed to load spectrum:\n{e}")
+            QMessageBox.critical(self, "Error", tr("Failed to load spectrum:") + f"\n{e}")
 
     def _on_tool_mode_changed(self, mode: str) -> None:
         """Switch tool mode in SpectrumWidget."""
@@ -811,12 +1082,16 @@ class MainWindow(QMainWindow):
         from core.commands import AddPeakCommand  # noqa: PLC0415
         from core.peak import Peak  # noqa: PLC0415
 
+        # The click height is in the displayed unit. While the view is converted
+        # it cannot be turned into a label offset in the file's own unit, so the
+        # label takes the default position instead of a meaningless one.
+        converted_view = self._spectrum_widget.is_converted_view()
         peak = Peak(
             position=wavenumber,
             intensity=intensity,
-            manual_placement=True,
+            manual_placement=not converted_view,
             label_offset_x=0.0,
-            label_offset_y=click_y - intensity,
+            label_offset_y=0.0 if converted_view else click_y - intensity,
         )
         cmd = AddPeakCommand(self._project, peak)
         self._undo_stack.push(cmd)
@@ -825,36 +1100,99 @@ class MainWindow(QMainWindow):
     def _on_detect_peaks(self) -> None:
         """Run automatic peak detection on the loaded spectrum."""
         if self._project is None or self._project.spectrum is None:
-            self.statusBar().showMessage("No spectrum loaded")
+            self.statusBar().showMessage(tr("No spectrum loaded"))
             return
         from processing.peak_detection import default_prominence, detect_peaks  # noqa: PLC0415
 
         spectrum = self._project.corrected_spectrum or self._project.spectrum
         invert = spectrum.is_dip_spectrum
-        prominence = default_prominence(spectrum)
+        sensitivity = self._toolbar.sensitivity()
+        prominence = default_prominence(spectrum, sensitivity)
         peaks = detect_peaks(
             spectrum.wavenumbers, spectrum.intensities, invert=invert, prominence=prominence
         )
         # Wrap all additions in a macro so it's a single Ctrl+Z
-        self._undo_stack.beginMacro("Detect peaks")
+        self._undo_stack.beginMacro(self._DETECT_UNDO_TEXT)
         from core.commands import AddPeakCommand, DeletePeakCommand  # noqa: PLC0415
+        from core.peak_assignments import peak_has_assignment  # noqa: PLC0415
 
+        # A peak that already carries an assignment is work the analyst did by
+        # hand. Re-running detection (e.g. after a baseline correction) used to
+        # throw all of it away; now only unassigned peaks are replaced.
+        kept = [existing for existing in self._project.peaks if peak_has_assignment(existing)]
         for existing in list(self._project.peaks):
-            self._undo_stack.push(DeletePeakCommand(self._project, existing))
+            if not any(existing is keeper for keeper in kept):
+                self._undo_stack.push(DeletePeakCommand(self._project, existing))
         for peak in peaks:
+            if any(
+                abs(peak.position - keeper.position) <= self._DETECT_KEEP_TOLERANCE
+                for keeper in kept
+            ):
+                continue  # the assigned peak already marks this band
             self._undo_stack.push(AddPeakCommand(self._project, peak))
+        self._arrange_labels_within_macro()
         self._undo_stack.endMacro()
         self._refresh_peak_views()
-        self.statusBar().showMessage(f"Detected {len(self._project.peaks)} peaks")
+        self._spectrum_widget.fit_y_to_view()
+        message = tr("Detected {count} peaks at sensitivity {level}").format(
+            count=len(self._project.peaks), level=sensitivity
+        )
+        if kept:
+            message += " " + tr("({count} assigned kept)").format(count=len(kept))
+        self.statusBar().showMessage(message)
+
+    def _arrange_labels_within_macro(self) -> None:
+        """Stagger the labels of a fresh detection, as part of the same undo step.
+
+        Detected peaks used to arrive with every label at the default height,
+        so a crowded fingerprint region was an unreadable pile until Arrange
+        Labels was pressed. Now a detection comes out readable.
+        """
+        if self._project is None or not self._project.peaks:
+            return
+        from core.commands import SetPeakLabelPlacementsCommand  # noqa: PLC0415
+
+        # The labels have to exist in the plot before their sizes can be read.
+        self._spectrum_widget.set_peaks(self._project.peaks)
+        placements = self._spectrum_widget.compute_auto_label_placements()
+        if placements:
+            self._undo_stack.push(SetPeakLabelPlacementsCommand(placements))
+
+    def _on_sensitivity_changed(self, sensitivity: int) -> None:
+        """Remember the sensitivity and, right after a detection, apply it live.
+
+        When the last thing done was Detect Peaks, that detection is replaced by
+        one at the new sensitivity, so the slider can be dragged until the
+        peak set looks right and the whole thing is still a single undo step.
+        Once anything else has been done since (a peak added, an assignment),
+        nothing is touched until Detect Peaks is pressed again.
+        """
+        try:
+            self._settings.set("peak_sensitivity", int(sensitivity))
+        except Exception:  # noqa: BLE001 — remembering the level is best-effort
+            pass
+        if self._project is None or self._project.spectrum is None:
+            return
+        if self._undo_stack.canUndo() and self._undo_stack.undoText() == self._DETECT_UNDO_TEXT:
+            self._undo_stack.undo()
+            self._on_detect_peaks()
+            return
+        self.statusBar().showMessage(
+            tr("Sensitivity {level} — press Detect Peaks to apply it").format(level=sensitivity)
+        )
 
     def _on_correct_baseline(self) -> None:
         """Apply baseline correction and make it undoable."""
         if self._project is None or self._project.spectrum is None:
-            self.statusBar().showMessage("No spectrum loaded")
+            self.statusBar().showMessage(tr("No spectrum loaded"))
             return
 
         from core.commands import CorrectBaselineCommand  # noqa: PLC0415
-        from core.spectrum import SpectralUnit, Spectrum  # noqa: PLC0415
+        from core.spectrum import (  # noqa: PLC0415
+            BASELINE_CORRECTED_FLAG,
+            SpectralUnit,
+            Spectrum,
+        )
         from processing.baseline import rubber_band_baseline  # noqa: PLC0415
 
         source_spectrum = self._project.spectrum
@@ -865,27 +1203,34 @@ class MainWindow(QMainWindow):
             upper=use_upper_hull,
         )
 
+        # A %T baseline is divided out, so the result is still %T (baseline at
+        # 100 %) and keeps its unit: overlays, the unit switch, matching and
+        # the report all go on working on the familiar scale. Subtracted
+        # absorbance keeps the dedicated "Baseline Corrected" unit.
+        corrected_unit = (
+            source_spectrum.display_y_unit if use_upper_hull else SpectralUnit.BASELINE_CORRECTED
+        )
         corrected_spectrum = Spectrum(
             wavenumbers=source_spectrum.wavenumbers.copy(),
             intensities=corrected_intensities,
             title=source_spectrum.title,
             source_path=source_spectrum.source_path,
             acquired_at=source_spectrum.acquired_at,
-            y_unit=SpectralUnit.BASELINE_CORRECTED,
+            y_unit=corrected_unit,
             x_unit=source_spectrum.x_unit,
             comments=source_spectrum.comments,
-            extra_metadata=dict(source_spectrum.extra_metadata),
+            extra_metadata={**source_spectrum.extra_metadata, BASELINE_CORRECTED_FLAG: True},
         )
 
         command = CorrectBaselineCommand(self._project, corrected_spectrum)
         self._undo_stack.push(command)
 
-        self.statusBar().showMessage("Baseline corrected (Ctrl+Z to undo)")
+        self.statusBar().showMessage(tr("Baseline corrected (Ctrl+Z to undo)"))
 
     def _on_export(self) -> None:
         """Show export dialog and export in selected format."""
         if self._project is None or self._project.spectrum is None:
-            self.statusBar().showMessage("No spectrum loaded")
+            self.statusBar().showMessage(tr("No spectrum loaded"))
             return
         self._sync_project_metadata_from_panel()
 
@@ -909,11 +1254,11 @@ class MainWindow(QMainWindow):
         """Export the current project to a PDF report."""
         project = self._project
         if project is None or project.spectrum is None:
-            self.statusBar().showMessage("No spectrum loaded")
+            self.statusBar().showMessage(tr("No spectrum loaded"))
             return False
         path, _ = QFileDialog.getSaveFileName(
             self,
-            "Export PDF Report",
+            tr("Export PDF Report"),
             self._suggested_save_path(".pdf"),
             "PDF Files (*.pdf)",
         )
@@ -930,30 +1275,71 @@ class MainWindow(QMainWindow):
         report_options.view_x_range = self._spectrum_widget.get_x_view_range()
         report_options.view_y_range = self._spectrum_widget.get_y_view_range()
         report_options.diagnostic_regions = ()
-        report_options.peak_label_placements = {
-            id(peak): (label_x, label_y)
-            for peak, label_x, label_y in self._spectrum_widget.get_peak_label_placements()
-        }
+        report_project, report_options.peak_label_placements = self._project_as_displayed(project)
 
         try:
             builder = ReportBuilder()
-            builder.build_with_options(project, Path(path), report_options)
+            builder.build_with_options(report_project, Path(path), report_options)
             self._remember_save_dir(path)
-            self.statusBar().showMessage(f"PDF exported: {Path(path).name}")
+            self.statusBar().showMessage(tr("PDF exported: {name}").format(name=Path(path).name))
             return True
         except Exception as e:  # noqa: BLE001
-            QMessageBox.critical(self, "Export Error", f"Failed to export PDF:\n{e}")
+            QMessageBox.critical(self, tr("Export Error"), tr("Failed to export PDF:") + f"\n{e}")
             return False
+
+    def _project_as_displayed(self, project):
+        """Return (project, label placements) matching what the viewer shows.
+
+        The Y range and label positions handed to the report come from the
+        plot. While the plot is converted to another unit they are on that
+        unit's scale, so the report has to draw the converted curve too —
+        pairing them with the stored data flattened the spectrum to a line.
+        The saved project itself is never touched.
+        """
+        from dataclasses import replace  # noqa: PLC0415
+
+        widget = self._spectrum_widget
+        placements = {
+            id(peak): (label_x, label_y)
+            for peak, label_x, label_y in widget.get_peak_label_placements()
+        }
+        unit = widget.display_unit()
+        source = project.corrected_spectrum or project.spectrum
+        if not widget.is_converted_view() or unit is None or source is None:
+            return project, placements
+        converted = source.converted_to(unit)
+        if converted is None:
+            return project, placements
+
+        shown_peaks = []
+        shown_placements: dict[int, tuple[float, float]] = {}
+        for peak in project.peaks:
+            shown = replace(
+                peak,
+                intensity=widget.display_intensity(peak.intensity),
+                vibration_ids=list(peak.vibration_ids),
+                vibration_labels=list(peak.vibration_labels),
+                manual_placement=False,
+                label_offset_x=0.0,
+                label_offset_y=0.0,
+            )
+            shown_peaks.append(shown)
+            if id(peak) in placements:
+                shown_placements[id(shown)] = placements[id(peak)]
+        shown_project = replace(
+            project, spectrum=converted, corrected_spectrum=None, peaks=shown_peaks
+        )
+        return shown_project, shown_placements
 
     def _export_csv(self, *, include_unassigned: bool = False) -> None:
         """Export peaks to a CSV file."""
         project = self._project
         if project is None or project.spectrum is None:
-            self.statusBar().showMessage("No spectrum loaded")
+            self.statusBar().showMessage(tr("No spectrum loaded"))
             return
         path, _ = QFileDialog.getSaveFileName(
             self,
-            "Export CSV",
+            tr("Export CSV"),
             self._suggested_save_path(".csv"),
             "CSV Files (*.csv);;Text Files (*.txt)",
         )
@@ -974,19 +1360,19 @@ class MainWindow(QMainWindow):
                 project=project,
             )
             self._remember_save_dir(path)
-            self.statusBar().showMessage(f"CSV exported: {Path(path).name}")
+            self.statusBar().showMessage(tr("CSV exported: {name}").format(name=Path(path).name))
         except Exception as e:  # noqa: BLE001
-            QMessageBox.critical(self, "Export Error", f"Failed to export CSV:\n{e}")
+            QMessageBox.critical(self, tr("Export Error"), tr("Failed to export CSV:") + f"\n{e}")
 
     def _export_xlsx(self, *, include_unassigned: bool = False) -> None:
         """Export peaks and spectrum to an Excel file."""
         project = self._project
         if project is None or project.spectrum is None:
-            self.statusBar().showMessage("No spectrum loaded")
+            self.statusBar().showMessage(tr("No spectrum loaded"))
             return
         path, _ = QFileDialog.getSaveFileName(
             self,
-            "Export Excel",
+            tr("Export Excel"),
             self._suggested_save_path(".xlsx"),
             "Excel Files (*.xlsx)",
         )
@@ -1007,14 +1393,16 @@ class MainWindow(QMainWindow):
                 project=project,
             )
             self._remember_save_dir(path)
-            self.statusBar().showMessage(f"Excel exported: {Path(path).name}")
+            self.statusBar().showMessage(tr("Excel exported: {name}").format(name=Path(path).name))
         except Exception as e:  # noqa: BLE001
-            QMessageBox.critical(self, "Export Error", f"Failed to export Excel:\n{e}")
+            QMessageBox.critical(self, tr("Export Error"), tr("Failed to export Excel:") + f"\n{e}")
 
     def _on_peak_selected(self, peak) -> None:
         """Update status bar and highlight matching presets when a peak is selected."""
         self.statusBar().showMessage(
-            f"Peak: {peak.position:.2f} cm\u207b\u00b9  |  {peak.intensity:.4f}"
+            tr("Peak: {position} cm\u207b\u00b9  |  {intensity}").format(
+                position=f"{peak.position:.2f}", intensity=f"{peak.intensity:.4f}"
+            )
         )
         self._spectrum_widget.set_selected_peak(peak)
         self._vibration_panel.highlight_for_peak(peak.position)
@@ -1033,7 +1421,9 @@ class MainWindow(QMainWindow):
         self._undo_stack.push(RemovePresetCommand(peak, preset))
         self._refresh_peak_views(peak)
         self.statusBar().showMessage(
-            f'Removed "{preset.name}" from peak at {peak.position:.1f} cm\u207b\u00b9'
+            tr('Removed "{name}" from peak at {position} cm\u207b\u00b9').format(
+                name=preset.name, position=f"{peak.position:.1f}"
+            )
         )
 
     def _on_edit_peak_vibration_requested(self, peak) -> None:
@@ -1064,11 +1454,15 @@ class MainWindow(QMainWindow):
 
         if new_labels:
             self.statusBar().showMessage(
-                f"Updated vibration text for {peak.position:.1f} cm\u207b\u00b9"
+                tr("Updated vibration text for {position} cm\u207b\u00b9").format(
+                    position=f"{peak.position:.1f}"
+                )
             )
         else:
             self.statusBar().showMessage(
-                f"Cleared vibration text for {peak.position:.1f} cm\u207b\u00b9"
+                tr("Cleared vibration text for {position} cm\u207b\u00b9").format(
+                    position=f"{peak.position:.1f}"
+                )
             )
 
     @staticmethod
@@ -1121,23 +1515,27 @@ class MainWindow(QMainWindow):
         self._spectrum_widget.set_vibration_range_visible(visible)
 
     def _on_preset_clicked_for_assign(self, preset) -> None:
-        """Assign the clicked preset to the currently selected peak.
+        """Assign the highlighted preset to the currently selected peak.
 
-        Clicking a peak in the viewer only selects it — assignment happens
-        exclusively here, when the user clicks a vibration in the panel.
+        Reached from the panel's Assign button and Enter. A plain click in the
+        list only outlines the vibration's range, so it can be browsed freely.
         """
         if self._project is None:
             return
         peak = self._peak_table.selected_peak()
         if peak is None:
-            self.statusBar().showMessage("Select a peak first, then click a vibration to assign.")
+            self.statusBar().showMessage(
+                tr("Select a peak first, then double-click a vibration to assign it.")
+            )
             return
         from core.commands import AssignPresetCommand  # noqa: PLC0415
 
         self._undo_stack.push(AssignPresetCommand(peak, preset))
         self._refresh_peak_views(peak)
         self.statusBar().showMessage(
-            f'Assigned "{preset.name}" to peak at {peak.position:.1f} cm\u207b\u00b9'
+            tr('Assigned "{name}" to peak at {position} cm\u207b\u00b9').format(
+                name=preset.name, position=f"{peak.position:.1f}"
+            )
         )
 
     def _on_peak_selected_in_viewer(self, peak) -> None:
@@ -1148,7 +1546,9 @@ class MainWindow(QMainWindow):
         self._vibration_panel.set_active_peak(peak)
         self._set_functional_group_active_peak(peak)
         self.statusBar().showMessage(
-            f"Peak: {peak.position:.2f} cm\u207b\u00b9  |  {peak.intensity:.4f}"
+            tr("Peak: {position} cm\u207b\u00b9  |  {intensity}").format(
+                position=f"{peak.position:.2f}", intensity=f"{peak.intensity:.4f}"
+            )
         )
 
     def _on_clear_peaks(self) -> None:
@@ -1162,17 +1562,17 @@ class MainWindow(QMainWindow):
             self._undo_stack.push(DeletePeakCommand(self._project, peak))
         self._undo_stack.endMacro()
         self._refresh_peak_views()
-        self.statusBar().showMessage("Peaks cleared")
+        self.statusBar().showMessage(tr("Peaks cleared"))
 
     def _on_arrange_peak_labels(self) -> None:
         """Auto-arrange peak labels without disturbing existing workflow until requested."""
         if self._project is None or not self._project.peaks:
-            self.statusBar().showMessage("No peaks available to arrange")
+            self.statusBar().showMessage(tr("No peaks available to arrange"))
             return
 
         placements = self._spectrum_widget.compute_auto_label_placements()
         if not placements:
-            self.statusBar().showMessage("No peak labels available to arrange")
+            self.statusBar().showMessage(tr("No peak labels available to arrange"))
             return
 
         if all(
@@ -1181,7 +1581,7 @@ class MainWindow(QMainWindow):
             and peak.manual_placement
             for peak, offset_x, offset_y in placements
         ):
-            self.statusBar().showMessage("Peak labels are already arranged")
+            self.statusBar().showMessage(tr("Peak labels are already arranged"))
             return
 
         from core.commands import SetPeakLabelPlacementsCommand  # noqa: PLC0415
@@ -1190,7 +1590,7 @@ class MainWindow(QMainWindow):
         self._undo_stack.push(SetPeakLabelPlacementsCommand(placements))
         self._refresh_peak_views(preferred_peak)
         self._spectrum_widget.reset_view()
-        self.statusBar().showMessage("Peak labels arranged")
+        self.statusBar().showMessage(tr("Peak labels arranged"))
 
     def _on_preset_selected(self, preset) -> None:
         """Assign the selected vibration preset to the currently active peak."""
@@ -1198,14 +1598,16 @@ class MainWindow(QMainWindow):
             return
         peak = self._peak_table.selected_peak()
         if peak is None:
-            self.statusBar().showMessage("Select a peak first, then double-click a preset.")
+            self.statusBar().showMessage(tr("Select a peak first, then double-click a preset."))
             return
         from core.commands import AssignPresetCommand  # noqa: PLC0415
 
         self._undo_stack.push(AssignPresetCommand(peak, preset))
         self._refresh_peak_views(peak)
         self.statusBar().showMessage(
-            f'Assigned "{preset.name}" to peak at {peak.position:.1f} cm\u207b\u00b9'
+            tr('Assigned "{name}" to peak at {position} cm\u207b\u00b9').format(
+                name=preset.name, position=f"{peak.position:.1f}"
+            )
         )
 
     def _on_vibration_preset_changed(self) -> None:
@@ -1220,7 +1622,7 @@ class MainWindow(QMainWindow):
 
         mol_block = getattr(self._molecule_widget, "_current_mol_block", "") or ""
         self._undo_stack.push(SetProjectSMILESCommand(self._project, smiles, mol_block))
-        self.statusBar().showMessage("Proposed structure updated")
+        self.statusBar().showMessage(tr("Proposed structure updated"))
 
     def _on_mol_block_changed(self, mol_block: str) -> None:
         """No-op — mol_block is captured atomically by SetProjectSMILESCommand.
@@ -1238,14 +1640,29 @@ class MainWindow(QMainWindow):
             return
         if self._project is None:
             return
-        peak = self._peak_table.selected_peak()
-        if peak is None:
+        # Every highlighted row goes, as one undo step — deleting only the
+        # "current" row of a multi-row selection left the rest behind.
+        peaks = self._peak_table.selected_peaks()
+        if not peaks:
+            peak = self._peak_table.selected_peak()
+            peaks = [peak] if peak is not None else []
+        if not peaks:
             return
         from core.commands import DeletePeakCommand  # noqa: PLC0415
 
-        self._undo_stack.push(DeletePeakCommand(self._project, peak))
+        if len(peaks) == 1:
+            self._undo_stack.push(DeletePeakCommand(self._project, peaks[0]))
+            message = tr("Deleted peak at {position} cm\u207b\u00b9").format(
+                position=f"{peaks[0].position:.1f}"
+            )
+        else:
+            self._undo_stack.beginMacro(f"Delete {len(peaks)} peaks")
+            for peak in peaks:
+                self._undo_stack.push(DeletePeakCommand(self._project, peak))
+            self._undo_stack.endMacro()
+            message = tr("Deleted {count} peaks").format(count=len(peaks))
         self._refresh_peak_views()
-        self.statusBar().showMessage(f"Deleted peak at {peak.position:.1f} cm\u207b\u00b9")
+        self.statusBar().showMessage(message)
 
     def _on_delete_peak_object(self, peak: Peak) -> None:
         """Delete a specific peak object (emitted from shift+click on label)."""
@@ -1266,11 +1683,11 @@ class MainWindow(QMainWindow):
     def _on_match_spectrum(self) -> None:
         """Run spectral matching against the reference database."""
         if self._project is None or self._project.spectrum is None:
-            self.statusBar().showMessage("No spectrum loaded")
+            self.statusBar().showMessage(tr("No spectrum loaded"))
             return
 
         if self._reference_search_thread is not None:
-            self.statusBar().showMessage("Reference search is already running")
+            self.statusBar().showMessage(tr("Reference search is already running"))
             return
 
         spectrum = self._project.corrected_spectrum or self._project.spectrum
@@ -1325,7 +1742,7 @@ class MainWindow(QMainWindow):
                 name_filter=self._match_results_panel.name_filter(),
             )
         except Exception as e:  # noqa: BLE001
-            QMessageBox.critical(self, "Match Error", f"Matching failed:\n{e}")
+            QMessageBox.critical(self, tr("Match Error"), tr("Matching failed:") + f"\n{e}")
             return
         self._apply_match_spectrum_outcome(outcome)
 
@@ -1344,7 +1761,7 @@ class MainWindow(QMainWindow):
         """Apply background search results once the worker finishes."""
         if search_context is not None and search_context != self._current_match_context():
             self.statusBar().showMessage(
-                "Matching result ignored because the project or filter changed."
+                tr("Matching result ignored because the project or filter changed.")
             )
             return
         self._apply_match_spectrum_outcome(outcome)
@@ -1357,8 +1774,8 @@ class MainWindow(QMainWindow):
         """Show a background search failure to the user."""
         if search_context is not None and search_context != self._current_match_context():
             return
-        self.statusBar().showMessage("Matching failed")
-        QMessageBox.critical(self, "Match Error", f"Matching failed:\n{message}")
+        self.statusBar().showMessage(tr("Matching failed"))
+        QMessageBox.critical(self, tr("Match Error"), tr("Matching failed:") + f"\n{message}")
 
     def _on_reference_search_thread_finished(self) -> None:
         """Reset UI state after a background reference search completes."""
@@ -1371,11 +1788,11 @@ class MainWindow(QMainWindow):
         if not outcome.references:
             if outcome.library_folder is None:
                 self.statusBar().showMessage(
-                    "Choose a reference library folder first in Database -> Reference Library."
+                    tr("Choose a reference library folder first in Database -> Reference Library.")
                 )
             else:
                 self.statusBar().showMessage(
-                    "No reference spectra available. Sync or import the selected library first."
+                    tr("No reference spectra available. Sync or import the selected library first.")
                 )
             self._clear_match_results()
             return
@@ -1383,15 +1800,19 @@ class MainWindow(QMainWindow):
         self._current_match_results = list(outcome.results)
         self._refresh_saved_project_names()
         self._match_results_panel.set_results(list(outcome.results))
+        self._dock_match.show()
+        self._dock_match.raise_()
         self._refresh_consensus_analysis()
         if outcome.imported_summary is not None and outcome.imported_summary.imported > 0:
             self.statusBar().showMessage(
-                "Imported "
-                f"{outcome.imported_summary.imported} bundled references and matched "
-                f"against {outcome.reference_count} spectra"
+                tr("Imported {imported} references and matched against {count} spectra").format(
+                    imported=outcome.imported_summary.imported, count=outcome.reference_count
+                )
             )
         else:
-            self.statusBar().showMessage(f"Matched against {outcome.reference_count} references")
+            self.statusBar().showMessage(
+                tr("Matched against {count} references").format(count=outcome.reference_count)
+            )
 
     def _annotated_projects_dir(self) -> Path | None:
         """Return the configured folder of previously analysed .irproj projects."""
@@ -1460,13 +1881,15 @@ class MainWindow(QMainWindow):
                 description=description,
             )
         except Exception as exc:  # noqa: BLE001 — a failed reference must not lose the project
-            self.statusBar().showMessage(f"Could not add to reference library: {exc}")
+            self.statusBar().showMessage(
+                tr("Could not add to reference library: {error}").format(error=exc)
+            )
             return None
 
     def _on_add_current_spectrum_to_library(self) -> None:
         """Database → Add Current Spectrum to Reference Library."""
         if self._project is None or self._project.spectrum is None:
-            self.statusBar().showMessage("No spectrum loaded")
+            self.statusBar().showMessage(tr("No spectrum loaded"))
             return
         name = self._default_export_basename()
         source = self._current_project_path or (self._project.spectrum.source_path or name)
@@ -1517,7 +1940,9 @@ class MainWindow(QMainWindow):
             return
         self._settings.set("annotated_projects_folder", chosen)
         self._refresh_saved_project_names()
-        self.statusBar().showMessage(f"Annotated projects folder: {Path(chosen).name}")
+        self.statusBar().showMessage(
+            tr("Annotated projects folder: {name}").format(name=Path(chosen).name)
+        )
 
     def _on_apply_assignments_from_match(self, result) -> None:
         """Copy assignments + structure from the matched spectrum's saved .irproj.
@@ -1557,7 +1982,9 @@ class MainWindow(QMainWindow):
         try:
             reference_project = ProjectSerializer().load(str(project_path))
         except Exception as exc:  # noqa: BLE001
-            QMessageBox.critical(self, "Apply Error", f"Failed to read {project_path.name}:\n{exc}")
+            QMessageBox.critical(
+                self, tr("Apply Error"), f"Failed to read {project_path.name}:\n{exc}"
+            )
             return
 
         transfers = plan_assignment_transfer(
@@ -1606,7 +2033,7 @@ class MainWindow(QMainWindow):
         if self._toolbar._match_action is not None:
             self._toolbar._match_action.setEnabled(not busy)
         if busy:
-            self.statusBar().showMessage("Matching spectrum against reference library…")
+            self.statusBar().showMessage(tr("Matching spectrum against reference library…"))
 
     def _on_match_candidate_selected(self, result) -> None:
         """Show the selected reference spectrum as overlay and its band differences."""
@@ -1653,7 +2080,8 @@ class MainWindow(QMainWindow):
 
     def _on_functional_group_region_visibility_changed(self, visible: bool) -> None:
         """Show or hide functional-group diagnostic overlays in the spectrum view."""
-        self._spectrum_widget.set_diagnostic_regions_visible(visible)
+        self._fg_regions_checked = bool(visible)
+        self._sync_functional_group_regions()
 
     def _on_functional_group_suggestion_selected(self, band) -> None:
         """Assign a suggested vibration to the selected peak via the existing command path."""
@@ -1661,15 +2089,19 @@ class MainWindow(QMainWindow):
             return
         peak = self._peak_table.selected_peak()
         if peak is None:
-            self.statusBar().showMessage("Select a peak first, then double-click a suggestion.")
+            self.statusBar().showMessage(tr("Select a peak first, then double-click a suggestion."))
             return
         if not band.covers_wavenumber(peak.position):
-            self.statusBar().showMessage("Selected peak is outside the suggested vibration range.")
+            self.statusBar().showMessage(
+                tr("Selected peak is outside the suggested vibration range.")
+            )
             return
 
         preset = self._find_best_preset_for_band(band, peak.position)
         if preset is None:
-            self.statusBar().showMessage("No matching vibration preset found for this suggestion.")
+            self.statusBar().showMessage(
+                tr("No matching vibration preset found for this suggestion.")
+            )
             return
 
         from core.commands import AssignPresetCommand  # noqa: PLC0415
@@ -1679,7 +2111,9 @@ class MainWindow(QMainWindow):
         self._refresh_peak_views(peak)
         self._restore_functional_group_selection(preferred_group_id)
         self.statusBar().showMessage(
-            f'Assigned suggested vibration "{preset.name}" to {peak.position:.1f} cm\u207b\u00b9'
+            tr('Assigned suggested vibration "{name}" to {position} cm\u207b\u00b9').format(
+                name=preset.name, position=f"{peak.position:.1f}"
+            )
         )
 
     def _on_consensus_hypothesis_selected(self, group_id: str) -> None:
@@ -1730,7 +2164,9 @@ class MainWindow(QMainWindow):
             self._functional_group_panel.clear()
             self._spectrum_widget.set_diagnostic_regions([])
             self._refresh_consensus_analysis()
-            self.statusBar().showMessage(f"Functional-group analysis unavailable: {exc}")
+            self.statusBar().showMessage(
+                tr("Functional-group analysis unavailable: {error}").format(error=exc)
+            )
             return
         self._current_functional_group_results = list(analysis.results)
         self._functional_group_panel.set_results(list(analysis.results))
@@ -1798,7 +2234,11 @@ class MainWindow(QMainWindow):
             )
         self._spectrum_widget.set_selected_peak(active_peak, refresh=False)
 
-        self._peak_table.set_peaks(self._project.peaks)
+        shown_spectrum = self._project.corrected_spectrum or self._project.spectrum
+        self._peak_table.set_peaks(
+            self._project.peaks,
+            is_dip_spectrum=bool(shown_spectrum.is_dip_spectrum) if shown_spectrum else None,
+        )
         self._spectrum_widget.set_peaks(self._project.peaks)
 
         if active_peak is not None:
@@ -1811,6 +2251,7 @@ class MainWindow(QMainWindow):
             self._vibration_panel.clear_peak_context()
         self._set_functional_group_active_peak(active_peak)
         self._refresh_consensus_analysis()
+        self._update_status_chips()
 
     def _refresh_functional_group_assignment_preview(self) -> None:
         result = self._functional_group_panel.current_result()
@@ -1833,7 +2274,7 @@ class MainWindow(QMainWindow):
         """Import a SPA file as a reference spectrum into the database."""
         path, _ = QFileDialog.getOpenFileName(
             self,
-            "Import Reference Spectrum",
+            tr("Import Reference Spectrum"),
             "",
             "OMNIC SPA Files (*.spa *.SPA);;All Files (*)",
         )
@@ -1846,9 +2287,13 @@ class MainWindow(QMainWindow):
 
         try:
             imported = ReferenceImportService(self._db).import_reference_file(Path(path))
-            self.statusBar().showMessage(f"Reference imported: {imported.name}")
+            self.statusBar().showMessage(
+                tr("Reference imported: {name}").format(name=imported.name)
+            )
         except Exception as e:  # noqa: BLE001
-            QMessageBox.critical(self, "Import Error", f"Failed to import reference:\n{e}")
+            QMessageBox.critical(
+                self, tr("Import Error"), tr("Failed to import reference:") + f"\n{e}"
+            )
 
     def _rebuild_recent_menu(self) -> None:
         """Rebuild the Open Recent submenu from settings."""
@@ -1856,6 +2301,9 @@ class MainWindow(QMainWindow):
             return
         self._recent_menu.clear()
         recent: list[str] = self._settings.get("recent_files") or []
+        welcome = getattr(self, "_welcome", None)
+        if welcome is not None:
+            welcome.set_recent_files(list(recent) if isinstance(recent, list) else [])
         if not recent:
             no_action = self._recent_menu.addAction("(empty)")
             no_action.setEnabled(False)
@@ -1938,12 +2386,86 @@ class MainWindow(QMainWindow):
         if self._reference_search_thread is not None:
             QMessageBox.information(
                 self,
-                "Operation in Progress",
-                "Reference matching is still running. Please wait for it to finish before closing.",
+                tr("Operation in Progress"),
+                tr(
+                    "Reference matching is still running. Please wait for it to finish before closing."
+                ),
             )
             event.ignore()
             return
         if self._confirm_project_replacement():
+            self._save_window_layout()
             event.accept()
         else:
             event.ignore()
+
+    # ── Welcome page and drag & drop ─────────────────────────────────────────
+
+    def _setup_welcome(self) -> None:
+        """Start page laid over the plot until a spectrum is loaded."""
+        self._welcome = WelcomeOverlay(self._spectrum_widget)
+        self._welcome.open_spectrum_requested.connect(self._on_open_file)
+        self._welcome.open_project_requested.connect(self._on_open_project)
+        self._welcome.recent_requested.connect(self._open_recent_path)
+        self._spectrum_widget.installEventFilter(self)
+        self._rebuild_recent_menu()
+        self._update_welcome()
+
+    def _update_welcome(self) -> None:
+        """Show the start page only while the window has nothing loaded."""
+        welcome = getattr(self, "_welcome", None)
+        if welcome is None:
+            return
+        welcome.setGeometry(self._spectrum_widget.rect())
+        welcome.setVisible(self._project is None)
+        if self._project is None:
+            welcome.raise_()
+
+    def eventFilter(self, watched, event) -> bool:  # noqa: N802
+        """Keep the start page stretched over the plot area as it resizes."""
+        if watched is getattr(self, "_spectrum_widget", None) and event.type() in (
+            QEvent.Type.Resize,
+            QEvent.Type.Show,
+        ):
+            welcome = getattr(self, "_welcome", None)
+            if welcome is not None:
+                welcome.setGeometry(self._spectrum_widget.rect())
+        return bool(super().eventFilter(watched, event))
+
+    @classmethod
+    def _droppable_paths(cls, mime_data) -> list[str]:
+        """Local files in a drag that this window knows how to open."""
+        if mime_data is None or not mime_data.hasUrls():
+            return []
+        paths = [url.toLocalFile() for url in mime_data.urls() if url.isLocalFile()]
+        return [path for path in paths if path.lower().endswith(cls._OPENABLE_SUFFIXES)]
+
+    def dragEnterEvent(self, event) -> None:  # noqa: N802
+        if self._droppable_paths(event.mimeData()):
+            self._welcome.set_drag_active(True)
+            event.acceptProposedAction()
+        else:
+            event.ignore()
+
+    def dragMoveEvent(self, event) -> None:  # noqa: N802
+        if self._droppable_paths(event.mimeData()):
+            event.acceptProposedAction()
+        else:
+            event.ignore()
+
+    def dragLeaveEvent(self, event) -> None:  # noqa: N802
+        self._welcome.set_drag_active(False)
+        super().dragLeaveEvent(event)
+
+    def dropEvent(self, event) -> None:  # noqa: N802
+        """Open a dropped spectrum or project; further files go to the controller."""
+        self._welcome.set_drag_active(False)
+        paths = self._droppable_paths(event.mimeData())
+        if not paths:
+            event.ignore()
+            return
+        event.acceptProposedAction()
+        self._remember_open_dir(paths[0])
+        self._open_recent_path(paths[0])
+        for extra in paths[1:]:
+            self.open_path_requested.emit(extra)

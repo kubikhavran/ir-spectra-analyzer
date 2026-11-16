@@ -44,7 +44,11 @@ def classify_peak_intensities(peaks: Sequence[Peak], *, is_dip_spectrum: bool) -
         return {}
 
     if is_dip_spectrum:
-        depths = {id(peak): max(0.0, 100.0 - peak.intensity) for peak in peaks}
+        # Raw %T dips hang from the 100 % line; after baseline correction the
+        # same dips hang from zero. Measuring a corrected band from 100 made
+        # every depth ~100 and labelled the whole table "vs".
+        baseline = 0.0 if max(peak.intensity for peak in peaks) <= 0.5 else 100.0
+        depths = {id(peak): max(0.0, baseline - peak.intensity) for peak in peaks}
     else:
         depths = {id(peak): max(0.0, peak.intensity) for peak in peaks}
 

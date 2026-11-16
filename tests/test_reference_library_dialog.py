@@ -302,24 +302,24 @@ def test_sync_project_library_imports_references_and_updates_status(qtbot, db):
 
         def import_project_library(self):
             db.add_reference_spectrum(
-                name="FER58-SE",
+                name="ref01",
                 wavenumbers=wn,
                 intensities=inten,
-                source=str(folder / "FER58-SE.SPA"),
+                source=str(folder / "ref01.SPA"),
                 y_unit="Transmittance",
             )
             return BatchImportSummary(
                 folder=folder,
                 results=(
                     BatchImportResult(
-                        path=folder / "FER58-SE.SPA",
+                        path=folder / "ref01.SPA",
                         status=BatchImportStatus.IMPORTED,
-                        reference_name="FER58-SE",
+                        reference_name="ref01",
                     ),
                     BatchImportResult(
-                        path=folder / "FER59-SE.SPA",
+                        path=folder / "ref02.SPA",
                         status=BatchImportStatus.SKIPPED,
-                        reference_name="FER59-SE",
+                        reference_name="ref02",
                         reason="source path already imported",
                     ),
                 ),
@@ -331,7 +331,7 @@ def test_sync_project_library_imports_references_and_updates_status(qtbot, db):
     qtbot.mouseClick(dlg._sync_project_library_btn, Qt.MouseButton.LeftButton)
 
     assert dlg._table.rowCount() == 1
-    assert dlg._table.item(0, 0).text() == "FER58-SE"
+    assert dlg._table.item(0, 0).text() == "ref01"
     assert "Last sync: Imported 1 | Skipped 1 | Failed 0" in dlg._library_label.text()
 
 
@@ -356,7 +356,7 @@ def test_import_file_button_imports_selected_files_and_refreshes_table(qtbot, db
     monkeypatch.setattr(
         "ui.dialogs.reference_library_dialog.QFileDialog.getOpenFileNames",
         lambda *args, **kwargs: (
-            ["/tmp/reference-library/FER58-SE.SPA", "/tmp/reference-library/FER59-SE.SPA"],
+            ["/tmp/reference-library/ref01.SPA", "/tmp/reference-library/ref02.SPA"],
             "OMNIC SPA Files (*.spa *.SPA)",
         ),
     )
@@ -377,12 +377,12 @@ def test_import_file_button_imports_selected_files_and_refreshes_table(qtbot, db
     qtbot.mouseClick(dlg._import_file_btn, Qt.MouseButton.LeftButton)
 
     assert imported_paths == [
-        Path("/tmp/reference-library/FER58-SE.SPA"),
-        Path("/tmp/reference-library/FER59-SE.SPA"),
+        Path("/tmp/reference-library/ref01.SPA"),
+        Path("/tmp/reference-library/ref02.SPA"),
     ]
     assert dlg._table.rowCount() == 2
-    assert dlg._table.item(0, 0).text() == "FER58-SE"
-    assert dlg._table.item(1, 0).text() == "FER59-SE"
+    assert dlg._table.item(0, 0).text() == "ref01"
+    assert dlg._table.item(1, 0).text() == "ref02"
     assert summary_messages == [("Reference Import Summary", "Imported: 2\nFailed: 0")]
 
 
@@ -400,19 +400,19 @@ def test_choose_folder_sets_active_library_and_syncs(qtbot, db, monkeypatch):
 
         def import_project_library(self):
             db.add_reference_spectrum(
-                name="FER58-SE",
+                name="ref01",
                 wavenumbers=wn,
                 intensities=inten,
-                source=str(chosen_folder / "FER58-SE.SPA"),
+                source=str(chosen_folder / "ref01.SPA"),
                 y_unit="Transmittance",
             )
             return BatchImportSummary(
                 folder=chosen_folder,
                 results=(
                     BatchImportResult(
-                        path=chosen_folder / "FER58-SE.SPA",
+                        path=chosen_folder / "ref01.SPA",
                         status=BatchImportStatus.IMPORTED,
-                        reference_name="FER58-SE",
+                        reference_name="ref01",
                     ),
                 ),
             )
@@ -432,7 +432,7 @@ def test_choose_folder_sets_active_library_and_syncs(qtbot, db, monkeypatch):
 
     assert selected_folders == [chosen_folder]
     assert dlg._table.rowCount() == 1
-    assert dlg._table.item(0, 0).text() == "FER58-SE"
+    assert dlg._table.item(0, 0).text() == "ref01"
     assert dlg._library_label.text().startswith("Reference library folder: /tmp/reference-library")
 
 
@@ -449,7 +449,7 @@ def test_import_file_skips_paths_outside_active_folder(qtbot, db, monkeypatch):
     monkeypatch.setattr(
         "ui.dialogs.reference_library_dialog.QFileDialog.getOpenFileNames",
         lambda *args, **kwargs: (
-            ["/elsewhere/FER58-SE.SPA"],
+            ["/elsewhere/ref01.SPA"],
             "OMNIC SPA Files (*.spa *.SPA)",
         ),
     )
@@ -471,7 +471,7 @@ def test_import_file_skips_paths_outside_active_folder(qtbot, db, monkeypatch):
 
     assert imported_paths == []
     assert summary_messages == [
-        "Imported: 0\nFailed: 1\n\nFER58-SE.SPA: file is outside the active reference folder"
+        "Imported: 0\nFailed: 1\n\nref01.SPA: file is outside the active reference folder"
     ]
 
 

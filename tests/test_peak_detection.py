@@ -81,42 +81,76 @@ def test_detect_peaks_invert_intensity_is_original() -> None:
     assert peaks[0].intensity == pytest.approx(60.0, abs=2.0)
 
 
-def test_default_prominence_distinguishes_corrected_absorbance_from_corrected_transmittance() -> (
-    None
-):
-    """A small corrected absorbance band must not inherit the percent-scale cutoff."""
+def test_default_prominence_scales_with_the_spectrum() -> None:
+    """The threshold is a fraction of the span, so weak and strong spectra are treated alike."""
     from core.spectrum import SpectralUnit, Spectrum
-    from processing.peak_detection import default_prominence, detect_peaks
+    from processing.peak_detection import default_prominence, detect_peaks, prominence_fraction
 
     wavenumbers = np.linspace(400.0, 4000.0, 3601)
-    absorbance = 0.30 * np.exp(-((wavenumbers - 1700.0) ** 2) / (2 * 20.0**2))
-    corrected_absorbance = Spectrum(
-        wavenumbers=wavenumbers,
-        intensities=absorbance,
-        y_unit=SpectralUnit.BASELINE_CORRECTED,
-    )
+    band = np.exp(-((wavenumbers - 1700.0) ** 2) / (2 * 20.0**2))
+    fraction = prominence_fraction()
 
-    absorbance_prominence = default_prominence(corrected_absorbance)
-    assert absorbance_prominence == pytest.approx(0.05)
-    assert (
-        len(
-            detect_peaks(
-                wavenumbers,
-                absorbance,
-                prominence=absorbance_prominence,
-                invert=corrected_absorbance.is_dip_spectrum,
-            )
+    for scale, unit, intensities in (
+        (0.30, SpectralUnit.BASELINE_CORRECTED, 0.30 * band),
+        (0.05, SpectralUnit.ABSORBANCE, 0.05 * band),
+        (30.0, SpectralUnit.TRANSMITTANCE, 100.0 - 30.0 * band),
+        (3.0, SpectralUnit.TRANSMITTANCE, 100.0 - 3.0 * band),
+    ):
+        spectrum = Spectrum(wavenumbers=wavenumbers, intensities=intensities, y_unit=unit)
+        prominence = default_prominence(spectrum)
+        assert prominence == pytest.approx(scale * fraction)
+        found = detect_peaks(
+            wavenumbers, intensities, prominence=prominence, invert=spectrum.is_dip_spectrum
         )
-        == 1
+        assert len(found) == 1
+
+
+def test_sensitivity_levels_run_from_dominant_bands_to_faint_ones() -> None:
+    from core.spectrum import SpectralUnit, Spectrum
+    from processing.peak_detection import (
+        SENSITIVITY_MAX,
+        SENSITIVITY_MIN,
+        clamp_sensitivity,
+        default_prominence,
+        detect_peaks,
+        prominence_fraction,
     )
 
-    corrected_transmittance = Spectrum(
-        wavenumbers=wavenumbers,
-        intensities=-30.0 * np.exp(-((wavenumbers - 1700.0) ** 2) / (2 * 20.0**2)),
-        y_unit=SpectralUnit.BASELINE_CORRECTED,
+    fractions = [
+        prominence_fraction(level) for level in range(SENSITIVITY_MIN, SENSITIVITY_MAX + 1)
+    ]
+    assert fractions == sorted(fractions, reverse=True)
+    assert fractions[0] == pytest.approx(0.10)
+    assert fractions[-1] == pytest.approx(0.002)
+    assert clamp_sensitivity(None) == clamp_sensitivity("x") == 5
+    assert clamp_sensitivity(99) == SENSITIVITY_MAX
+    assert clamp_sensitivity(-3) == SENSITIVITY_MIN
+
+    wavenumbers = np.linspace(400.0, 4000.0, 3601)
+    intensities = np.zeros_like(wavenumbers)
+    for centre, height in ((3000.0, 1.0), (1700.0, 0.3), (1200.0, 0.05), (800.0, 0.006)):
+        intensities += height * np.exp(-((wavenumbers - centre) ** 2) / (2 * 15.0**2))
+    spectrum = Spectrum(
+        wavenumbers=wavenumbers, intensities=intensities, y_unit=SpectralUnit.ABSORBANCE
     )
-    assert corrected_transmittance.is_dip_spectrum
-    assert default_prominence(corrected_transmittance) == pytest.approx(1.0)
+
+    def _count(level: int) -> int:
+        return len(
+            detect_peaks(wavenumbers, intensities, prominence=default_prominence(spectrum, level))
+        )
+
+    assert _count(1) == 2
+    assert _count(5) == 3
+    assert _count(10) == 4
+
+
+def test_a_spectrum_without_usable_points_still_gets_a_threshold() -> None:
+    from core.spectrum import Spectrum
+    from processing.peak_detection import default_prominence
+
+    wavenumbers = np.linspace(400.0, 4000.0, 10)
+    assert default_prominence(Spectrum(wavenumbers, np.full(10, np.nan))) > 0.0
+    assert default_prominence(Spectrum(wavenumbers, np.full(10, 2.0))) > 0.0
 
 
 import pytest  # noqa: E402
