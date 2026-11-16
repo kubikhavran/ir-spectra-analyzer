@@ -9,6 +9,7 @@ from PySide6.QtGui import QColor
 from PySide6.QtWidgets import QLabel, QListWidget, QListWidgetItem, QVBoxLayout, QWidget
 
 from matching.quality import match_quality_label
+from ui import theme
 from ui.i18n import tr
 from ui.score_row_delegate import NAME_ROLE, SCORE_ROLE, ScoreRowDelegate
 
@@ -25,11 +26,11 @@ class ConsensusPanel(QWidget):
 
     def _setup_ui(self) -> None:
         layout = QVBoxLayout(self)
-        layout.setContentsMargins(4, 4, 4, 4)
-        layout.setSpacing(4)
+        layout.setContentsMargins(6, 6, 6, 6)
+        layout.setSpacing(5)
 
         self._status_label = QLabel("No consensus analysis")
-        self._status_label.setStyleSheet("color: gray; font-size: 9pt;")
+        self._status_label.setStyleSheet(theme.CAPTION_STYLE)
         self._status_label.setToolTip(
             "Consensus combines functional-group evidence, library matches, and assigned peaks. "
             "It is an interpretation aid, not a definitive identification."
@@ -41,30 +42,25 @@ class ConsensusPanel(QWidget):
         )
         self._headline_label.setTextFormat(Qt.TextFormat.PlainText)
         self._headline_label.setWordWrap(True)
-        self._headline_label.setStyleSheet(
-            "font-size: 10pt; font-weight: 600; color: #2C3E50; "
-            "background: #F8F9FA; border: 1px solid #E5E7E9; padding: 6px; border-radius: 4px;"
-        )
+        self._headline_label.setStyleSheet(theme.HEADLINE_CARD_STYLE)
         layout.addWidget(self._headline_label)
 
         self._overview_label = QLabel()
         self._overview_label.setTextFormat(Qt.TextFormat.RichText)
         self._overview_label.setWordWrap(True)
-        self._overview_label.setStyleSheet(
-            "font-size: 9pt; color: #444; background: #FAFAFA; border: 1px solid #E0E0E0; "
-            "padding: 6px; border-radius: 4px;"
-        )
+        self._overview_label.setStyleSheet(theme.INFO_CARD_STYLE)
         self._overview_label.setText(
             "Confirmed, uncertain, and conflicting evidence will appear here."
         )
         layout.addWidget(self._overview_label)
 
         self._hypothesis_caption = QLabel("Top hypotheses")
-        self._hypothesis_caption.setStyleSheet("font-size: 9pt; color: #555;")
+        self._hypothesis_caption.setStyleSheet(theme.SECTION_TITLE_STYLE)
         layout.addWidget(self._hypothesis_caption)
 
         self._hypothesis_list = QListWidget()
         self._hypothesis_list.setItemDelegate(ScoreRowDelegate(self._hypothesis_list))
+        self._hypothesis_list.setAlternatingRowColors(True)
         self._hypothesis_list.setHorizontalScrollBarPolicy(Qt.ScrollBarPolicy.ScrollBarAlwaysOff)
         self._hypothesis_list.currentRowChanged.connect(self._on_hypothesis_row_changed)
         layout.addWidget(self._hypothesis_list, stretch=3)
@@ -72,19 +68,17 @@ class ConsensusPanel(QWidget):
         self._detail_label = QLabel()
         self._detail_label.setTextFormat(Qt.TextFormat.RichText)
         self._detail_label.setWordWrap(True)
-        self._detail_label.setStyleSheet(
-            "font-size: 9pt; color: #444; background: #FAFAFA; border: 1px solid #E0E0E0; "
-            "padding: 6px; border-radius: 4px;"
-        )
+        self._detail_label.setStyleSheet(theme.INFO_CARD_STYLE)
         self._detail_label.setText("Select a hypothesis to inspect its evidence.")
         layout.addWidget(self._detail_label)
 
         self._match_caption = QLabel("Top spectral matches")
-        self._match_caption.setStyleSheet("font-size: 9pt; color: #555;")
+        self._match_caption.setStyleSheet(theme.SECTION_TITLE_STYLE)
         layout.addWidget(self._match_caption)
 
         self._match_list = QListWidget()
         self._match_list.setItemDelegate(ScoreRowDelegate(self._match_list))
+        self._match_list.setAlternatingRowColors(True)
         self._match_list.setHorizontalScrollBarPolicy(Qt.ScrollBarPolicy.ScrollBarAlwaysOff)
         self._match_list.currentRowChanged.connect(self._on_match_row_changed)
         layout.addWidget(self._match_list, stretch=2)

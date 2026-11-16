@@ -588,6 +588,38 @@ class MainWindow(QMainWindow):
         self._undo_stack.indexChanged.connect(self._on_undo_redo)
         self._undo_stack.cleanChanged.connect(lambda _clean: self._update_window_title())
 
+    def _update_dock_badges(self) -> None:
+        """Show live peak/assignment counts, match counts, and structure indicator on dock tabs."""
+        from core.peak_assignments import peak_has_assignment  # noqa: PLC0415
+
+        project = self._project
+        peaks = project.peaks if project is not None else []
+        total_peaks = len(peaks)
+        if total_peaks > 0:
+            assigned_peaks = sum(1 for p in peaks if peak_has_assignment(p))
+            badge = (
+                f"{total_peaks} \u00b7 {assigned_peaks}\u2713"
+                if assigned_peaks > 0
+                else f"{total_peaks}"
+            )
+            self._dock_peaks.setWindowTitle(f"{tr('Peaks')} ({badge})")
+        else:
+            self._dock_peaks.setWindowTitle(tr("Peaks"))
+
+        match_count = len(self._current_match_results)
+        if match_count > 0:
+            self._dock_match.setWindowTitle(f"{tr('Match Results')} ({match_count})")
+        else:
+            self._dock_match.setWindowTitle(tr("Match Results"))
+
+        has_struct = bool(
+            project is not None
+            and (project.smiles or getattr(project, "mol_block", "") or project.structure_image)
+        )
+        self._dock_structure.setWindowTitle(
+            f"{tr('Structure')} \u2022" if has_struct else tr("Structure")
+        )
+
     def _update_status_chips(self) -> None:
         """Refresh the standing facts: peaks, unit, baseline state, hidden labels."""
         project = self._project
@@ -612,6 +644,7 @@ class MainWindow(QMainWindow):
         if spectrum is not None:
             shown_unit = self._spectrum_widget.display_unit() or spectrum.display_y_unit
             self._status_unit.setText(tr(shown_unit.value))
+        self._update_dock_badges()
 
     def _on_undo_redo(self) -> None:
         """Refresh UI state after undo/redo operations."""
@@ -1798,6 +1831,7 @@ class MainWindow(QMainWindow):
 
         mol_block = getattr(self._molecule_widget, "_current_mol_block", "") or ""
         self._undo_stack.push(SetProjectSMILESCommand(self._project, smiles, mol_block))
+        self._update_dock_badges()
         self.statusBar().showMessage(tr("Proposed structure updated"))
 
     def _on_mol_block_changed(self, mol_block: str) -> None:
@@ -2318,6 +2352,7 @@ class MainWindow(QMainWindow):
             self._current_match_results,
         )
         self._consensus_panel.set_analysis(analysis)
+        self._update_dock_badges()
 
     def _refresh_functional_group_analysis(self, *, preferred_group_id: str | None = None) -> None:
         """Recompute functional-group scores from the current project spectrum."""

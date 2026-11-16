@@ -21,7 +21,7 @@ from processing.peak_detection import (
     SENSITIVITY_MIN,
     clamp_sensitivity,
 )
-from ui import icons
+from ui import icons, theme
 from ui.i18n import tr
 
 
@@ -57,8 +57,16 @@ class MainToolbar(QToolBar):
         self._match_action: QAction | None = None
         self._setup_actions()
 
-    def _action(self, text: str, icon_name: str, tip: str, *, checkable: bool = False) -> QAction:
-        action = QAction(icons.icon(icon_name), tr(text), self)
+    def _action(
+        self,
+        text: str,
+        icon_name: str,
+        tip: str,
+        *,
+        checkable: bool = False,
+        icon_color: str = theme.TEXT,
+    ) -> QAction:
+        action = QAction(icons.icon(icon_name, color=icon_color), tr(text), self)
         action.setCheckable(checkable)
         action.setToolTip(tr(tip))
         self.addAction(action)
@@ -136,6 +144,7 @@ class MainToolbar(QToolBar):
             "detect",
             "Find peaks automatically at the sensitivity set beside this button.\n"
             "Peaks that already carry an assignment are kept.",
+            icon_color=theme.ACCENT,
         )
         self._setup_sensitivity_control()
         self._arrange_labels_action = self._action(
@@ -143,7 +152,10 @@ class MainToolbar(QToolBar):
         )
         self._arrange_labels_action.triggered.connect(self.arrange_labels)
         self._clear_peaks_action = self._action(
-            "Clear Peaks", "clear", "Remove every peak (Ctrl+Z brings them back)"
+            "Clear Peaks",
+            "clear",
+            "Remove every peak (Ctrl+Z brings them back)",
+            icon_color=theme.DANGER,
         )
         self._clear_peaks_action.triggered.connect(self.clear_peaks)
         self.addSeparator()
@@ -160,6 +172,7 @@ class MainToolbar(QToolBar):
             "Match Spectrum",
             "match",
             "Compare the spectrum with the reference library (Ctrl+M)",
+            icon_color=theme.ACCENT,
         )
         self._match_action.setShortcut("Ctrl+M")
         self._match_action.triggered.connect(self.match_spectrum)
@@ -167,7 +180,10 @@ class MainToolbar(QToolBar):
 
         # ── Output ───────────────────────────────────────────────────────────
         self._export_action = self._action(
-            "Export", "export", "Export a PDF report, CSV or Excel file (Ctrl+E)"
+            "Export",
+            "export",
+            "Export a PDF report, CSV or Excel file (Ctrl+E)",
+            icon_color=theme.ACCENT,
         )
         self._export_action.setShortcut("Ctrl+E")
 
@@ -191,12 +207,13 @@ class MainToolbar(QToolBar):
     def _setup_sensitivity_control(self) -> None:
         """Slider next to Detect Peaks that sets how faint a band still counts."""
         holder = QWidget(self)
+        holder.setObjectName("toolbarSensitivityCapsule")
         # Fixed width: a toolbar stretches an expanding widget, which pushed the
         # slider to the far end, away from its label and from Detect Peaks.
         holder.setSizePolicy(QSizePolicy.Policy.Fixed, QSizePolicy.Policy.Preferred)
         row = QHBoxLayout(holder)
-        row.setContentsMargins(4, 0, 8, 0)
-        row.setSpacing(4)
+        row.setContentsMargins(8, 2, 8, 2)
+        row.setSpacing(6)
 
         tip = tr(
             "Detection sensitivity: 1 marks only the dominant bands, "
@@ -221,7 +238,12 @@ class MainToolbar(QToolBar):
         row.addWidget(self._sensitivity_slider)
 
         self._sensitivity_value = QLabel(str(DEFAULT_SENSITIVITY))
-        self._sensitivity_value.setFixedWidth(16)
+        self._sensitivity_value.setFixedWidth(20)
+        self._sensitivity_value.setAlignment(Qt.AlignmentFlag.AlignCenter)
+        self._sensitivity_value.setStyleSheet(
+            f"color: {theme.ACCENT_DARK}; background: {theme.ACCENT_SOFT}; "
+            "border-radius: 4px; font-weight: 600; padding: 1px 2px;"
+        )
         self._sensitivity_value.setToolTip(tip)
         row.addWidget(self._sensitivity_value)
 

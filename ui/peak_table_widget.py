@@ -9,13 +9,16 @@ Zodpovědnost:
 
 from __future__ import annotations
 
-from PySide6.QtCore import Qt, Signal
-from PySide6.QtGui import QKeySequence
+from PySide6.QtCore import QRectF, Qt, Signal
+from PySide6.QtGui import QColor, QFont, QKeySequence, QPainter, QPen
 from PySide6.QtWidgets import (
     QApplication,
     QHBoxLayout,
     QLabel,
     QPushButton,
+    QStyle,
+    QStyledItemDelegate,
+    QStyleOptionViewItem,
     QTableWidget,
     QTableWidgetItem,
     QVBoxLayout,
@@ -43,6 +46,13 @@ _NUMERIC_ALIGNMENT = Qt.AlignmentFlag.AlignRight | Qt.AlignmentFlag.AlignVCenter
 # How far a non-identical Peak may sit from a table row to still select it (cm⁻¹).
 _SELECT_MATCH_TOLERANCE = 1.0
 
+_STRENGTH_PILL_COLORS: dict[str, tuple[str, str]] = {
+    "vs": (theme.STRENGTH_VS_BG, theme.STRENGTH_VS_FG),
+    "s": (theme.STRENGTH_S_BG, theme.STRENGTH_S_FG),
+    "m": (theme.STRENGTH_M_BG, theme.STRENGTH_M_FG),
+    "w": (theme.STRENGTH_W_BG, theme.STRENGTH_W_FG),
+}
+
 
 def format_intensity(value: float, scale: float | None = None) -> str:
     """Intensity as table text, with decimals that fit the scale it is on.
@@ -56,6 +66,75 @@ def format_intensity(value: float, scale: float | None = None) -> str:
     if reference >= 10.0:
         return f"{value:.1f}"
     return f"{value:.3f}"
+
+
+class _PeakTableDelegate(QStyledItemDelegate):
+    """Paints pill badges in the Rel. column and an italic hint on unassigned rows."""
+
+    def paint(self, painter: QPainter, option: QStyleOptionViewItem, index) -> None:
+        col = index.column()
+        text = str(index.data(Qt.ItemDataRole.DisplayRole) or "")
+
+        if col == 2 and text in _STRENGTH_PILL_COLORS:
+            opt = QStyleOptionViewItem(option)
+            self.initStyleOption(opt, index)
+            opt.text = ""
+            style = opt.widget.style() if opt.widget else QApplication.style()
+            style.drawControl(QStyle.ControlElement.CE_ItemViewItem, opt, painter, opt.widget)
+
+            bg_hex, fg_hex = _STRENGTH_PILL_COLORS[text]
+            rect = option.rect
+            pill_w = min(34, max(22, rect.width() - 8))
+            pill_h = min(18, max(14, rect.height() - 6))
+            pill_rect = QRectF(
+                rect.left() + (rect.width() - pill_w) / 2.0,
+                rect.top() + (rect.height() - pill_h) / 2.0,
+                pill_w,
+                pill_h,
+            )
+
+            painter.save()
+            painter.setRenderHint(QPainter.RenderHint.Antialiasing, True)
+            painter.setBrush(QColor(bg_hex))
+            if option.state & QStyle.StateFlag.State_Selected:
+                painter.setPen(QPen(QColor("#FFFFFF"), 1.0))
+            else:
+                painter.setPen(Qt.PenStyle.NoPen)
+            painter.drawRoundedRect(pill_rect, pill_h / 2.0, pill_h / 2.0)
+
+            font = QFont(option.font)
+            font.setBold(True)
+            if font.pointSizeF() > 0:
+                font.setPointSizeF(max(7.5, font.pointSizeF() * 0.9))
+            painter.setFont(font)
+            painter.setPen(QColor(fg_hex))
+            painter.drawText(pill_rect, Qt.AlignmentFlag.AlignCenter, text)
+            painter.restore()
+            return
+
+        if col == 3 and not text:
+            opt = QStyleOptionViewItem(option)
+            self.initStyleOption(opt, index)
+            opt.text = ""
+            style = opt.widget.style() if opt.widget else QApplication.style()
+            style.drawControl(QStyle.ControlElement.CE_ItemViewItem, opt, painter, opt.widget)
+
+            painter.save()
+            font = QFont(option.font)
+            font.setItalic(True)
+            painter.setFont(font)
+            is_selected = bool(option.state & QStyle.StateFlag.State_Selected)
+            painter.setPen(QColor("#DCEAF6" if is_selected else theme.TEXT_FAINT))
+            text_rect = option.rect.adjusted(8, 0, -6, 0)
+            painter.drawText(
+                text_rect,
+                Qt.AlignmentFlag.AlignLeft | Qt.AlignmentFlag.AlignVCenter,
+                tr("Double-click to assign\u2026"),
+            )
+            painter.restore()
+            return
+
+        super().paint(painter, option, index)
 
 
 class _CopyableTable(QTableWidget):
@@ -104,7 +183,11 @@ class PeakTableWidget(QWidget):
         toolbar.setContentsMargins(6, 4, 6, 2)
         # How far the assignment work has got, always in view above the rows.
         self._summary_label = QLabel(tr("No peaks"))
-        self._summary_label.setStyleSheet(theme.CAPTION_STYLE)
+        self._summary_label.setStyleSheet(
+            f"color: {theme.TEXT_MUTED}; background: {theme.SURFACE_ALT}; "
+            f"border: 1px solid {theme.BORDER}; border-radius: 8px; "
+            "padding: 2px 8px; font-size: 9pt; font-weight: 600;"
+        )
         toolbar.addWidget(self._summary_label)
         self._copy_all_btn = QPushButton(tr("Copy all"))
         self._copy_all_btn.setToolTip(tr("Copy entire peak table to clipboard (TSV)"))
@@ -124,6 +207,8 @@ class PeakTableWidget(QWidget):
         layout.addLayout(toolbar)
 
         self._table = _CopyableTable(0, 4)
+        self._delegate = _PeakTableDelegate(self._table)
+        self._table.setItemDelegate(self._delegate)
         self._table.setHorizontalHeaderLabels([tr(header) for header in _HEADERS])
         alignments = {0: _NUMERIC_ALIGNMENT, 1: _NUMERIC_ALIGNMENT, 2: Qt.AlignmentFlag.AlignCenter}
         for column in range(self._table.columnCount()):
@@ -142,7 +227,7 @@ class PeakTableWidget(QWidget):
         self._table.setColumnWidth(2, 60)
         self._table.setAlternatingRowColors(True)
         self._table.setShowGrid(False)
-        self._table.verticalHeader().setDefaultSectionSize(24)
+        self._table.verticalHeader().setDefaultSectionSize(26)
         self._table.setSelectionBehavior(self._table.SelectionBehavior.SelectRows)
         # Position/intensity/label edits were previously accepted visually but
         # never propagated to the Project model.  Keep the table honest and use

@@ -5,22 +5,150 @@ from __future__ import annotations
 from html import escape
 from typing import TYPE_CHECKING
 
-from PySide6.QtCore import QSignalBlocker, Qt, Signal
-from PySide6.QtGui import QColor
+from PySide6.QtCore import QRectF, QSignalBlocker, QSize, Qt, Signal
+from PySide6.QtGui import QColor, QFont, QFontMetrics, QPainter, QPen
 from PySide6.QtWidgets import (
+    QApplication,
     QCheckBox,
     QLabel,
     QListWidget,
     QListWidgetItem,
+    QStyle,
+    QStyledItemDelegate,
+    QStyleOptionViewItem,
     QVBoxLayout,
     QWidget,
 )
 
+from ui import theme
 from ui.i18n import tr
 from ui.score_row_delegate import NAME_ROLE, SCORE_ROLE, ScoreRowDelegate
 
 if TYPE_CHECKING:
     from core.peak import Peak
+
+_BAND_ROLE = 256
+_BAND_STATUS_ROLE = 257
+_BAND_ACTIONABLE_ROLE = 258
+_BAND_PREVIEW_ROLE = 259
+
+
+class _DiagnosticBandDelegate(QStyledItemDelegate):
+    """Renders each diagnostic band as a structured two-line card row with a status pill."""
+
+    _ROW_HEIGHT = 44
+
+    def sizeHint(self, option: QStyleOptionViewItem, index) -> QSize:  # noqa: N802
+        width = option.rect.width() if option.rect.width() > 0 else 220
+        return QSize(width, self._ROW_HEIGHT)
+
+    def paint(self, painter: QPainter, option: QStyleOptionViewItem, index) -> None:
+        band = index.data(_BAND_ROLE)
+        if band is None:
+            super().paint(painter, option, index)
+            return
+
+        opt = QStyleOptionViewItem(option)
+        self.initStyleOption(opt, index)
+        opt.text = ""
+        style = opt.widget.style() if opt.widget else QApplication.style()
+        style.drawControl(QStyle.ControlElement.CE_ItemViewItem, opt, painter, opt.widget)
+
+        is_selected = bool(option.state & QStyle.StateFlag.State_Selected)
+        actionable = bool(index.data(_BAND_ACTIONABLE_ROLE))
+        status_text = str(index.data(_BAND_STATUS_ROLE) or "")
+        preview_name = str(index.data(_BAND_PREVIEW_ROLE) or "")
+
+        if actionable:
+            pill_bg, pill_fg = "#DDF2EC", theme.SUCCESS
+        elif getattr(band, "is_missing_required", False):
+            pill_bg, pill_fg = theme.DANGER_SOFT, theme.DANGER
+        elif getattr(band, "is_confirmed", False):
+            pill_bg, pill_fg = theme.ACCENT_SOFT, theme.ACCENT_DARK
+        else:
+            pill_bg, pill_fg = "#FBF0D9", theme.WARNING
+
+        painter.save()
+        painter.setRenderHint(QPainter.RenderHint.Antialiasing, True)
+        rect = option.rect.adjusted(6, 4, -8, -4)
+        top_h = rect.height() // 2
+        top_rect = rect.adjusted(0, 0, 0, -(rect.height() - top_h))
+        bottom_rect = rect.adjusted(0, top_h + 1, 0, 0)
+
+        # 1. Status pill on top-left
+        pill_font = QFont(option.font)
+        pill_font.setBold(True)
+        if pill_font.pointSizeF() > 0:
+            pill_font.setPointSizeF(max(7.5, pill_font.pointSizeF() * 0.85))
+        painter.setFont(pill_font)
+        pill_metrics = QFontMetrics(pill_font)
+        pill_w = pill_metrics.horizontalAdvance(status_text) + 12
+        pill_h = min(17, top_rect.height())
+        pill_rect = QRectF(
+            top_rect.left(),
+            top_rect.top() + (top_rect.height() - pill_h) / 2.0,
+            pill_w,
+            pill_h,
+        )
+        painter.setBrush(QColor(pill_bg))
+        painter.setPen(QPen(QColor("#FFFFFF"), 1.0) if is_selected else Qt.PenStyle.NoPen)
+        painter.drawRoundedRect(pill_rect, pill_h / 2.0, pill_h / 2.0)
+        painter.setPen(QColor(pill_fg))
+        painter.drawText(pill_rect, Qt.AlignmentFlag.AlignCenter, status_text)
+
+        # 2. Confidence % on top-right
+        conf_text = f"{band.confidence:.0f}%"
+        title_font = QFont(option.font)
+        title_font.setBold(True)
+        painter.setFont(title_font)
+        title_metrics = QFontMetrics(title_font)
+        conf_w = title_metrics.horizontalAdvance(conf_text) + 6
+        conf_rect = top_rect.adjusted(top_rect.width() - conf_w, 0, 0, 0)
+        painter.setPen(QColor("#FFFFFF" if is_selected else theme.ACCENT_DARK))
+        painter.drawText(
+            conf_rect,
+            Qt.AlignmentFlag.AlignRight | Qt.AlignmentFlag.AlignVCenter,
+            conf_text,
+        )
+
+        # 3. Band label between pill and confidence
+        label_rect = top_rect.adjusted(int(pill_w) + 6, 0, -(conf_w + 4), 0)
+        painter.setPen(QColor("#FFFFFF" if is_selected else theme.TEXT))
+        elided_label = title_metrics.elidedText(
+            str(band.label), Qt.TextElideMode.ElideRight, max(20, label_rect.width())
+        )
+        painter.drawText(
+            label_rect,
+            Qt.AlignmentFlag.AlignLeft | Qt.AlignmentFlag.AlignVCenter,
+            elided_label,
+        )
+
+        # 4. Secondary subtitle line: range + observed intensity + assignment preview
+        sub_font = QFont(option.font)
+        if sub_font.pointSizeF() > 0:
+            sub_font.setPointSizeF(max(7.5, sub_font.pointSizeF() * 0.9))
+        painter.setFont(sub_font)
+        sub_metrics = QFontMetrics(sub_font)
+        sub_text = (
+            f"{band.range_min:.0f}\u2013{band.range_max:.0f} cm\u207b\u00b9 \u00b7 "
+            f"{band.observed_intensity_class}"
+        )
+        if preview_name:
+            sub_text += f"  \u2192  {preview_name}"
+        painter.setPen(
+            QColor(
+                "#DCEAF6" if is_selected else (theme.SUCCESS if actionable else theme.TEXT_MUTED)
+            )
+        )
+        elided_sub = sub_metrics.elidedText(
+            sub_text, Qt.TextElideMode.ElideRight, max(20, bottom_rect.width())
+        )
+        painter.drawText(
+            bottom_rect,
+            Qt.AlignmentFlag.AlignLeft | Qt.AlignmentFlag.AlignVCenter,
+            elided_sub,
+        )
+        painter.restore()
 
 
 class FunctionalGroupPanel(QWidget):
@@ -39,11 +167,11 @@ class FunctionalGroupPanel(QWidget):
 
     def _setup_ui(self) -> None:
         layout = QVBoxLayout(self)
-        layout.setContentsMargins(4, 4, 4, 4)
-        layout.setSpacing(4)
+        layout.setContentsMargins(6, 6, 6, 6)
+        layout.setSpacing(5)
 
         self._status_label = QLabel("No functional-group analysis")
-        self._status_label.setStyleSheet("color: gray; font-size: 9pt;")
+        self._status_label.setStyleSheet(theme.CAPTION_STYLE)
         self._status_label.setToolTip(
             "Confidence score is a heuristic ranking from diagnostic IR bands. "
             "It is not a statistically calibrated probability."
@@ -69,28 +197,26 @@ class FunctionalGroupPanel(QWidget):
         self._group_info_label.setTextInteractionFlags(
             Qt.TextInteractionFlag.TextBrowserInteraction
         )
-        self._group_info_label.setStyleSheet(
-            "font-size: 9pt; color: #444; background: #FAFAFA; border: 1px solid #E0E0E0; "
-            "padding: 6px; border-radius: 4px;"
-        )
+        self._group_info_label.setStyleSheet(theme.INFO_CARD_STYLE)
         self._group_info_label.setText("Select a functional group to inspect its evidence.")
         layout.addWidget(self._group_info_label)
 
         self._peak_info_label = QLabel()
         self._peak_info_label.setTextFormat(Qt.TextFormat.RichText)
         self._peak_info_label.setWordWrap(True)
-        self._peak_info_label.setStyleSheet(
-            "font-size: 9pt; color: #375A7F; background: #F4F8FB; border: 1px solid #D6E4F0; "
-            "padding: 6px; border-radius: 4px;"
-        )
+        self._peak_info_label.setStyleSheet(theme.ACCENT_CARD_STYLE)
         self._peak_info_label.setText("Select a peak to see assignment suggestions for it.")
         layout.addWidget(self._peak_info_label)
 
         self._detail_label = QLabel("Diagnostic vibrations")
-        self._detail_label.setStyleSheet("font-size: 9pt; color: #555;")
+        self._detail_label.setStyleSheet(theme.SECTION_TITLE_STYLE)
         layout.addWidget(self._detail_label)
 
         self._detail_list = QListWidget()
+        self._detail_delegate = _DiagnosticBandDelegate(self._detail_list)
+        self._detail_list.setItemDelegate(self._detail_delegate)
+        self._detail_list.setAlternatingRowColors(True)
+        self._detail_list.setHorizontalScrollBarPolicy(Qt.ScrollBarPolicy.ScrollBarAlwaysOff)
         self._detail_list.itemDoubleClicked.connect(self._on_detail_double_clicked)
         layout.addWidget(self._detail_list, stretch=2)
 
@@ -242,7 +368,10 @@ class FunctionalGroupPanel(QWidget):
             if preview_name:
                 text += f"  \u2192  {preview_name}"
             item = QListWidgetItem(text)
-            item.setData(256, band)
+            item.setData(_BAND_ROLE, band)
+            item.setData(_BAND_STATUS_ROLE, f"{prefix.strip()} \u00b7 {band.evidence_label}")
+            item.setData(_BAND_ACTIONABLE_ROLE, self._is_actionable_band(band))
+            item.setData(_BAND_PREVIEW_ROLE, preview_name)
             item.setForeground(self._band_foreground_color(band))
             item.setToolTip(self._band_tooltip(band))
             if active_peak is not None and band.covers_wavenumber(active_peak.position):

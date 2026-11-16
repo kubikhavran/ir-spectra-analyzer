@@ -22,6 +22,7 @@ from PySide6.QtWidgets import (
 )
 
 from chemistry.structure_renderer import render_to_svg
+from ui import icons, theme
 from ui.i18n import tr
 
 
@@ -44,16 +45,18 @@ class _AspectSvgWidget(QWidget):
         if default_size.isEmpty():
             return
         painter = QPainter(self)
+        painter.setRenderHint(QPainter.RenderHint.Antialiasing, True)
         painter.fillRect(self.rect(), Qt.GlobalColor.white)
-        w = self.width()
-        h = self.height()
+        pad = 8.0
+        w = max(1.0, self.width() - 2 * pad)
+        h = max(1.0, self.height() - 2 * pad)
         ds_w = default_size.width()
         ds_h = default_size.height()
         scale = min(w / ds_w, h / ds_h)
         target_w = ds_w * scale
         target_h = ds_h * scale
-        target_x = (w - target_w) / 2.0
-        target_y = (h - target_h) / 2.0
+        target_x = pad + (w - target_w) / 2.0
+        target_y = pad + (h - target_h) / 2.0
         self._renderer.render(painter, QRectF(target_x, target_y, target_w, target_h))
 
 
@@ -72,14 +75,17 @@ class MoleculeWidget(QWidget):
         self._current_image_bytes: bytes = b""
 
         layout = QVBoxLayout(self)
-        layout.setContentsMargins(4, 4, 4, 4)
-        layout.setSpacing(4)
+        layout.setContentsMargins(6, 6, 6, 6)
+        layout.setSpacing(6)
 
         # SVG viewer — aspect-ratio-preserving, renders molecule as crisp vector
         self._svg_widget = _AspectSvgWidget()
         self._svg_widget.setMinimumSize(200, 160)
         self._svg_widget.setSizePolicy(QSizePolicy.Policy.Expanding, QSizePolicy.Policy.Expanding)
-        self._svg_widget.setStyleSheet("background: white; border: 1px solid #ccc;")
+        self._svg_widget.setStyleSheet(
+            f"background: {theme.SURFACE}; border: 1px solid {theme.BORDER}; border-radius: 6px;"
+        )
+        self._svg_widget.setToolTip(tr("Double-click to edit the chemical structure"))
         self._svg_widget.mouseDoubleClickEvent = lambda _e: self._open_editor()
         layout.addWidget(self._svg_widget)
 
@@ -88,11 +94,18 @@ class MoleculeWidget(QWidget):
         self._placeholder.setAlignment(Qt.AlignmentFlag.AlignCenter)
         self._placeholder.setMinimumSize(200, 160)
         self._placeholder.setSizePolicy(QSizePolicy.Policy.Expanding, QSizePolicy.Policy.Expanding)
-        self._placeholder.setStyleSheet("background: white; border: 1px solid #ccc; color: #888;")
+        self._placeholder.setStyleSheet(
+            f"background: {theme.SURFACE_ALT}; border: 2px dashed {theme.BORDER}; "
+            f"border-radius: 8px; color: {theme.TEXT_MUTED}; padding: 12px;"
+        )
+        self._placeholder.setToolTip(tr("Double-click to draw or paste a structure"))
+        self._placeholder.mouseDoubleClickEvent = lambda _e: self._open_editor()
         layout.addWidget(self._placeholder)
 
         # Edit button
-        self._edit_btn = QPushButton("Edit Structure...")
+        self._edit_btn = QPushButton(
+            icons.icon("molecule", color=theme.ACCENT), "Edit Structure..."
+        )
         self._edit_btn.clicked.connect(self._open_editor)
         layout.addWidget(self._edit_btn)
 

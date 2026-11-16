@@ -62,6 +62,10 @@ _PATHS: dict[str, str] = {
         '<path d="M12 4v10.500"/><path d="m7.500 10.200 4.500 4.500 4.500-4.500"/>'
         '<path d="M4.500 15v3.500a2 2 0 0 0 2 2h11a2 2 0 0 0 2-2V15"/>'
     ),
+    "molecule": (
+        '<polygon points="12,3 19.8,7.5 19.8,16.5 12,21 4.2,16.5 4.2,7.5"/>'
+        '<circle cx="12" cy="12" r="4.2" stroke-dasharray="2.6 2"/>'
+    ),
 }
 
 
@@ -89,10 +93,10 @@ def pixmap(name: str, size: int = 24, color: str = theme.TEXT, scale: float = 2.
 
 
 @lru_cache(maxsize=64)
-def icon(name: str) -> QIcon:
+def icon(name: str, color: str = theme.TEXT) -> QIcon:
     """Icon with normal, active (accent) and disabled (faint) states."""
     result = QIcon()
-    result.addPixmap(pixmap(name, color=theme.TEXT), QIcon.Mode.Normal, QIcon.State.Off)
+    result.addPixmap(pixmap(name, color=color), QIcon.Mode.Normal, QIcon.State.Off)
     result.addPixmap(pixmap(name, color=theme.ACCENT_DARK), QIcon.Mode.Normal, QIcon.State.On)
     result.addPixmap(pixmap(name, color=theme.ACCENT_DARK), QIcon.Mode.Active, QIcon.State.Off)
     result.addPixmap(pixmap(name, color=theme.TEXT_FAINT), QIcon.Mode.Disabled, QIcon.State.Off)

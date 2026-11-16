@@ -56,7 +56,8 @@ _PEAK_LABEL_FONT_SIZE_PT = 8.0
 # buttons and slider sitting on it (which is what made them unreadable).
 _OVERLAY_BAR_STYLE = """
 QWidget#overlayBar {
-    background: #D6E4F0;
+    background: #E4F0FB;
+    border-left: 3px solid #1F6FB2;
     border-bottom: 1px solid #7F9DB9;
 }
 QWidget#overlayBar QLabel {
@@ -65,13 +66,17 @@ QWidget#overlayBar QLabel {
 }
 QWidget#overlayBar QLabel#overlayName {
     color: #14507A;
+    background: #FFFFFF;
+    border: 1px solid #7F9DB9;
+    border-radius: 4px;
+    padding: 1px 8px;
     font-weight: bold;
 }
 QWidget#overlayBar QPushButton {
     background: #FFFFFF;
     color: #1B2B38;
     border: 1px solid #7F9DB9;
-    border-radius: 3px;
+    border-radius: 4px;
     padding: 2px 8px;
 }
 QWidget#overlayBar QPushButton:hover {
@@ -110,22 +115,38 @@ QWidget#plotToolbarBar QLabel {
     color: #5E6B78;
     background: transparent;
 }
+QWidget#rangeSegmentGroup {
+    background: #FFFFFF;
+    border: 1px solid #9AA7B4;
+    border-radius: 5px;
+}
 QWidget#plotToolbarBar QPushButton {
     background: #FFFFFF;
     color: #1B2733;
     border: 1px solid #9AA7B4;
-    border-radius: 3px;
+    border-radius: 4px;
     padding: 1px 10px;
     min-height: 0px;
+}
+QWidget#rangeSegmentGroup QPushButton {
+    border: 1px solid transparent;
+    border-radius: 3px;
+    padding: 1px 9px;
 }
 QWidget#plotToolbarBar QPushButton:hover {
     background: #F4F8FC;
     border-color: #14507A;
 }
-QWidget#plotToolbarBar QPushButton:checked {
+QWidget#rangeSegmentGroup QPushButton:hover {
+    background: #EDF4FB;
+    border-color: transparent;
+}
+QWidget#plotToolbarBar QPushButton:checked,
+QWidget#plotToolbarBar QPushButton[activeRange="true"] {
     background: #DCEAF6;
     color: #17537F;
     border-color: #1F6FB2;
+    font-weight: 600;
 }
 """
 
@@ -454,10 +475,16 @@ class SpectrumWidget(QWidget):
         toolbar_row.setContentsMargins(8, 2, 8, 2)
         toolbar_row.setSpacing(8)
         # Quick wavenumber windows — one click instead of a zoom drag.
+        self._range_group = QWidget(self._toolbar_bar)
+        self._range_group.setObjectName("rangeSegmentGroup")
+        range_layout = QHBoxLayout(self._range_group)
+        range_layout.setContentsMargins(2, 1, 2, 1)
+        range_layout.setSpacing(1)
         self._range_buttons: list[QPushButton] = []
-        for text, low, high in _RANGE_PRESETS:
+        for idx, (text, low, high) in enumerate(_RANGE_PRESETS):
             button = QPushButton(tr(text))
-            button.setFixedHeight(22)
+            button.setFixedHeight(20)
+            button.setProperty("activeRange", "true" if idx == 0 else "false")
             button.setToolTip(
                 tr("Show the whole spectrum")
                 if low is None and high is None
@@ -466,8 +493,9 @@ class SpectrumWidget(QWidget):
                 )
             )
             button.clicked.connect(lambda _=False, lo=low, hi=high: self.show_range(lo, hi))
-            toolbar_row.addWidget(button)
+            range_layout.addWidget(button)
             self._range_buttons.append(button)
+        toolbar_row.addWidget(self._range_group)
 
         self._split_btn = QPushButton(tr("Split view"))
         self._split_btn.setCheckable(True)
@@ -620,6 +648,17 @@ class SpectrumWidget(QWidget):
         value = f"{intensity:.{decimals}f}{(' ' + suffix) if suffix else ''}"
         return f"{wavenumber:.1f} cm\u207b\u00b9   {value}"
 
+    def _set_active_range_preset(
+        self, low: float | None, high: float | None, *, clear_all: bool = False
+    ) -> None:
+        for button, (_text, preset_low, preset_high) in zip(
+            self._range_buttons, _RANGE_PRESETS, strict=False
+        ):
+            active = not clear_all and preset_low == low and preset_high == high
+            button.setProperty("activeRange", "true" if active else "false")
+            button.style().unpolish(button)
+            button.style().polish(button)
+
     def show_range(self, low: float | None, high: float | None) -> None:
         """Show one wavenumber window with the intensity axis fitted to it.
 
@@ -638,6 +677,7 @@ class SpectrumWidget(QWidget):
             x_hi = min(x_hi, float(high))
         if x_hi <= x_lo:
             return
+        self._set_active_range_preset(low, high)
         self._plot_widget.setXRange(x_lo, x_hi, padding=0.0)
         self._fit_y_range(x_lo, x_hi)
 
@@ -746,6 +786,7 @@ class SpectrumWidget(QWidget):
         """Enable or disable the split-view mode."""
         self._split_mode = checked
         if checked:
+            self._set_active_range_preset(None, None, clear_all=True)
             if self._fp_plot_widget is None:
                 self._fp_plot_widget = self._create_fp_plot_widget()
                 self._plots_layout.addWidget(self._fp_plot_widget, _SPLIT_LO_FRAC)
@@ -1116,10 +1157,12 @@ class SpectrumWidget(QWidget):
         """Reset to full IR view, Y auto-fitted to visible data + labels."""
         x_lo, x_hi = self._default_x_range()
         if self._split_mode:
+            self._set_active_range_preset(None, None, clear_all=True)
             self._plot_widget.setXRange(_SPLIT_WN, x_hi, padding=0.0)
             if self._fp_plot_widget is not None:
                 self._fp_plot_widget.setXRange(x_lo, _SPLIT_WN, padding=0.0)
         else:
+            self._set_active_range_preset(None, None)
             self._plot_widget.setXRange(x_lo, x_hi, padding=0.0)
         self._fit_y_range(x_lo, x_hi)
 

@@ -682,3 +682,58 @@ def test_language_menu_stores_the_choice(qtbot, monkeypatch) -> None:
     assert "příštím spuštění" in shown[0]
     actions["System"].trigger()
     assert window._settings.stored["language"] is None
+
+
+def test_dock_badges_reflect_peaks_assignments_matches_and_structure(qtbot) -> None:
+    window = _window(qtbot)
+    assert window._dock_peaks.windowTitle() == "Peaks"
+    assert window._dock_match.windowTitle() == "Match Results"
+    assert window._dock_structure.windowTitle() == "Structure"
+
+    peaks = [
+        Peak(position=1715.0, intensity=1.1, vibration_labels=["ν(C=O)"]),
+        Peak(position=2950.0, intensity=0.5),
+    ]
+    project = Project(name="BadgeTest", spectrum=_absorbance_spectrum(), peaks=peaks, smiles="CCO")
+    window._apply_project_to_ui(project)
+
+    assert window._dock_peaks.windowTitle() == "Peaks (2 · 1✓)"
+    assert window._dock_structure.windowTitle() == "Structure •"
+
+
+def test_peak_table_delegate_renders_strength_pills_and_unassigned_hint(qtbot) -> None:
+    table = PeakTableWidget()
+    qtbot.addWidget(table)
+    table.resize(460, 180)
+    table.set_peaks(
+        [
+            Peak(position=1715.0, intensity=1.2, vibration_labels=["ν(C=O)"]),
+            Peak(position=1200.0, intensity=0.15),
+        ],
+        is_dip_spectrum=False,
+    )
+    table.show()
+    pixmap = table.grab()
+    assert not pixmap.isNull()
+    # Underlying cell text stays clean for TSV copy
+    assert table._table.item(0, 2).text() == "vs"
+    assert table._table.item(1, 3).text() == ""
+
+
+def test_range_preset_buttons_update_active_range_property(qtbot) -> None:
+    widget = SpectrumWidget()
+    qtbot.addWidget(widget)
+    widget.set_spectrum(_absorbance_spectrum())
+
+    assert widget._range_buttons[0].property("activeRange") == "true"
+    assert widget._range_buttons[1].property("activeRange") == "false"
+
+    widget._range_buttons[1].click()
+    assert widget._range_buttons[0].property("activeRange") == "false"
+    assert widget._range_buttons[1].property("activeRange") == "true"
+
+    widget._split_btn.setChecked(True)
+    assert all(btn.property("activeRange") == "false" for btn in widget._range_buttons)
+
+    widget._split_btn.setChecked(False)
+    assert widget._range_buttons[0].property("activeRange") == "true"

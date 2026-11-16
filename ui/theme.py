@@ -48,26 +48,89 @@ QUALITY_STRONG = "#1F6FB2"
 QUALITY_POSSIBLE = "#C77700"
 QUALITY_WEAK = "#9AA7B4"
 
+# Relative peak-intensity pill badge colours (vs / s / m / w).
+STRENGTH_VS_BG = "#DCEAF6"
+STRENGTH_VS_FG = "#17537F"
+STRENGTH_S_BG = "#DDF2EC"
+STRENGTH_S_FG = "#166552"
+STRENGTH_M_BG = "#FBF0D9"
+STRENGTH_M_FG = "#8A5A00"
+STRENGTH_W_BG = "#EEF1F5"
+STRENGTH_W_FG = "#5E6B78"
+
 #: Style for small secondary captions under or above a control.
 CAPTION_STYLE = f"color: {TEXT_MUTED}; font-size: 9pt;"
+
+#: Neutral card container for summary/detail blocks in side panels.
+INFO_CARD_STYLE = (
+    f"background: {SURFACE_ALT}; color: {TEXT}; "
+    f"border: 1px solid {BORDER}; border-radius: 6px; padding: 6px 8px;"
+)
+
+#: Accent-tinted callout card for active selection / assignment previews.
+ACCENT_CARD_STYLE = (
+    f"background: {ACCENT_SOFT}; color: {TEXT}; "
+    f"border: 1px solid {ACCENT}; border-radius: 6px; padding: 6px 8px;"
+)
+
+#: Prominent headline card for primary verdicts (e.g., Consensus top candidate).
+HEADLINE_CARD_STYLE = (
+    f"background: {SURFACE}; color: {TEXT}; "
+    f"border: 1px solid {BORDER_STRONG}; border-left: 3px solid {ACCENT}; "
+    "border-radius: 6px; padding: 8px 10px; font-weight: 600;"
+)
+
+#: Uppercase/bold section header inside panels and forms.
+SECTION_TITLE_STYLE = (
+    f"color: {TEXT_MUTED}; font-size: 8.5pt; font-weight: 600; "
+    "padding-top: 4px; padding-bottom: 2px;"
+)
+
+#: Read-only metadata value badge.
+READONLY_VALUE_STYLE = (
+    f"color: {TEXT}; background: {SURFACE_ALT}; "
+    f"border: 1px solid {BORDER}; border-radius: 4px; padding: 2px 6px;"
+)
 
 APP_STYLESHEET = f"""
 QMainWindow, QDialog {{ background: {WINDOW}; }}
 
 QToolTip {{
     background: #FFFFFF; color: {TEXT};
-    border: 1px solid {BORDER_STRONG}; padding: 4px 6px;
+    border: 1px solid {BORDER_STRONG}; border-radius: 4px; padding: 4px 7px;
+}}
+
+/* ── Menus ──────────────────────────────────────────────────── */
+QMenuBar {{
+    background: {SURFACE}; color: {TEXT};
+    border-bottom: 1px solid {BORDER}; padding: 1px 4px;
+}}
+QMenuBar::item {{
+    background: transparent; padding: 4px 8px; border-radius: 4px;
+}}
+QMenuBar::item:selected {{ background: {ACCENT_SOFT}; color: {ACCENT_DARK}; }}
+QMenu {{
+    background: {SURFACE}; color: {TEXT};
+    border: 1px solid {BORDER_STRONG}; border-radius: 6px; padding: 4px;
+}}
+QMenu::item {{
+    padding: 5px 24px 5px 12px; border-radius: 4px;
+}}
+QMenu::item:selected {{ background: {ACCENT_SOFT}; color: {ACCENT_DARK}; }}
+QMenu::item:disabled {{ color: {TEXT_FAINT}; }}
+QMenu::separator {{
+    height: 1px; background: {BORDER}; margin: 4px 6px;
 }}
 
 /* ── Main toolbar ───────────────────────────────────────────── */
 QToolBar#mainToolbar {{
     background: {SURFACE}; border: none;
-    border-bottom: 1px solid {BORDER}; padding: 3px 6px; spacing: 2px;
+    border-bottom: 1px solid {BORDER}; padding: 4px 8px; spacing: 3px;
 }}
 QToolBar#mainToolbar QToolButton {{
     color: {TEXT}; background: transparent;
-    border: 1px solid transparent; border-radius: 4px;
-    padding: 3px 7px; min-width: 44px;
+    border: 1px solid transparent; border-radius: 5px;
+    padding: 4px 8px; min-width: 44px;
 }}
 QToolBar#mainToolbar QToolButton:hover {{
     background: {ACCENT_SOFT}; border-color: {BORDER};
@@ -81,18 +144,23 @@ QToolBar#mainToolbar::separator {{
     background: {BORDER}; width: 1px; margin: 5px 6px;
 }}
 QToolBar#mainToolbar QLabel {{ color: {TEXT_MUTED}; }}
+QWidget#toolbarSensitivityCapsule {{
+    background: {SURFACE_ALT}; border: 1px solid {BORDER};
+    border-radius: 6px;
+}}
 
 /* ── Docks and tabs ─────────────────────────────────────────── */
 QDockWidget {{ color: {TEXT}; font-weight: 600; }}
 QDockWidget::title {{
-    background: {HEADER}; padding: 5px 8px;
+    background: {HEADER}; padding: 6px 10px;
     border-bottom: 1px solid {BORDER};
 }}
 QMainWindow::separator {{ background: {BORDER}; width: 1px; height: 1px; }}
 QMainWindow::separator:hover {{ background: {ACCENT}; }}
 QTabBar::tab {{
     background: {HEADER}; color: {TEXT_MUTED};
-    border: 1px solid {BORDER}; padding: 5px 8px; margin-right: -1px;
+    border: 1px solid {BORDER}; border-top-left-radius: 4px; border-top-right-radius: 4px;
+    padding: 5px 10px; margin-right: 1px;
 }}
 QTabBar::tab:selected {{
     background: {SURFACE}; color: {TEXT}; font-weight: 600;
@@ -103,7 +171,7 @@ QTabBar::tab:hover:!selected {{ background: {ACCENT_SOFT}; color: {TEXT}; }}
 /* ── Lists and tables ───────────────────────────────────────── */
 QListWidget, QTableWidget, QTableView, QTreeWidget, QPlainTextEdit, QTextEdit {{
     background: {SURFACE}; color: {TEXT};
-    border: 1px solid {BORDER}; border-radius: 3px;
+    border: 1px solid {BORDER}; border-radius: 5px;
     alternate-background-color: {SURFACE_ALT};
     selection-background-color: {ACCENT}; selection-color: #FFFFFF;
 }}
@@ -111,21 +179,51 @@ QTableWidget, QTableView {{ gridline-color: #E3E8ED; }}
 QHeaderView::section {{
     background: {HEADER}; color: {TEXT}; font-weight: 600;
     border: none; border-right: 1px solid {BORDER};
-    border-bottom: 1px solid {BORDER}; padding: 4px 8px;
+    border-bottom: 1px solid {BORDER}; padding: 5px 8px;
 }}
 QTableCornerButton::section {{ background: {HEADER}; border: none; }}
 
-/* ── Inputs and buttons ─────────────────────────────────────── */
-QLineEdit {{
-    background: {SURFACE}; color: {TEXT};
-    border: 1px solid {BORDER}; border-radius: 3px;
-    padding: 3px 6px; min-height: 18px;
+/* ── Scrollbars ─────────────────────────────────────────────── */
+QScrollBar:vertical {{
+    background: transparent; width: 8px; margin: 2px 1px 2px 1px;
 }}
-QLineEdit:focus {{ border-color: {ACCENT}; }}
-QComboBox {{ min-height: 20px; }}
+QScrollBar::handle:vertical {{
+    background: {BORDER_STRONG}; min-height: 24px; border-radius: 3px;
+}}
+QScrollBar::handle:vertical:hover {{ background: {ACCENT}; }}
+QScrollBar::add-line:vertical, QScrollBar::sub-line:vertical {{ height: 0px; }}
+QScrollBar::add-page:vertical, QScrollBar::sub-page:vertical {{ background: transparent; }}
+
+QScrollBar:horizontal {{
+    background: transparent; height: 8px; margin: 1px 2px 1px 2px;
+}}
+QScrollBar::handle:horizontal {{
+    background: {BORDER_STRONG}; min-width: 24px; border-radius: 3px;
+}}
+QScrollBar::handle:horizontal:hover {{ background: {ACCENT}; }}
+QScrollBar::add-line:horizontal, QScrollBar::sub-line:horizontal {{ width: 0px; }}
+QScrollBar::add-page:horizontal, QScrollBar::sub-page:horizontal {{ background: transparent; }}
+
+/* ── Inputs and buttons ─────────────────────────────────────── */
+QLineEdit, QSpinBox, QDoubleSpinBox, QComboBox {{
+    background: {SURFACE}; color: {TEXT};
+    border: 1px solid {BORDER}; border-radius: 4px;
+    padding: 3px 7px; min-height: 18px;
+}}
+QLineEdit:focus, QSpinBox:focus, QDoubleSpinBox:focus, QComboBox:focus {{
+    border-color: {ACCENT};
+}}
+QLineEdit:disabled, QSpinBox:disabled, QDoubleSpinBox:disabled, QComboBox:disabled {{
+    background: {WINDOW}; color: {TEXT_FAINT};
+}}
+QComboBox {{ min-height: 20px; padding-right: 18px; }}
+QComboBox::drop-down {{
+    subcontrol-origin: padding; subcontrol-position: top right;
+    width: 18px; border-left: 1px solid {BORDER};
+}}
 QPushButton {{
     background: {SURFACE}; color: {TEXT};
-    border: 1px solid {BORDER_STRONG}; border-radius: 4px;
+    border: 1px solid {BORDER_STRONG}; border-radius: 5px;
     padding: 4px 12px; min-height: 18px;
 }}
 QPushButton:hover {{ background: {ACCENT_SOFT}; border-color: {ACCENT}; }}
@@ -146,8 +244,8 @@ QPushButton[role="primary"]:disabled {{
 QPushButton[role="danger"] {{ color: {DANGER}; border-color: {DANGER}; }}
 QPushButton[role="danger"]:hover {{ background: {DANGER_SOFT}; }}
 QGroupBox {{
-    border: 1px solid {BORDER}; border-radius: 4px;
-    margin-top: 9px; padding: 8px 6px 6px 6px; color: {TEXT_MUTED};
+    border: 1px solid {BORDER}; border-radius: 6px;
+    margin-top: 9px; padding: 8px 6px 6px 6px; color: {TEXT_MUTED}; font-weight: 600;
 }}
 QGroupBox::title {{ subcontrol-origin: margin; left: 8px; padding: 0 4px; }}
 
@@ -159,7 +257,7 @@ QStatusBar::item {{ border: none; }}
 QStatusBar QLabel {{ color: {TEXT_MUTED}; padding: 0 8px; }}
 QStatusBar QLabel[chip="true"] {{
     color: {ACCENT_DARK}; background: {ACCENT_SOFT};
-    border-radius: 8px; padding: 1px 9px; margin: 2px 3px;
+    border-radius: 8px; padding: 1px 9px; margin: 2px 3px; font-weight: 600;
 }}
 """
 

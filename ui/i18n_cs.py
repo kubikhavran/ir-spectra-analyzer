@@ -709,4 +709,8 @@ CZECH_TEXTS: dict[str, str] = {
     "SVG vector image (*.svg)": "Vektorový obrázek SVG (*.svg)",
     "Failed to export image:": "Obrázek se nepodařilo exportovat:",
     "Image exported: {name}": "Obrázek exportován: {name}",
+    "Double-click to assign\u2026": "Dvojklikem přiřadíte\u2026",
+    "Double-click to edit the chemical structure": "Dvojklikem upravíte chemickou strukturu",
+    "Double-click to draw or paste a structure": "Dvojklikem nakreslíte nebo vložíte strukturu",
+    "Acquisition & file details": "Podrobnosti měření a souboru",
 }
