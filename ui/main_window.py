@@ -186,6 +186,15 @@ class MainWindow(QMainWindow):
         redo_action = self._undo_stack.createRedoAction(self, "&Redo")
         redo_action.setShortcut("Ctrl+Y")
         edit_menu.addAction(redo_action)
+        edit_menu.addSeparator()
+        copy_image_action = edit_menu.addAction(tr("Copy Spectrum &Image"))
+        copy_image_action.setShortcut("Ctrl+Shift+C")
+        copy_image_action.setToolTip(
+            tr("Copy the spectrum, as drawn in the report, to paste into a protocol or slides")
+        )
+        copy_image_action.triggered.connect(self._on_copy_spectrum_image)
+        copy_ir_action = edit_menu.addAction(tr("Copy IR &Text"))
+        copy_ir_action.triggered.connect(lambda: self._peak_table.copy_ir_text())
 
         database_menu = menu_bar.addMenu("&Database")
         ref_library_action = database_menu.addAction("Reference Library...")
@@ -718,6 +727,7 @@ class MainWindow(QMainWindow):
         self._vibration_panel.presets_changed.connect(self._on_vibration_preset_changed)
         self._vibration_panel.preset_remove_requested.connect(self._on_remove_vibration)
         self._peak_table.vibration_edit_requested.connect(self._on_edit_peak_vibration_requested)
+        self._peak_table.ir_text_copied.connect(self._on_ir_text_copied)
         self._match_results_panel.candidate_selected.connect(self._on_match_candidate_selected)
         self._match_results_panel.import_reference.connect(self._on_import_reference)
         self._match_results_panel.match_requested.connect(self._on_match_spectrum)
@@ -1259,6 +1269,8 @@ class MainWindow(QMainWindow):
                 mode=getattr(dialog, "csv_mode", "combined"),
                 decimal_separator=getattr(dialog, "decimal_separator", "."),
             )
+        elif format_choice == "image":
+            self._export_spectrum_image()
         elif format_choice == "xlsx":
             self._export_xlsx(
                 include_unassigned=dialog.include_unassigned,
@@ -1345,6 +1357,98 @@ class MainWindow(QMainWindow):
             project, spectrum=converted, corrected_spectrum=None, peaks=shown_peaks
         )
         return shown_project, shown_placements
+
+    # Spectrum image (clipboard / PNG / SVG)
+    _IMAGE_FIGSIZE = (10.0, 4.6)  # inches; reads well on an A4 page or a slide
+    _IMAGE_DPI = 300
+
+    def _render_spectrum_image(self, image_format: str = "png", *, dpi: int | None = None):
+        """The spectrum as the report draws it, for the current view; None without one."""
+        project = self._project
+        if project is None or project.spectrum is None:
+            return None
+        from reporting.pdf_generator import ReportOptions  # noqa: PLC0415
+        from reporting.spectrum_renderer import SpectrumRenderer  # noqa: PLC0415
+
+        shown, placements = self._project_as_displayed(project)
+        spectrum = shown.corrected_spectrum or shown.spectrum
+        x_lo, x_hi = self._spectrum_widget.get_x_view_range()
+        return SpectrumRenderer().render_to_bytes(
+            spectrum.wavenumbers,
+            spectrum.intensities,
+            shown.peaks,
+            dpi=dpi or self._IMAGE_DPI,
+            y_unit=spectrum.display_y_unit,
+            is_dip_spectrum=spectrum.is_dip_spectrum,
+            figsize=self._IMAGE_FIGSIZE,
+            x_min=x_lo,
+            x_max=x_hi,
+            y_view_range=self._spectrum_widget.get_y_view_range(),
+            split_at=2000.0 if ReportOptions().split_xaxis else None,
+            label_placements=placements,
+            image_format=image_format,
+        )
+
+    def _on_copy_spectrum_image(self) -> bool:
+        """Edit → Copy Spectrum Image (Ctrl+Shift+C)."""
+        from PySide6.QtGui import QImage  # noqa: PLC0415
+
+        try:
+            png = self._render_spectrum_image("png", dpi=200)
+        except Exception as exc:  # noqa: BLE001
+            QMessageBox.critical(
+                self, tr("Copy Error"), tr("Failed to draw the spectrum:") + f"\n{exc}"
+            )
+            return False
+        if png is None:
+            self.statusBar().showMessage(tr("No spectrum loaded"))
+            return False
+        image = QImage.fromData(png)
+        if image.isNull():
+            return False
+        QApplication.clipboard().setImage(image)
+        self.statusBar().showMessage(tr("Spectrum image copied to the clipboard"))
+        return True
+
+    def _export_spectrum_image(self) -> bool:
+        """Export the spectrum alone as a PNG (300 dpi) or an SVG (vector)."""
+        if self._project is None or self._project.spectrum is None:
+            self.statusBar().showMessage(tr("No spectrum loaded"))
+            return False
+        png_filter = tr("PNG image, 300 dpi (*.png)")
+        svg_filter = tr("SVG vector image (*.svg)")
+        path, chosen_filter = QFileDialog.getSaveFileName(
+            self,
+            tr("Export Spectrum Image"),
+            self._suggested_save_path(".png"),
+            f"{png_filter};;{svg_filter}",
+        )
+        if not path:
+            return False
+        suffix = Path(path).suffix.lower()
+        if suffix not in (".png", ".svg"):
+            suffix = ".svg" if chosen_filter == svg_filter else ".png"
+            path = f"{path}{suffix}"
+        from file_io.atomic_output import atomic_output_path  # noqa: PLC0415
+
+        try:
+            data = self._render_spectrum_image(suffix.lstrip("."))
+            if data is None:
+                return False
+            with atomic_output_path(Path(path)) as temp_path:
+                temp_path.write_bytes(data)
+        except Exception as e:  # noqa: BLE001
+            QMessageBox.critical(self, tr("Export Error"), tr("Failed to export image:") + f"\n{e}")
+            return False
+        self._remember_save_dir(path)
+        self.statusBar().showMessage(tr("Image exported: {name}").format(name=Path(path).name))
+        return True
+
+    def _on_ir_text_copied(self, text: str) -> None:
+        if text:
+            self.statusBar().showMessage(tr("IR text copied: {text}").format(text=text))
+        else:
+            self.statusBar().showMessage(tr("No peaks to write as IR text"))
 
     def _export_csv(
         self,

@@ -98,8 +98,11 @@ class SpectrumRenderer:
         diagnostic_regions: tuple[object, ...] | list[object] = (),
         split_at: float | None = 2000.0,
         label_placements: dict[int, tuple[float, float]] | None = None,
+        image_format: str = "png",
     ) -> bytes:
-        """Render spectrum with peak annotations to PNG bytes in memory.
+        """Render spectrum with peak annotations to image bytes in memory.
+
+        ``image_format`` is ``"png"`` (raster at ``dpi``) or ``"svg"`` (vector).
 
         Args:
             wavenumbers: X-axis data (cm⁻¹), any order — plot will invert.
@@ -129,6 +132,7 @@ class SpectrumRenderer:
             diagnostic_regions=diagnostic_regions,
             split_at=split_at,
             label_placements=label_placements,
+            image_format=image_format,
         )[0]
 
     def render_with_annotation_box(
@@ -196,8 +200,11 @@ class SpectrumRenderer:
         split_at: float | None = 2000.0,
         label_placements: dict[int, tuple[float, float]] | None = None,
         annotation_target: tuple[float, float] | None = None,
+        image_format: str = "png",
     ) -> tuple[bytes, tuple[float, float, float, float] | None]:
         """Render the spectrum, optionally reporting a free area for an annotation."""
+        if image_format not in ("png", "svg"):
+            raise ValueError(f"Unsupported image format: {image_format!r}")
         import matplotlib  # noqa: PLC0415
 
         matplotlib.use("Agg")
@@ -248,6 +255,7 @@ class SpectrumRenderer:
                 ticker=ticker,
                 label_placements=label_placements,
                 annotation_target=annotation_target,
+                image_format=image_format,
             )
 
         # ── Single-axis (original) rendering ──────────────────────────────────
@@ -398,7 +406,7 @@ class SpectrumRenderer:
 
         buf = io.BytesIO()
         try:
-            fig.savefig(buf, format="png", dpi=dpi, facecolor="white")
+            fig.savefig(buf, format=image_format, dpi=dpi, facecolor="white")
         finally:
             plt.close(fig)
         buf.seek(0)
@@ -428,6 +436,7 @@ class SpectrumRenderer:
         ticker,
         label_placements: dict[int, tuple[float, float]] | None = None,
         annotation_target: tuple[float, float] | None = None,
+        image_format: str = "png",
     ) -> tuple[bytes, tuple[float, float, float, float] | None]:
         """Render spectrum using a split-axis layout (hi-wavenumber | fingerprint).
 
@@ -651,7 +660,7 @@ class SpectrumRenderer:
 
         buf = io.BytesIO()
         try:
-            fig.savefig(buf, format="png", dpi=dpi, facecolor="white")
+            fig.savefig(buf, format=image_format, dpi=dpi, facecolor="white")
         finally:
             plt.close(fig)
         buf.seek(0)

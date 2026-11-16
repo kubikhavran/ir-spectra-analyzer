@@ -87,6 +87,8 @@ class PeakTableWidget(QWidget):
     peak_selected = Signal(object)  # emits Peak on row selection
     peak_deleted = Signal(object)  # emits Peak on delete action
     vibration_edit_requested = Signal(object)  # emits Peak when vibration text should be edited
+    #: Emits the text just put on the clipboard by "Copy IR text" ("" if none).
+    ir_text_copied = Signal(str)
 
     def __init__(self, parent=None) -> None:
         super().__init__(parent)
@@ -108,6 +110,16 @@ class PeakTableWidget(QWidget):
         self._copy_all_btn.setToolTip(tr("Copy entire peak table to clipboard (TSV)"))
         self._copy_all_btn.clicked.connect(self._copy_all_to_clipboard)
         toolbar.addStretch()
+        self._copy_ir_btn = QPushButton(tr("Copy IR text"))
+        self._copy_ir_btn.setToolTip(
+            tr(
+                "Copy the peak list as written in a protocol or paper, e.g.\n"
+                "IR (cm\u207b\u00b9): 3340 (s, \u03bd(OH)), 1715 (vs, \u03bd(C=O)).\n"
+                "Assigned peaks only; when none is assigned yet, all peaks."
+            )
+        )
+        self._copy_ir_btn.clicked.connect(self.copy_ir_text)
+        toolbar.addWidget(self._copy_ir_btn)
         toolbar.addWidget(self._copy_all_btn)
         layout.addLayout(toolbar)
 
@@ -139,6 +151,28 @@ class PeakTableWidget(QWidget):
         self._table.itemSelectionChanged.connect(self._on_selection_changed)
         self._table.cellDoubleClicked.connect(self._on_cell_double_clicked)
         layout.addWidget(self._table)
+
+    def ir_text(self) -> str:
+        """The publication-style peak list for the peaks in the table."""
+        from core.peak_assignments import (  # noqa: PLC0415
+            format_publication_ir_string,
+            peak_has_assignment,
+        )
+
+        include_unassigned = not any(peak_has_assignment(peak) for peak in self._peaks)
+        return format_publication_ir_string(
+            self._peaks,
+            include_unassigned=include_unassigned,
+            is_dip_spectrum=self._is_dip_spectrum,
+        )
+
+    def copy_ir_text(self) -> str:
+        """Put the publication-style peak list on the clipboard and announce it."""
+        text = self.ir_text()
+        if text:
+            QApplication.clipboard().setText(text)
+        self.ir_text_copied.emit(text)
+        return text
 
     def _copy_all_to_clipboard(self) -> None:
         """Copy all rows to clipboard as TSV."""

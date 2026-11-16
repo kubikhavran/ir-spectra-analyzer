@@ -124,6 +124,12 @@ molecule, and export a publication-quality PDF report — all in one native app.
     decimal point or a decimal comma (offered first in the Czech interface).
   - Excel: number formats, a filter and shaded rows on the peak sheet, the molecule
     beside the metadata, and an optional chart of the spectrum (4000 → 400 cm⁻¹).
+- **IR text for protocols** — *Copy IR text* above the peak table (or *Edit → Copy IR
+  Text*) copies the peak list as written in a protocol or paper:
+  `IR (cm⁻¹): 3340 (s, ν(OH)), 1715 (vs, ν(C=O)).`
+- **Spectrum image** — *Edit → Copy Spectrum Image* (`Ctrl+Shift+C`) puts the spectrum,
+  drawn as in the report, on the clipboard; *Export → Spectrum image* saves it as PNG
+  (300 dpi) or SVG (vector).
 - **Project save/load** — full workspace (spectrum + peaks + assignments + baseline +
   structure + metadata) as a single human-readable `.irproj` JSON file.
 
@@ -323,7 +329,9 @@ folder of `.spa` files on disk.
 | `Ctrl+Shift+N` | New window |
 | `Ctrl+Z` / `Ctrl+Y` | Undo / Redo |
 | `Ctrl+M` | Match the spectrum against the reference library |
-| `Ctrl+E` | Export (PDF report, CSV, Excel) |
+| `Ctrl+E` | Export (PDF report, CSV, Excel, spectrum image) |
+| `Ctrl+Shift+C` | Copy the spectrum image to the clipboard |
+| `F2` | Edit the highlighted vibration (in the vibration list) |
 | `Delete` | Delete the selected peak(s) |
 | `A` | Switch to Add-Peak tool |
 | `S` | Switch to Select tool |

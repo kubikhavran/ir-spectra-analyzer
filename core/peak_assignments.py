@@ -150,6 +150,40 @@ def collect_export_metadata(
     return rows
 
 
+def format_publication_ir_string(
+    peaks: Sequence[Peak],
+    spectrum: Spectrum | None = None,
+    *,
+    include_unassigned: bool = False,
+    is_dip_spectrum: bool | None = None,
+) -> str:
+    """The peak list as written in a protocol or a paper's experimental part.
+
+    ``IR (cm⁻¹): 3340 (s, ν(OH)), 2972 (m, νas(CH₃)), 1715 (vs, ν(C=O)).``
+
+    Bands run from high to low wavenumber; each carries its relative strength
+    (w / m / s / vs, as in the report) and its assignment. With
+    ``include_unassigned`` a band without an assignment is listed with its
+    strength only. ``is_dip_spectrum`` overrides the polarity read from
+    ``spectrum`` (for callers that only know the polarity). Returns an empty
+    string when there is nothing to list.
+    """
+    if is_dip_spectrum is None:
+        is_dip_spectrum = bool(spectrum.is_dip_spectrum) if spectrum is not None else False
+    rows = build_peak_assignment_rows(
+        peaks,
+        is_dip_spectrum=is_dip_spectrum,
+        include_unassigned=include_unassigned,
+    )
+    if not rows:
+        return ""
+    parts = []
+    for row in rows:
+        details = ", ".join(text for text in (row.intensity_label, row.assignment) if text)
+        parts.append(f"{row.position} ({details})" if details else str(row.position))
+    return "IR (cm\u207b\u00b9): " + ", ".join(parts) + "."
+
+
 def build_peak_assignment_rows(
     peaks: Sequence[Peak], *, is_dip_spectrum: bool, include_unassigned: bool = False
 ) -> list[PeakAssignmentRow]:

@@ -681,4 +681,32 @@ CZECH_TEXTS: dict[str, str] = {
     "List every peak in the report's peak table, not only the assigned ones": (
         "Uvede v tabulce píků reportu všechny píky, nejen přiřazené"
     ),
+    # ── IR text and spectrum image ──────────────────────────────────────────
+    "Copy IR text": "Kopírovat zápis IR",
+    "Copy the peak list as written in a protocol or paper, e.g.\n"
+    "IR (cm\u207b\u00b9): 3340 (s, \u03bd(OH)), 1715 (vs, \u03bd(C=O)).\n"
+    "Assigned peaks only; when none is assigned yet, all peaks.": (
+        "Zkopíruje seznam píků tak, jak se píše do protokolu nebo publikace, např.\n"
+        "IR (cm\u207b\u00b9): 3340 (s, \u03bd(OH)), 1715 (vs, \u03bd(C=O)).\n"
+        "Jen přiřazené píky; dokud žádný přiřazený není, všechny."
+    ),
+    "IR text copied: {text}": "Zápis IR zkopírován: {text}",
+    "No peaks to write as IR text": "Nejsou žádné píky pro zápis IR",
+    "Copy Spectrum &Image": "Kopírovat &obrázek spektra",
+    "Copy IR &Text": "Kopírovat &zápis IR",
+    "Copy the spectrum, as drawn in the report, to paste into a protocol or slides": (
+        "Zkopíruje spektrum tak, jak je v reportu, pro vložení do protokolu nebo prezentace"
+    ),
+    "Spectrum image copied to the clipboard": "Obrázek spektra zkopírován do schránky",
+    "Copy Error": "Chyba při kopírování",
+    "Failed to draw the spectrum:": "Spektrum se nepodařilo vykreslit:",
+    "Spectrum image (PNG 300 dpi or SVG)": "Obrázek spektra (PNG 300 dpi nebo SVG)",
+    "The spectrum alone, drawn as in the report, for a protocol, poster or slides": (
+        "Samotné spektrum vykreslené jako v reportu, pro protokol, poster nebo prezentaci"
+    ),
+    "Export Spectrum Image": "Export obrázku spektra",
+    "PNG image, 300 dpi (*.png)": "Obrázek PNG, 300 dpi (*.png)",
+    "SVG vector image (*.svg)": "Vektorový obrázek SVG (*.svg)",
+    "Failed to export image:": "Obrázek se nepodařilo exportovat:",
+    "Image exported: {name}": "Obrázek exportován: {name}",
 }

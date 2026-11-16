@@ -47,9 +47,14 @@ class ExportDialog(QDialog):
         self._pdf_radio.setChecked(True)
         self._csv_radio = QRadioButton(tr("CSV (text table)"))
         self._xlsx_radio = QRadioButton(tr("Excel (.xlsx)"))
+        self._image_radio = QRadioButton(tr("Spectrum image (PNG 300 dpi or SVG)"))
+        self._image_radio.setToolTip(
+            tr("The spectrum alone, drawn as in the report, for a protocol, poster or slides")
+        )
         layout.addWidget(self._pdf_radio)
         layout.addWidget(self._csv_radio)
         layout.addWidget(self._xlsx_radio)
+        layout.addWidget(self._image_radio)
 
         self._include_unassigned_checkbox = QCheckBox(tr("Include peaks without assignment"))
         layout.addWidget(self._include_unassigned_checkbox)
@@ -103,6 +108,7 @@ class ExportDialog(QDialog):
         self._pdf_radio.toggled.connect(self._update_pdf_option_state)
         self._csv_radio.toggled.connect(self._update_unassigned_checkbox_state)
         self._xlsx_radio.toggled.connect(self._update_unassigned_checkbox_state)
+        self._image_radio.toggled.connect(self._update_unassigned_checkbox_state)
         self._csv_mode_combo.currentIndexChanged.connect(
             lambda _index: self._update_unassigned_checkbox_state()
         )
@@ -125,7 +131,8 @@ class ExportDialog(QDialog):
         csv = self._csv_radio.isChecked()
         xlsx = self._xlsx_radio.isChecked()
         spectrum_only = csv and self.csv_mode == MODE_SPECTRUM_ONLY
-        self._include_unassigned_checkbox.setVisible(not spectrum_only)
+        image = self._image_radio.isChecked()
+        self._include_unassigned_checkbox.setVisible(not (spectrum_only or image))
         self._csv_options.setVisible(csv)
         self._include_chart_checkbox.setVisible(xlsx)
 
@@ -156,6 +163,8 @@ class ExportDialog(QDialog):
             return "pdf"
         if self._csv_radio.isChecked():
             return "csv"
+        if self._image_radio.isChecked():
+            return "image"
         return "xlsx"
 
     @property
