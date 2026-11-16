@@ -23,7 +23,9 @@ from PySide6.QtWidgets import (
     QComboBox,
     QHBoxLayout,
     QLabel,
+    QMenu,
     QPushButton,
+    QSizePolicy,
     QSlider,
     QVBoxLayout,
     QWidget,
@@ -452,7 +454,6 @@ class SpectrumWidget(QWidget):
         toolbar_row.setContentsMargins(8, 2, 8, 2)
         toolbar_row.setSpacing(8)
         # Quick wavenumber windows — one click instead of a zoom drag.
-        toolbar_row.addWidget(QLabel(tr("Range:")))
         self._range_buttons: list[QPushButton] = []
         for text, low, high in _RANGE_PRESETS:
             button = QPushButton(tr(text))
@@ -484,7 +485,7 @@ class SpectrumWidget(QWidget):
         # Wide enough for "Transmittance (as loaded)" — a clipped unit name is
         # exactly the thing this selector must not leave to guesswork.
         self._unit_combo.setSizeAdjustPolicy(QComboBox.SizeAdjustPolicy.AdjustToContents)
-        self._unit_combo.setMinimumWidth(196)
+        self._unit_combo.setMinimumWidth(180)
         self._unit_combo.setToolTip(
             "Redraw the spectrum in another intensity unit.\n"
             "The loaded data is not changed; overlays follow the same unit."
@@ -496,29 +497,37 @@ class SpectrumWidget(QWidget):
 
         toolbar_row.addStretch()
 
-        self._declutter_btn = QPushButton(tr("Tidy labels"))
-        self._declutter_btn.setObjectName("plotToggle")
-        self._declutter_btn.setCheckable(True)
-        self._declutter_btn.setChecked(True)
-        self._declutter_btn.setFixedHeight(22)
-        self._declutter_btn.setToolTip(
+        # Reading aids live in one small menu: as two more buttons they made
+        # the bar wider than the plot, and the window then squeezed the side
+        # panels to make room.
+        self._display_btn = QPushButton(tr("Display"))
+        self._display_btn.setFixedHeight(22)
+        self._display_btn.setToolTip(tr("Reading aids for the plot"))
+        display_menu = QMenu(self._display_btn)
+        display_menu.setToolTipsVisible(True)
+        self._declutter_action = display_menu.addAction(tr("Tidy labels"))
+        self._declutter_action.setCheckable(True)
+        self._declutter_action.setChecked(True)
+        self._declutter_action.setToolTip(
             tr(
                 "Hide the labels of weaker peaks where labels would overlap.\n"
                 "They come back as you zoom in; selected and assigned peaks always stay."
             )
         )
-        self._declutter_btn.toggled.connect(self.set_declutter_enabled)
-        toolbar_row.addWidget(self._declutter_btn)
-
-        self._crosshair_btn = QPushButton(tr("Crosshair"))
-        self._crosshair_btn.setCheckable(True)
-        self._crosshair_btn.setChecked(True)
-        self._crosshair_btn.setFixedHeight(22)
-        self._crosshair_btn.setToolTip(
+        self._declutter_action.toggled.connect(self.set_declutter_enabled)
+        self._crosshair_action = display_menu.addAction(tr("Crosshair"))
+        self._crosshair_action.setCheckable(True)
+        self._crosshair_action.setChecked(True)
+        self._crosshair_action.setToolTip(
             tr("Follow the pointer with a hairline and show the values of the curve under it")
         )
-        self._crosshair_btn.toggled.connect(self.set_crosshair_enabled)
-        toolbar_row.addWidget(self._crosshair_btn)
+        self._crosshair_action.toggled.connect(self.set_crosshair_enabled)
+        self._display_btn.setMenu(display_menu)
+        toolbar_row.addWidget(self._display_btn)
+        # The bar must never dictate the width of the plot (and with it of the
+        # whole window layout); when space is short it is the bar that yields.
+        self._toolbar_bar.setSizePolicy(QSizePolicy.Policy.Ignored, QSizePolicy.Policy.Fixed)
+        self._overlay_bar.setSizePolicy(QSizePolicy.Policy.Ignored, QSizePolicy.Policy.Fixed)
         layout.addWidget(self._toolbar_bar)
 
         # ── Legend — only shown while band markers are drawn in the plot ────
@@ -669,8 +678,26 @@ class SpectrumWidget(QWidget):
             finite = spectrum.intensities[np.isfinite(spectrum.intensities)]
             if finite.size:
                 reference = float(finite.max() if spectrum.is_dip_spectrum else finite.min())
+        # A zoom is applied to the plot lazily, on its next repaint. Measuring
+        # before that would read every label at its previous place.
+        for plot_widget in (self._plot_widget, self._fp_plot_widget):
+            if plot_widget is None:
+                continue
+            try:
+                plot_widget.getPlotItem().vb.updateMatrix()
+            except Exception:  # noqa: BLE001 — a reading aid must never break the plot
+                pass
         for items in (self._peak_items, self._peak_items_fp):
             labels = [item for item in items if isinstance(item, _DraggableLabel)]
+            # A hidden label keeps the screen geometry it had when it was
+            # hidden. Measured as it is, it would look huge after a zoom and
+            # never come back, so every label is shown and re-laid first.
+            for label in labels:
+                label.setVisible(True)
+                try:
+                    label.updateTransform(force=True)
+                except TypeError:  # older pyqtgraph: no ``force`` argument
+                    label.updateTransform()
             kept: list = []
             for label in sorted(
                 labels, key=lambda item: self._label_priority(item, reference), reverse=True

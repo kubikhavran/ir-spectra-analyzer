@@ -113,11 +113,15 @@ class PeakTableWidget(QWidget):
 
         self._table = _CopyableTable(0, 4)
         self._table.setHorizontalHeaderLabels([tr(header) for header in _HEADERS])
-        for column in (0, 1):
-            self._table.horizontalHeaderItem(column).setTextAlignment(_NUMERIC_ALIGNMENT)
-        self._table.horizontalHeaderItem(2).setTextAlignment(Qt.AlignmentFlag.AlignCenter)
-        for column, tip in _COLUMN_TIPS.items():
-            self._table.horizontalHeaderItem(column).setToolTip(tr(tip))
+        alignments = {0: _NUMERIC_ALIGNMENT, 1: _NUMERIC_ALIGNMENT, 2: Qt.AlignmentFlag.AlignCenter}
+        for column in range(self._table.columnCount()):
+            header_item = self._table.horizontalHeaderItem(column)
+            if header_item is None:
+                continue
+            if column in alignments:
+                header_item.setTextAlignment(alignments[column])
+            if column in _COLUMN_TIPS:
+                header_item.setToolTip(tr(_COLUMN_TIPS[column]))
         header = self._table.horizontalHeader()
         header.setStretchLastSection(True)
         header.setDefaultAlignment(Qt.AlignmentFlag.AlignLeft | Qt.AlignmentFlag.AlignVCenter)

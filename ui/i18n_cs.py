@@ -148,7 +148,7 @@ CZECH_TEXTS: dict[str, str] = {
     "Single Beam": "Jednopaprskové spektrum",
     "Baseline Corrected": "Po korekci baseline",
     "baseline corrected": "po korekci baseline",
-    "as loaded": "jak bylo načteno",
+    "as loaded": "původní",
     "Range:": "Rozsah:",
     "Full": "Celé",
     "Show the whole spectrum": "Zobrazí celé spektrum",
@@ -159,12 +159,14 @@ CZECH_TEXTS: dict[str, str] = {
     "Show fingerprint region (400–2000 cm⁻¹) expanded": (
         "Zobrazí oblast otisku prstu (400–2000 cm⁻¹) roztaženě"
     ),
-    "Show as:": "Zobrazit jako:",
+    "Show as:": "Jednotka:",
     "Redraw the spectrum in another intensity unit.\n"
     "The loaded data is not changed; overlays follow the same unit.": (
         "Překreslí spektrum v jiné jednotce intenzity.\n"
         "Načtená data se nemění; překrytá reference se zobrazí ve stejné jednotce."
     ),
+    "Display": "Zobrazení",
+    "Reading aids for the plot": "Pomůcky pro čtení grafu",
     "Tidy labels": "Uklidit popisky",
     "Hide the labels of weaker peaks where labels would overlap.\n"
     "They come back as you zoom in; selected and assigned peaks always stay.": (

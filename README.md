@@ -41,6 +41,26 @@ molecule, and export a publication-quality PDF report — all in one native app.
   with its baseline at 100 %.
 - **Multi-spectrum overlay** with legend and independent color assignment.
 - **Unit conversion** between Absorbance / Transmittance / Reflectance / Single-Beam.
+- **Reading aids** — one-click wavenumber windows (Full / 4000–2000 / 2000–400), a
+  crosshair that follows the curve and shows the values under the pointer, and
+  *Tidy labels*, which hides the labels of weaker peaks where labels would overlap
+  (they return as you zoom in; selected and assigned peaks always stay). All three
+  are switched in the **Display** menu above the plot.
+
+### Interface
+- **Start page** — an empty window offers *Open Spectrum*, *Open Project* and the
+  recent files; a `.spa`, `.jdx`, `.dx` or `.irproj` file can be dropped anywhere
+  on the window.
+- **Toolbar grouped by task** with icons: file · undo/redo · tools · peaks ·
+  baseline · library · export.
+- **Status bar** — the wavenumber and intensity under the pointer, plus the
+  standing facts: number of peaks and how many are assigned, the unit on screen,
+  whether the baseline is corrected, and how many labels are hidden.
+- **Layout is remembered** between sessions; *View → Reset Layout* restores the
+  default arrangement.
+- **Language** — English or Czech (*View → Language*). The default follows the
+  operating system; the change applies the next time the application starts.
+  Chemical names (vibrations, functional groups) are data and stay as they are.
 
 ### Peak picking & interpretation
 - **Automatic peak detection** (SciPy `find_peaks`) with a **Sensitivity** slider

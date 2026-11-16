@@ -461,26 +461,31 @@ class MainWindow(QMainWindow):
     def _restore_window_layout(self) -> None:
         """Bring back the window size and panel arrangement of the last session."""
         self._layout_restored = False
-        for key, restore in (
-            ("window_geometry", self.restoreGeometry),
-            ("window_state", self.restoreState),
-        ):
+        for key in ("window_geometry", "window_state"):
             stored = self._settings.get(key)
             if not isinstance(stored, str) or not stored:
                 continue
             try:
-                if restore(QByteArray.fromBase64(stored.encode("ascii"))):
-                    self._layout_restored = True
+                blob = QByteArray.fromBase64(stored.encode("ascii"))
+                restored = (
+                    self.restoreGeometry(blob)
+                    if key == "window_geometry"
+                    else self.restoreState(blob)
+                )
             except Exception:  # noqa: BLE001 — a stale layout must never block start-up
                 continue
+            if restored:
+                self._layout_restored = True
 
     def _save_window_layout(self) -> None:
         """Remember the window size and panel arrangement for the next start."""
         try:
             self._settings.set(
-                "window_geometry", bytes(self.saveGeometry().toBase64()).decode("ascii")
+                "window_geometry", bytes(self.saveGeometry().toBase64().data()).decode("ascii")
             )
-            self._settings.set("window_state", bytes(self.saveState().toBase64()).decode("ascii"))
+            self._settings.set(
+                "window_state", bytes(self.saveState().toBase64().data()).decode("ascii")
+            )
         except Exception:  # noqa: BLE001 — remembering the layout is best-effort
             pass
 
