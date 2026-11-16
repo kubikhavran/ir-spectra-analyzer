@@ -658,4 +658,20 @@ CZECH_TEXTS: dict[str, str] = {
     ),
     "Rocking \u03c1": "Kývavé \u03c1",
     "Wagging \u03c9": "Vějířové \u03c9",
+    # ── Export options ──────────────────────────────────────────────────────
+    "CSV (text table)": "CSV (textová tabulka)",
+    "Contents:": "Obsah:",
+    "Whole analysis: metadata, peaks and spectrum": "Celá analýza: údaje, píky a spektrum",
+    "Peak table only": "Jen tabulka píků",
+    "Spectrum data only (wavenumber, intensity)": "Jen data spektra (vlnočet, intenzita)",
+    "Numbers:": "Čísla:",
+    "Decimal point (1.5)": "Desetinná tečka (1.5)",
+    "Decimal comma (1,5)": "Desetinná čárka (1,5)",
+    "Use the decimal comma for a Czech Excel, the decimal point for other software": (
+        "Desetinnou čárku použijte pro český Excel, tečku pro ostatní programy"
+    ),
+    "Include spectrum chart in Excel": "Přidat do Excelu graf spektra",
+    "Adds a chart of the spectrum to the Spectrum sheet, wavenumbers from 4000 to 400": (
+        "Přidá na list Spectrum graf spektra s vlnočty od 4000 do 400"
+    ),
 }

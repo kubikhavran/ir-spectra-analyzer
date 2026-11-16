@@ -114,7 +114,12 @@ molecule, and export a publication-quality PDF report — all in one native app.
 - **Publication-quality PDF reports** — OMNIC-style spectrum render (Matplotlib),
   peak table, vibration assignments, metadata block, and embedded molecule
   structure. Fully customizable header / footer / spectrum X-range via dialog.
-- **Data export** — peaks + spectrum to `.xlsx` or `.csv` with format-selection dialog.
+- **Data export** — to `.xlsx` or `.csv`, in the unit shown in the viewer.
+  - CSV: the whole analysis (metadata, peaks and spectrum side by side), the peak
+    table only, or the spectrum data only (for Origin, MestReNova, Python), with a
+    decimal point or a decimal comma (offered first in the Czech interface).
+  - Excel: number formats, a filter and shaded rows on the peak sheet, the molecule
+    beside the metadata, and an optional chart of the spectrum (4000 → 400 cm⁻¹).
 - **Project save/load** — full workspace (spectrum + peaks + assignments + baseline +
   structure + metadata) as a single human-readable `.irproj` JSON file.
 

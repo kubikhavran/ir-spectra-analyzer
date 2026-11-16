@@ -1254,9 +1254,16 @@ class MainWindow(QMainWindow):
             if self._export_pdf(dialog.report_options):
                 dialog.remember_selected_preset()
         elif format_choice == "csv":
-            self._export_csv(include_unassigned=dialog.include_unassigned)
+            self._export_csv(
+                include_unassigned=dialog.include_unassigned,
+                mode=getattr(dialog, "csv_mode", "combined"),
+                decimal_separator=getattr(dialog, "decimal_separator", "."),
+            )
         elif format_choice == "xlsx":
-            self._export_xlsx(include_unassigned=dialog.include_unassigned)
+            self._export_xlsx(
+                include_unassigned=dialog.include_unassigned,
+                include_chart=bool(getattr(dialog, "include_chart", False)),
+            )
 
     def _export_pdf(self, report_options=None) -> bool:
         """Export the current project to a PDF report."""
@@ -1339,7 +1346,13 @@ class MainWindow(QMainWindow):
         )
         return shown_project, shown_placements
 
-    def _export_csv(self, *, include_unassigned: bool = False) -> None:
+    def _export_csv(
+        self,
+        *,
+        include_unassigned: bool = False,
+        mode: str = "combined",
+        decimal_separator: str = ".",
+    ) -> None:
         """Export peaks to a CSV file."""
         project = self._project
         if project is None or project.spectrum is None:
@@ -1359,20 +1372,27 @@ class MainWindow(QMainWindow):
         from file_io.csv_exporter import CSVExporter  # noqa: PLC0415
 
         try:
-            spectrum = project.corrected_spectrum or project.spectrum
+            # What is exported is what is on screen: with the view switched to
+            # another unit the numbers follow it, as the PDF report does.
+            shown, _placements = self._project_as_displayed(project)
+            spectrum = shown.corrected_spectrum or shown.spectrum
             CSVExporter().export(
-                project.peaks,
+                shown.peaks,
                 Path(path),
                 spectrum,
                 include_unassigned=include_unassigned,
-                project=project,
+                project=shown,
+                mode=mode,
+                decimal_separator=decimal_separator,
             )
             self._remember_save_dir(path)
             self.statusBar().showMessage(tr("CSV exported: {name}").format(name=Path(path).name))
         except Exception as e:  # noqa: BLE001
             QMessageBox.critical(self, tr("Export Error"), tr("Failed to export CSV:") + f"\n{e}")
 
-    def _export_xlsx(self, *, include_unassigned: bool = False) -> None:
+    def _export_xlsx(
+        self, *, include_unassigned: bool = False, include_chart: bool = False
+    ) -> None:
         """Export peaks and spectrum to an Excel file."""
         project = self._project
         if project is None or project.spectrum is None:
@@ -1392,13 +1412,15 @@ class MainWindow(QMainWindow):
         from file_io.xlsx_exporter import XLSXExporter  # noqa: PLC0415
 
         try:
-            spectrum = project.corrected_spectrum or project.spectrum
+            shown, _placements = self._project_as_displayed(project)
+            spectrum = shown.corrected_spectrum or shown.spectrum
             XLSXExporter().export(
-                project.peaks,
+                shown.peaks,
                 Path(path),
                 spectrum,
                 include_unassigned=include_unassigned,
-                project=project,
+                project=shown,
+                include_chart=include_chart,
             )
             self._remember_save_dir(path)
             self.statusBar().showMessage(tr("Excel exported: {name}").format(name=Path(path).name))
