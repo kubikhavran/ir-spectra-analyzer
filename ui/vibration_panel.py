@@ -13,7 +13,7 @@ from __future__ import annotations
 from typing import TYPE_CHECKING
 
 from PySide6.QtCore import Qt, Signal
-from PySide6.QtGui import QBrush, QColor
+from PySide6.QtGui import QBrush, QColor, QKeySequence, QShortcut
 from PySide6.QtWidgets import (
     QCheckBox,
     QComboBox,
@@ -37,6 +37,9 @@ from ui.vibration_text_edit import VibrationTextEdit
 if TYPE_CHECKING:
     from core.peak import Peak
 
+_ASSIGN_IDLE_TEXT = "Assign to selected peak"
+_BROWSE_HINT = "Click a vibration to see its range in the spectrum"
+
 # Preset categories grouped into the panel's "Protecting groups" section.
 _PG_CATEGORIES = {"silyl"}
 
@@ -45,7 +48,10 @@ class VibrationPanel(QWidget):
     """Panel displaying vibration presets for assignment to peaks."""
 
     preset_selected = Signal(object)  # emits VibrationPreset on double-click
-    preset_clicked_for_assign = Signal(object)  # emits VibrationPreset on single-click
+    #: Emits the highlighted VibrationPreset when the user asks for it to be
+    #: assigned (the Assign button or Enter). A plain click never assigns — it
+    #: only shows where the vibration can appear, so the list can be browsed.
+    preset_clicked_for_assign = Signal(object)
     preset_added = Signal()  # emits when a custom preset is saved
     preset_deleted = Signal()  # emits when a custom preset is deleted
     preset_remove_requested = Signal(object)  # emits VibrationPreset to remove from active peak
@@ -87,16 +93,33 @@ class VibrationPanel(QWidget):
         self._filter_edit.textChanged.connect(self._apply_filter)
         layout.addWidget(self._filter_edit)
 
-        self._hint_label = QLabel("")
+        self._hint_label = QLabel(_BROWSE_HINT)
+        self._hint_label.setWordWrap(True)
         self._hint_label.setStyleSheet("color: gray; font-size: 9pt;")
         layout.addWidget(self._hint_label)
 
         self._list = QListWidget()
         self._list.itemDoubleClicked.connect(self._on_item_double_clicked)
         self._list.itemClicked.connect(self._on_item_clicked)
+        self._list.currentItemChanged.connect(lambda *_: self._update_assign_button())
         self._list.setContextMenuPolicy(Qt.ContextMenuPolicy.CustomContextMenu)
         self._list.customContextMenuRequested.connect(self._on_context_menu)
         layout.addWidget(self._list)
+
+        # Enter assigns the highlighted vibration, like the button below.
+        for key in (Qt.Key.Key_Return, Qt.Key.Key_Enter):
+            shortcut = QShortcut(QKeySequence(key), self._list)
+            shortcut.setContext(Qt.ShortcutContext.WidgetShortcut)
+            shortcut.activated.connect(self._on_assign_clicked)
+
+        self._assign_btn = QPushButton(_ASSIGN_IDLE_TEXT)
+        self._assign_btn.setEnabled(False)
+        self._assign_btn.setToolTip(
+            "Assign the highlighted vibration to the selected peak.\n"
+            "Double-clicking the vibration or pressing Enter does the same."
+        )
+        self._assign_btn.clicked.connect(self._on_assign_clicked)
+        layout.addWidget(self._assign_btn)
 
         self._show_range_checkbox = QCheckBox("Show vibration range in spectrum")
         self._show_range_checkbox.setChecked(True)
@@ -117,14 +140,16 @@ class VibrationPanel(QWidget):
         self._db = db
 
     def set_active_peak(self, peak: Peak | None) -> None:
-        """Track the currently active peak for context menu remove action."""
+        """Track the currently active peak for assignment and the context menu."""
         self._active_peak = peak
+        self._update_assign_button()
 
     def clear_peak_context(self) -> None:
         """Clear active-peak hint and remove range highlighting."""
         self._active_peak = None
-        self._hint_label.setText("")
+        self._hint_label.setText(_BROWSE_HINT)
         self._rebuild_list(self._filter_edit.text())
+        self._update_assign_button()
 
     def set_functional_group_tags(self, tags: list[tuple[str, frozenset[str]]]) -> None:
         """Populate the functional-group tag filter (name, preset-name set) pairs."""
@@ -153,7 +178,9 @@ class VibrationPanel(QWidget):
 
     def highlight_for_peak(self, wavenumber: float) -> None:
         self._rebuild_list(self._filter_edit.text())
-        self._hint_label.setText(f"Active peak: {wavenumber:.0f} cm\u207b\u00b9")
+        self._hint_label.setText(
+            f"Active peak: {wavenumber:.0f} cm\u207b\u00b9 \u00b7 double-click to assign"
+        )
         for i in range(self._list.count()):
             item = self._list.item(i)
             preset = item.data(256)
@@ -239,17 +266,43 @@ class VibrationPanel(QWidget):
                     break
         if not restored:
             scrollbar.setValue(min(scroll_value, scrollbar.maximum()))
+        self._update_assign_button()
 
     def _apply_filter(self, text: str) -> None:
         self._rebuild_list(text)
 
     def _on_item_clicked(self, item: QListWidgetItem) -> None:
+        """A click only looks: outline where the vibration can appear.
+
+        It used to assign as well, so the list could not be browsed while a
+        peak was selected without writing an assignment on every click.
+        """
         preset = item.data(256)
         if preset is not None:
-            # Range first: it applies to every vibration, custom entries
-            # included, whether or not a peak is selected to assign to.
             self.preset_range_requested.emit(preset)
+
+    def _highlighted_preset(self) -> VibrationPreset | None:
+        item = self._list.currentItem()
+        preset = item.data(256) if item is not None else None
+        return preset if isinstance(preset, VibrationPreset) else None
+
+    def _on_assign_clicked(self) -> None:
+        preset = self._highlighted_preset()
+        if preset is not None:
             self.preset_clicked_for_assign.emit(preset)
+
+    def _update_assign_button(self) -> None:
+        """Say what the Assign button would do, and enable it only when it can."""
+        button = getattr(self, "_assign_btn", None)
+        if button is None:  # still building the UI
+            return
+        peak = self._active_peak
+        if peak is None:
+            button.setText(_ASSIGN_IDLE_TEXT)
+            button.setEnabled(False)
+            return
+        button.setText(f"Assign to peak {peak.position:.0f} cm\u207b\u00b9")
+        button.setEnabled(self._highlighted_preset() is not None)
 
     def _on_item_double_clicked(self, item: QListWidgetItem) -> None:
         preset = item.data(256)

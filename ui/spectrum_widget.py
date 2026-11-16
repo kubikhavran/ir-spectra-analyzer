@@ -736,10 +736,11 @@ class SpectrumWidget(QWidget):
     def _overlay_on_corrected_scale(spectrum: Spectrum, *, dips: bool) -> Spectrum:
         """A reference given the same baseline treatment as the corrected curve.
 
-        After Correct Baseline the main curve sits at zero, while a library
-        reference is still raw %T near 100 — it was drawn far outside the plot
-        and the overlay looked empty. Putting the reference on the same
-        polarity and subtracting its own rubber band lines the two up again.
+        A curve in the "Baseline Corrected" unit sits at zero (corrected
+        absorbance, and corrected %T in projects from older versions), while a
+        library reference is raw %T near 100 — it was drawn far outside the
+        plot and the overlay looked empty. Putting the reference on the same
+        polarity and removing its own rubber band lines the two up again.
         """
         from dataclasses import replace  # noqa: PLC0415
 
@@ -762,6 +763,10 @@ class SpectrumWidget(QWidget):
         corrected[finite] = rubber_band_baseline(
             aligned.wavenumbers[finite], aligned.intensities[finite], upper=dips
         )
+        if dips:
+            # Only projects saved by older versions get here: their corrected
+            # %T curve hangs from zero, the current correction from 100 %.
+            corrected[finite] -= 100.0
         return replace(aligned, intensities=corrected, y_unit=SpectralUnit.BASELINE_CORRECTED)
 
     def _display_y(self, value: float) -> float:
@@ -792,7 +797,7 @@ class SpectrumWidget(QWidget):
         )
 
         label_style = {"color": "#000000", "font-size": "10pt"}
-        self._plot_widget.setLabel("left", spectrum.display_y_unit.value, **label_style)
+        self._plot_widget.setLabel("left", spectrum.y_axis_label, **label_style)
 
         if self._split_mode and self._spectrum_curve_fp is not None:
             self._spectrum_curve_fp.setData(
@@ -1402,9 +1407,10 @@ class SpectrumWidget(QWidget):
         if self._add_peak_mode:
             if event.modifiers() & Qt.KeyboardModifier.ShiftModifier:
                 return  # let label's shift_click_callback handle deletion
-            # Ctrl places the peak exactly under the pointer (a shoulder has no
-            # apex to snap to); a plain click lands on the band's apex.
-            if not (event.modifiers() & Qt.KeyboardModifier.ControlModifier):
+            # A plain click marks exactly the point under the pointer — any point
+            # of the spectrum can be labelled, not only a band maximum. Ctrl is
+            # the opt-in shortcut for "put it on the apex of this band".
+            if event.modifiers() & Qt.KeyboardModifier.ControlModifier:
                 wavenumber = self.snap_to_band_apex(wavenumber, self._snap_tolerance_for(vb))
             # Don't add a new peak if the click landed on an existing label
             if self._peaks:
@@ -1461,9 +1467,8 @@ class SpectrumWidget(QWidget):
             y = y[::-1]
         return float(np.interp(wavenumber, x, y))
 
-    # How close to a band's apex a click has to land, in screen pixels, for the
-    # new peak to snap onto it. At full view one pixel is ~5 cm⁻¹, so without
-    # snapping the stored position depended on where exactly the mouse was.
+    # How close to a band's apex a Ctrl+click has to land, in screen pixels, for
+    # the new peak to snap onto it.
     _SNAP_PIXELS = 10.0
 
     def _snap_tolerance_for(self, view_box) -> float:

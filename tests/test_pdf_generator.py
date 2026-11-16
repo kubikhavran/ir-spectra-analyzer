@@ -654,12 +654,12 @@ def test_identity_line_only_strips_known_spectrum_extensions() -> None:
     from reporting.pdf_generator import PDFGenerator
 
     strip = PDFGenerator._without_spectrum_suffix
-    assert strip("FER60-SE.SPA") == "FER60-SE"
+    assert strip("ref03.SPA") == "ref03"
     assert strip("PAR1706-HA.spa") == "PAR1706-HA"
     assert strip("run.jdx") == "run"
     assert strip("saved.irproj") == "saved"
     assert strip("sample 2.5 mg") == "sample 2.5 mg"
-    assert strip("FER60-SE") == "FER60-SE"
+    assert strip("ref03") == "ref03"
 
 
 def _assert_box_is_blank(png_bytes: bytes, box: tuple[float, float, float, float]) -> None:

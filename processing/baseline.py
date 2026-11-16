@@ -3,7 +3,8 @@ Baseline — Korekce baseline IR spektra.
 
 Zodpovědnost:
 - Polynomial baseline fitting
-- Rubber band correction (lower-hull for Absorbance, upper-hull for %Transmittance)
+- Rubber band correction (lower hull subtracted for Absorbance, upper hull
+  divided out for %Transmittance)
 - Asymmetric Least Squares (ALS) baseline
 
 Architektonické pravidlo:
@@ -112,20 +113,22 @@ def rubber_band_baseline(
     *,
     upper: bool = False,
 ) -> np.ndarray:
-    """Subtract a rubber-band convex-hull baseline from intensities.
+    """Remove a rubber-band convex-hull baseline from intensities.
 
-    The direction of the hull depends on the spectral mode:
+    The treatment depends on the spectral mode, because the two scales carry a
+    baseline differently:
 
-    * ``upper=False`` (default) — **Absorbance mode**: lower convex hull is
-      used as the baseline.  Returns ``intensities − lower_hull``.  Absorption
-      peaks (which point upward in absorbance) remain positive; the baseline
-      regions become zero.
+    * ``upper=False`` (default) — **Absorbance mode**: a baseline adds to
+      absorbance, so the lower convex hull is subtracted.  Returns
+      ``intensities − lower_hull``; baseline regions become zero and
+      absorption peaks stay positive.
 
-    * ``upper=True`` — **%Transmittance mode**: upper convex hull is used as
-      the baseline.  Returns ``intensities − upper_hull`` so that the flat
-      transmission baseline is pulled to zero while absorption bands (downward
-      dips in %T) remain downward — preserving the familiar %T visual
-      orientation.  Corrected values are non-positive for clean %T data.
+    * ``upper=True`` — **%Transmittance mode**: a baseline multiplies
+      transmittance (T = T_sample · T_baseline), so the upper convex hull is
+      divided out.  Returns ``intensities / upper_hull · 100`` — still %T, with
+      the baseline at 100 % and band depths in true proportion.  Subtracting
+      the hull, as earlier versions did, left a curve in "negative %T" whose
+      band depths were distorted wherever the baseline sat below 100 %.
 
     Args:
         wavenumbers: X-axis data (cm⁻¹, ascending or descending).
@@ -146,12 +149,21 @@ def rubber_band_baseline(
     if wn.size == 0:
         raise ValueError("Spectrum must contain at least one data point")
     if wn.size == 1:
-        return np.array([0.0], dtype=float)
+        return np.array([100.0 if upper else 0.0], dtype=float)
 
     baseline = _convex_hull_baseline(wn, y, upper=upper)
 
-    if upper:
-        return (
-            y - baseline
-        )  # y − upper_hull  →  negative at absorption dips, preserving visual orientation
-    return y - baseline  # y − lower_hull  →  positive at absorption peaks
+    if not upper:
+        # y − lower_hull  →  positive at absorption peaks
+        return np.asarray(y - baseline, dtype=float)
+
+    if float(np.min(baseline)) <= _MIN_RATIO_BASELINE:
+        # A hull that touches zero cannot be divided out (not a %T curve at
+        # all, e.g. data that was already offset-corrected). Shift it to the
+        # 100 % line instead so the result stays on the same scale.
+        return np.asarray(y - baseline + 100.0, dtype=float)
+    return np.asarray(y / baseline * 100.0, dtype=float)
+
+
+# Smallest hull value (in %T) the ratio correction is applied to.
+_MIN_RATIO_BASELINE = 1e-6

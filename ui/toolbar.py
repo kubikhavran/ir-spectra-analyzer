@@ -9,9 +9,16 @@ Zodpovědnost:
 
 from __future__ import annotations
 
-from PySide6.QtCore import Signal
+from PySide6.QtCore import Qt, Signal
 from PySide6.QtGui import QAction, QActionGroup
-from PySide6.QtWidgets import QToolBar
+from PySide6.QtWidgets import QHBoxLayout, QLabel, QSizePolicy, QSlider, QToolBar, QWidget
+
+from processing.peak_detection import (
+    DEFAULT_SENSITIVITY,
+    SENSITIVITY_MAX,
+    SENSITIVITY_MIN,
+    clamp_sensitivity,
+)
 
 
 class MainToolbar(QToolBar):
@@ -22,6 +29,8 @@ class MainToolbar(QToolBar):
     match_spectrum = Signal()
     clear_peaks = Signal()
     arrange_labels = Signal()
+    #: Emits the new detection sensitivity (1–10) once the slider settles.
+    sensitivity_changed = Signal(int)
 
     def __init__(self, parent=None) -> None:
         super().__init__("Main Toolbar", parent)
@@ -75,8 +84,8 @@ class MainToolbar(QToolBar):
             (
                 self._add_peak_action,
                 "A",
-                "Add Peak — click a band; the peak snaps to its apex "
-                "(hold Ctrl to place it exactly where you click, e.g. on a shoulder)",
+                "Add Peak — click any point of the spectrum to label it "
+                "(hold Ctrl to snap to the apex of the band under the pointer)",
             ),
         ):
             action.setShortcut(key)
@@ -101,6 +110,8 @@ class MainToolbar(QToolBar):
         # Peak detection
         self._detect_action = QAction("Detect Peaks", self)
         self.addAction(self._detect_action)
+
+        self._setup_sensitivity_control()
 
         self._clear_peaks_action = QAction("Clear Peaks", self)
         self.addAction(self._clear_peaks_action)
@@ -129,7 +140,8 @@ class MainToolbar(QToolBar):
 
         self._open_action.setToolTip("Open a spectrum file (Ctrl+O)")
         self._detect_action.setToolTip(
-            "Find peaks automatically. Peaks that already carry an assignment are kept."
+            "Find peaks automatically at the sensitivity set beside this button.\n"
+            "Peaks that already carry an assignment are kept."
         )
         self._clear_peaks_action.setToolTip("Remove every peak (Ctrl+Z brings them back)")
         self._arrange_labels_action.setToolTip("Stagger overlapping peak labels")
@@ -144,3 +156,64 @@ class MainToolbar(QToolBar):
 
         if self._match_action is not None:
             self._match_action.triggered.connect(self.match_spectrum)
+
+    def _setup_sensitivity_control(self) -> None:
+        """Slider next to Detect Peaks that sets how faint a band still counts."""
+        holder = QWidget(self)
+        # Fixed width: a toolbar stretches an expanding widget, which pushed the
+        # slider to the far end, away from its label and from Detect Peaks.
+        holder.setSizePolicy(QSizePolicy.Policy.Fixed, QSizePolicy.Policy.Preferred)
+        row = QHBoxLayout(holder)
+        row.setContentsMargins(4, 0, 8, 0)
+        row.setSpacing(4)
+
+        tip = (
+            "Detection sensitivity: 1 marks only the dominant bands, "
+            f"{SENSITIVITY_MAX} also the faintest ones.\n"
+            "After Detect Peaks, moving the slider re-detects straight away."
+        )
+        label = QLabel("Sensitivity")
+        label.setToolTip(tip)
+        row.addWidget(label)
+
+        self._sensitivity_slider = QSlider(Qt.Orientation.Horizontal, holder)
+        self._sensitivity_slider.setRange(SENSITIVITY_MIN, SENSITIVITY_MAX)
+        self._sensitivity_slider.setPageStep(1)
+        self._sensitivity_slider.setValue(DEFAULT_SENSITIVITY)
+        self._sensitivity_slider.setFixedWidth(96)
+        self._sensitivity_slider.setTickPosition(QSlider.TickPosition.TicksBelow)
+        self._sensitivity_slider.setTickInterval(1)
+        self._sensitivity_slider.setToolTip(tip)
+        # Report the value when the handle is released, not at every step it
+        # passes on the way — each report can re-run a detection.
+        self._sensitivity_slider.setTracking(False)
+        row.addWidget(self._sensitivity_slider)
+
+        self._sensitivity_value = QLabel(str(DEFAULT_SENSITIVITY))
+        self._sensitivity_value.setFixedWidth(16)
+        self._sensitivity_value.setToolTip(tip)
+        row.addWidget(self._sensitivity_value)
+
+        self._sensitivity_slider.sliderMoved.connect(
+            lambda value: self._sensitivity_value.setText(str(value))
+        )
+        self._sensitivity_slider.valueChanged.connect(self._on_sensitivity_value_changed)
+        self.addWidget(holder)
+
+    def _on_sensitivity_value_changed(self, value: int) -> None:
+        self._sensitivity_value.setText(str(value))
+        self.sensitivity_changed.emit(int(value))
+
+    def sensitivity(self) -> int:
+        """Current peak-detection sensitivity (1–10)."""
+        return int(self._sensitivity_slider.value())
+
+    def set_sensitivity(self, value: object) -> None:
+        """Show a stored sensitivity without announcing it as a user change."""
+        level = clamp_sensitivity(value)
+        blocked = self._sensitivity_slider.blockSignals(True)
+        try:
+            self._sensitivity_slider.setValue(level)
+        finally:
+            self._sensitivity_slider.blockSignals(blocked)
+        self._sensitivity_value.setText(str(level))

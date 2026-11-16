@@ -13,6 +13,7 @@ from unittest.mock import MagicMock
 
 import numpy as np
 import pytest
+from PySide6.QtCore import QPointF, Qt
 
 from core.commands import CorrectBaselineCommand
 from core.peak import Peak
@@ -63,24 +64,33 @@ def _window(qtbot) -> MainWindow:
 # ── Baseline correction ──────────────────────────────────────────────────────
 
 
-def test_baseline_correction_moves_existing_peaks_onto_the_corrected_curve() -> None:
-    """Labels used to stay at the raw intensity, ~100 units above the new curve."""
+def _dim_transmittance(factor: float = 0.5) -> Spectrum:
+    """A %T spectrum whose whole baseline sits at ``100 * factor`` %."""
     spectrum = _transmittance()
+    return replace(spectrum, intensities=spectrum.intensities * factor)
+
+
+def _legacy_corrected(spectrum: Spectrum) -> np.ndarray:
+    """Corrected %T as versions up to 0.29 stored it: hull subtracted, bands below zero."""
+    return spectrum.intensities - float(spectrum.intensities.max())
+
+
+def test_baseline_correction_moves_existing_peaks_onto_the_corrected_curve() -> None:
+    """Labels used to stay at the raw intensity, far from the corrected curve."""
+    spectrum = _dim_transmittance()
     project = Project(name="p", spectrum=spectrum)
     peak = Peak(position=1715.0, intensity=float(np.interp(1715.0, _WN, spectrum.intensities)))
     project.add_peak(peak)
     raw_intensity = peak.intensity
 
     corrected = replace(
-        spectrum,
-        intensities=rubber_band_baseline(_WN, spectrum.intensities, upper=True),
-        y_unit=SpectralUnit.BASELINE_CORRECTED,
+        spectrum, intensities=rubber_band_baseline(_WN, spectrum.intensities, upper=True)
     )
     command = CorrectBaselineCommand(project, corrected)
     command.redo()
 
     assert peak.intensity == pytest.approx(float(np.interp(1715.0, _WN, corrected.intensities)))
-    assert peak.intensity < 0.0
+    assert peak.intensity == pytest.approx(2.0 * raw_intensity, rel=1e-3)
 
     command.undo()
     assert peak.intensity == pytest.approx(raw_intensity)
@@ -88,27 +98,48 @@ def test_baseline_correction_moves_existing_peaks_onto_the_corrected_curve() -> 
 
 
 def test_baseline_correction_keeps_the_curve_in_view(qtbot) -> None:
-    """The old Y range (60–100 %T) was kept, so the corrected curve was off screen."""
+    """The Y range of the raw curve was kept, so the corrected one was off screen."""
     window = _window(qtbot)
-    window._apply_project_to_ui(Project(name="p", spectrum=_transmittance()))
+    window._apply_project_to_ui(Project(name="p", spectrum=_dim_transmittance()))
+    raw = window._project.spectrum
+    assert float(raw.intensities.max()) == pytest.approx(50.0)
+
     window._on_correct_baseline()
 
     corrected = window._project.corrected_spectrum
     assert corrected is not None
+    assert float(corrected.intensities.max()) == pytest.approx(100.0)
     y_lo, y_hi = window._spectrum_widget.get_y_view_range()
     assert y_lo <= float(corrected.intensities.min())
     assert y_hi >= float(corrected.intensities.max())
 
     window._undo_stack.undo()
     y_lo, y_hi = window._spectrum_widget.get_y_view_range()
-    assert y_lo <= float(window._project.spectrum.intensities.min())
-    assert y_hi >= 100.0
+    assert y_lo <= float(raw.intensities.min())
+    assert float(raw.intensities.max()) <= y_hi < 90.0
 
 
-def test_weak_corrected_transmittance_is_still_read_as_dips() -> None:
+def test_corrected_transmittance_stays_usable_as_transmittance(qtbot) -> None:
+    """Dividing the baseline out leaves real %T: the unit switch must still be offered."""
+    window = _window(qtbot)
+    window._apply_project_to_ui(Project(name="p", spectrum=_dim_transmittance()))
+    window._on_correct_baseline()
+
+    corrected = window._project.corrected_spectrum
+    assert corrected.y_unit == SpectralUnit.TRANSMITTANCE
+    assert corrected.is_dip_spectrum
+    assert SpectralUnit.ABSORBANCE in corrected.convertible_units()
+    widget = window._spectrum_widget
+    assert "baseline corrected" in widget._plot_widget.getAxis("left").labelText
+
+    # A raw %T reference is drawn as it is — both curves share the %T scale.
+    reference = _transmittance(depth=30.0)
+    assert widget._overlay_in_display_unit(reference) is reference
+
+
+def test_weak_legacy_corrected_transmittance_is_still_read_as_dips() -> None:
     """Bands shallower than 5 %T fell under a fixed threshold and flipped polarity."""
-    weak = _transmittance(depth=4.0)
-    corrected = rubber_band_baseline(_WN, weak.intensities, upper=True)
+    corrected = _legacy_corrected(_transmittance(depth=4.0))
     assert corrected.min() > -5.0
     assert is_dip_shaped(corrected, SpectralUnit.BASELINE_CORRECTED)
 
@@ -144,11 +175,10 @@ def test_a_mislabeled_file_is_matched_the_way_it_is_displayed() -> None:
     assert cosine_similarity(honest, mislabeled) > 0.99
 
 
-def test_a_weak_corrected_query_matches_its_own_raw_spectrum() -> None:
+def test_a_weak_legacy_corrected_query_matches_its_own_raw_spectrum() -> None:
     weak = _transmittance(depth=4.0)
-    corrected = rubber_band_baseline(_WN, weak.intensities, upper=True)
     raw_vector = _vector(weak.intensities, SpectralUnit.TRANSMITTANCE)
-    corrected_vector = _vector(corrected, SpectralUnit.BASELINE_CORRECTED)
+    corrected_vector = _vector(_legacy_corrected(weak), SpectralUnit.BASELINE_CORRECTED)
     assert cosine_similarity(raw_vector, corrected_vector) > 0.99
 
 
@@ -161,17 +191,14 @@ def test_real_absorbance_is_not_flipped() -> None:
 # ── Viewer ───────────────────────────────────────────────────────────────────
 
 
-def test_overlay_is_drawn_on_the_scale_of_a_corrected_spectrum(qtbot) -> None:
+def test_overlay_is_drawn_on_the_scale_of_a_legacy_corrected_spectrum(qtbot) -> None:
     """A raw %T reference sat near 100 while the corrected curve sat at zero."""
     widget = SpectrumWidget()
     qtbot.addWidget(widget)
     raw = _transmittance()
-    corrected = replace(
-        raw,
-        intensities=rubber_band_baseline(_WN, raw.intensities, upper=True),
-        y_unit=SpectralUnit.BASELINE_CORRECTED,
+    widget.set_spectrum(
+        replace(raw, intensities=_legacy_corrected(raw), y_unit=SpectralUnit.BASELINE_CORRECTED)
     )
-    widget.set_spectrum(corrected)
 
     overlay = widget._overlay_in_display_unit(_transmittance(depth=30.0))
     assert float(np.nanmax(overlay.intensities)) <= 1e-6
@@ -184,8 +211,50 @@ def test_overlay_is_drawn_on_the_scale_of_a_corrected_spectrum(qtbot) -> None:
     assert float(np.nanmax(aligned.intensities)) <= 1e-6
 
 
-def test_add_peak_snaps_to_the_band_apex(qtbot) -> None:
-    """At full view one pixel is ~5 cm⁻¹, so a click never hit the apex exactly."""
+class _Click:
+    """Stand-in for the scene click event the plot hands to the viewer."""
+
+    def __init__(self, scene_pos, modifiers=Qt.KeyboardModifier.NoModifier) -> None:
+        self._scene_pos = scene_pos
+        self._modifiers = modifiers
+
+    def scenePos(self):  # noqa: N802 (Qt naming)
+        return self._scene_pos
+
+    def modifiers(self):
+        return self._modifiers
+
+
+def test_add_peak_marks_exactly_the_clicked_point(qtbot) -> None:
+    """Any point of the spectrum can be labelled; only Ctrl+click goes to the apex."""
+    widget = SpectrumWidget()
+    qtbot.addWidget(widget)
+    widget.resize(1000, 600)
+    widget.show()
+    qtbot.waitExposed(widget)
+    widget.set_spectrum(
+        Spectrum(wavenumbers=_WN.copy(), intensities=_absorbance(), y_unit=SpectralUnit.ABSORBANCE)
+    )
+    widget.set_tool_mode("add_peak")
+    view_box = widget._plot_widget.getPlotItem().vb
+    scene_pos = view_box.mapViewToScene(QPointF(1700.0, 0.5))
+    added: list[tuple[float, float, float]] = []
+    widget.peak_clicked.connect(lambda wn, intensity, y: added.append((wn, intensity, y)))
+
+    widget._handle_mouse_clicked(_Click(scene_pos), widget._plot_widget)
+    assert len(added) == 1
+    assert added[0][0] == pytest.approx(1700.0, abs=0.01)  # on the slope, where clicked
+    assert added[0][1] == pytest.approx(float(np.interp(1700.0, _WN, _absorbance())), rel=1e-6)
+
+    widget._handle_mouse_clicked(
+        _Click(scene_pos, Qt.KeyboardModifier.ControlModifier), widget._plot_widget
+    )
+    assert len(added) == 2
+    assert added[1][0] == pytest.approx(1715.0, abs=1.0)  # the apex of that band
+
+
+def test_snap_helper_finds_the_apex_only_when_it_is_in_reach(qtbot) -> None:
+    """Ctrl+click snapping: the apex within the window, otherwise the click itself."""
     widget = SpectrumWidget()
     qtbot.addWidget(widget)
     widget.set_spectrum(
@@ -352,6 +421,112 @@ def test_report_from_a_converted_view_uses_the_converted_curve(qtbot) -> None:
     # The project being edited is left exactly as it was.
     assert project.spectrum is spectrum
     assert [peak.intensity for peak in project.peaks] == native_intensities
+
+
+def test_clicking_a_vibration_only_shows_its_range(qtbot) -> None:
+    """A click used to assign straight away, so the list could not be browsed."""
+    window = _window(qtbot)
+    spectrum = Spectrum(
+        wavenumbers=_WN.copy(), intensities=_absorbance(), y_unit=SpectralUnit.ABSORBANCE
+    )
+    window._apply_project_to_ui(Project(name="p", spectrum=spectrum))
+    window._on_detect_peaks()
+    peak = next(p for p in window._project.peaks if abs(p.position - 1715.0) < 2.0)
+    window._on_peak_selected_in_viewer(peak)
+
+    panel = window._vibration_panel
+    panel.set_presets(
+        [VibrationPreset(name="ν(C=O)", typical_range_min=1700.0, typical_range_max=1750.0)]
+    )
+    panel.highlight_for_peak(peak.position)
+    item = panel._list.item(0)
+
+    panel._list.setCurrentItem(item)
+    panel._list.itemClicked.emit(item)
+    assert peak.vibration_labels == []
+    assert window._spectrum_widget.vibration_range() == (1700.0, 1750.0)
+    assert window._undo_stack.undoText() == "Detect peaks"  # nothing was written
+    assert "double-click" in panel._hint_label.text()
+
+    # The explicit ways to assign: the button (or Enter) and a double-click.
+    assert panel._assign_btn.isEnabled()
+    assert "1715" in panel._assign_btn.text()
+    panel._assign_btn.click()
+    assert peak.vibration_labels == ["ν(C=O)"]
+
+    window._undo_stack.undo()
+    assert peak.vibration_labels == []
+    panel._list.itemDoubleClicked.emit(panel._list.item(0))
+    assert peak.vibration_labels == ["ν(C=O)"]
+
+
+def test_assign_button_is_off_without_a_selected_peak(qtbot) -> None:
+    panel = VibrationPanel()
+    qtbot.addWidget(panel)
+    panel.set_presets(
+        [VibrationPreset(name="ν(C=O)", typical_range_min=1700.0, typical_range_max=1750.0)]
+    )
+    panel._list.setCurrentRow(0)
+    assert not panel._assign_btn.isEnabled()
+
+    panel.set_active_peak(Peak(position=1715.0, intensity=0.8))
+    assert panel._assign_btn.isEnabled()
+    panel.clear_peak_context()
+    assert not panel._assign_btn.isEnabled()
+
+
+def _faint_and_strong() -> Spectrum:
+    intensities = np.zeros_like(_WN)
+    for centre, height in ((3000.0, 1.0), (1700.0, 0.3), (1200.0, 0.05), (800.0, 0.006)):
+        intensities += height * np.exp(-((_WN - centre) ** 2) / (2 * 15.0**2))
+    return Spectrum(wavenumbers=_WN.copy(), intensities=intensities, y_unit=SpectralUnit.ABSORBANCE)
+
+
+def test_sensitivity_slider_redetects_live_as_one_undo_step(qtbot) -> None:
+    """Detection had one fixed threshold; faint bands could not be picked up at all."""
+    window = _window(qtbot)
+    window._apply_project_to_ui(Project(name="p", spectrum=_faint_and_strong()))
+    slider = window._toolbar._sensitivity_slider
+    assert window._toolbar.sensitivity() == 5
+
+    window._on_detect_peaks()
+    assert len(window._project.peaks) == 3
+    assert "sensitivity 5" in window.statusBar().currentMessage()
+
+    slider.setValue(10)
+    assert len(window._project.peaks) == 4
+    window._settings.set.assert_any_call("peak_sensitivity", 10)
+    slider.setValue(1)
+    assert len(window._project.peaks) == 2
+
+    # However often the slider moved, one Ctrl+Z takes the detection back.
+    window._undo_stack.undo()
+    assert window._project.peaks == []
+    assert not window._undo_stack.canUndo()
+
+
+def test_sensitivity_slider_leaves_later_work_alone(qtbot) -> None:
+    """Once something else was done after detecting, the slider must not redo it."""
+    window = _window(qtbot)
+    window._apply_project_to_ui(Project(name="p", spectrum=_faint_and_strong()))
+    window._on_detect_peaks()
+    window._on_peak_clicked(2500.0, 0.0, 0.1)  # a hand-placed peak
+    assert len(window._project.peaks) == 4
+
+    window._toolbar._sensitivity_slider.setValue(1)
+    assert len(window._project.peaks) == 4
+    assert "press Detect Peaks" in window.statusBar().currentMessage()
+
+
+def test_stored_sensitivity_is_restored_on_start(qtbot) -> None:
+    db = MagicMock()
+    db.get_vibration_presets.return_value = []
+    settings = MagicMock()
+    settings.get.side_effect = lambda key, default=None: 8 if key == "peak_sensitivity" else None
+    window = MainWindow(db=db, settings=settings)
+    qtbot.addWidget(window)
+    assert window._toolbar.sensitivity() == 8
+    settings.set.assert_not_called()
 
 
 # ── Packaging ────────────────────────────────────────────────────────────────

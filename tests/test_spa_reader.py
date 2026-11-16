@@ -469,7 +469,7 @@ _NICOLET_IS10_FILES = [
     p for p in _real_spa_files if p.name in {"0min-1-97C.SPA", "113361_2-22.SPA", "30min-1-97C.SPA"}
 ]
 _has_nicolet_fixtures = len(_NICOLET_IS10_FILES) > 0
-_peaktable_fixture = FIXTURES_DIR / "reference library_1" / "FER58-SE.SPA"
+_peaktable_fixture = FIXTURES_DIR / "reference library_1" / "ref01.SPA"
 
 
 @pytest.mark.skipif(not _has_nicolet_fixtures, reason="Nicolet iS10 fixtures not present")
@@ -676,7 +676,7 @@ def test_peak_labels_fall_back_to_peaktable_without_annotations() -> None:
     """A file with a PEAKTABLE but no type-104 block still yields its peaks."""
     from file_io.spa_binary import SPABinaryReader
 
-    fixture = FIXTURES_DIR / "reference library_1" / "PAR1629-31-SE.SPA"
+    fixture = FIXTURES_DIR / "reference library_1" / "ref08.SPA"
     if not fixture.exists():
         pytest.skip("Reference-library SPA fixture missing")
 
@@ -695,7 +695,7 @@ def test_real_fixture_client_name_keeps_czech_letters() -> None:
     """
     from file_io.spa_binary import SPABinaryReader
 
-    fixture = FIXTURES_DIR / "reference library_1" / "SMC113-Ot.SPA"
+    fixture = FIXTURES_DIR / "reference library_1" / "ref29.SPA"
     if not fixture.exists():
         pytest.skip("Reference-library SPA fixture missing")
 

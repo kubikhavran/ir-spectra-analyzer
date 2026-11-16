@@ -72,7 +72,7 @@ def test_reference_library_service_auto_imports_fixture_folder_and_finds_exact_m
     project_root = Path(__file__).resolve().parent / "fixtures"
     service = ReferenceLibraryService(db, project_root=project_root)
     fixture_folder = project_root / "reference library_1"
-    query_path = fixture_folder / "FER58-SE.SPA"
+    query_path = fixture_folder / "ref01.SPA"
     spectrum = FormatRegistry().read(query_path)
 
     outcome = service.search_spectrum(spectrum, top_n=5, auto_import_project_library=True)
@@ -82,7 +82,7 @@ def test_reference_library_service_auto_imports_fixture_folder_and_finds_exact_m
     assert outcome.imported_summary.imported == len(list(fixture_folder.glob("*.SPA")))
     assert outcome.reference_count == outcome.imported_summary.imported
     assert outcome.results
-    assert outcome.results[0].name == "FER58-SE"
+    assert outcome.results[0].name == "ref01"
     assert outcome.results[0].score == pytest.approx(1.0)
 
 
@@ -111,14 +111,14 @@ def test_ensure_project_library_imported_syncs_missing_fixture_files_even_when_d
     assert summary.imported == len(list(fixture_folder.glob("*.SPA")))
     assert len(db.get_reference_spectra()) == summary.imported + 1
 
-    query = FormatRegistry().read(fixture_folder / "FER58-SE.SPA")
+    query = FormatRegistry().read(fixture_folder / "ref01.SPA")
     outcome = service.search_spectrum(query, top_n=3, auto_import_project_library=True)
 
     # Once the library is populated, a search no longer re-scans the folder
     # (that folder walk is the main per-match cost on large libraries); the
     # user refreshes it explicitly via "Sync Folder". The search still works.
     assert outcome.imported_summary is None
-    assert outcome.results[0].name == "FER58-SE"
+    assert outcome.results[0].name == "ref01"
 
 
 def test_selected_library_folder_filters_references_and_persists_setting(db, tmp_path):
@@ -370,7 +370,7 @@ def _service_with_library(tmp_path):
     lib.mkdir()
     work = tmp_path / "measurements"
     work.mkdir()
-    shutil.copy("tests/fixtures/reference library_1/FER60-SE.SPA", lib)
+    shutil.copy("tests/fixtures/reference library_1/ref03.SPA", lib)
     db = Database(":memory:")
     db.initialize()
     svc = ReferenceLibraryService(db, project_root=tmp_path)
@@ -392,24 +392,22 @@ def test_registered_project_is_matchable_without_copying_into_the_library(tmp_pa
     from file_io.spa_reader import SPAReader
 
     svc, db, _lib, work = _service_with_library(tmp_path)
-    registration = _register_fixture(
-        svc, db, "PAR1637-SE", "PAR1637-SE.SPA", work / "PAR1637-SE.irproj"
-    )
+    registration = _register_fixture(svc, db, "ref15", "ref15.SPA", work / "ref15.irproj")
     assert registration.status == "added"
 
-    query = SPAReader().read(Path("tests/fixtures/reference library_1/PAR1636-SE.SPA"))
+    query = SPAReader().read(Path("tests/fixtures/reference library_1/ref14.SPA"))
     names = [result.name for result in svc.search_spectrum(query, top_n=10).results]
-    assert "PAR1637-SE" in names
+    assert "ref15" in names
     # ...and the name filter used to scope big libraries finds it too
-    filtered = svc.search_spectrum(query, top_n=10, name_filter="PAR1637")
-    assert [r.name for r in filtered.results] == ["PAR1637-SE"]
+    filtered = svc.search_spectrum(query, top_n=10, name_filter="ref15")
+    assert [r.name for r in filtered.results] == ["ref15"]
 
 
 @pytest.mark.lab_fixtures
 def test_re_saving_a_project_updates_its_reference_instead_of_duplicating(tmp_path):
     svc, db, _lib, work = _service_with_library(tmp_path)
-    first = _register_fixture(svc, db, "PAR1637-SE", "PAR1637-SE.SPA", work / "PAR1637-SE.irproj")
-    second = _register_fixture(svc, db, "PAR1637-SE", "PAR1637-SE.SPA", work / "PAR1637-SE.irproj")
+    first = _register_fixture(svc, db, "ref15", "ref15.SPA", work / "ref15.irproj")
+    second = _register_fixture(svc, db, "ref15", "ref15.SPA", work / "ref15.irproj")
 
     assert (first.status, second.status) == ("added", "updated")
     assert first.ref_id == second.ref_id
@@ -420,7 +418,7 @@ def test_re_saving_a_project_updates_its_reference_instead_of_duplicating(tmp_pa
 def test_registering_a_spectrum_already_in_the_library_is_skipped(tmp_path):
     """No second hit list entry for something the library already covers."""
     svc, db, _lib, work = _service_with_library(tmp_path)
-    registration = _register_fixture(svc, db, "FER60-SE", "FER60-SE.SPA", work / "FER60-SE.irproj")
+    registration = _register_fixture(svc, db, "ref03", "ref03.SPA", work / "ref03.irproj")
     assert registration.status == "skipped"
     assert "library file" in registration.reason
     assert len(db.get_reference_identity_rows()) == 1
@@ -434,14 +432,14 @@ def test_project_references_survive_switching_the_library_folder(tmp_path):
     from file_io.spa_reader import SPAReader
 
     svc, db, _lib, work = _service_with_library(tmp_path)
-    _register_fixture(svc, db, "PAR1637-SE", "PAR1637-SE.SPA", work / "PAR1637-SE.irproj")
+    _register_fixture(svc, db, "ref15", "ref15.SPA", work / "ref15.irproj")
 
     other = tmp_path / "other library"
     other.mkdir()
     svc.set_selected_library_folder(other)
 
-    query = SPAReader().read(Path("tests/fixtures/reference library_1/PAR1636-SE.SPA"))
-    assert [r.name for r in svc.search_spectrum(query, top_n=10).results] == ["PAR1637-SE"]
+    query = SPAReader().read(Path("tests/fixtures/reference library_1/ref14.SPA"))
+    assert [r.name for r in svc.search_spectrum(query, top_n=10).results] == ["ref15"]
 
 
 @pytest.mark.lab_fixtures

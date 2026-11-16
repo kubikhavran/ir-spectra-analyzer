@@ -35,6 +35,12 @@ class SpectralUnit(Enum):
     BASELINE_CORRECTED = "Baseline Corrected"
 
 
+#: ``extra_metadata`` key set on a spectrum produced by baseline correction.
+#: A corrected %T spectrum keeps its unit, so the unit alone no longer says it
+#: has been corrected.
+BASELINE_CORRECTED_FLAG = "baseline_corrected"
+
+
 class XAxisUnit(Enum):
     """X-axis units."""
 
@@ -118,6 +124,21 @@ class Spectrum:
         if self.y_unit == SpectralUnit.ABSORBANCE and self.is_dip_spectrum:
             return SpectralUnit.TRANSMITTANCE
         return self.y_unit
+
+    @property
+    def is_baseline_corrected(self) -> bool:
+        """True for a spectrum that came out of baseline correction."""
+        return self.y_unit == SpectralUnit.BASELINE_CORRECTED or bool(
+            self.extra_metadata.get(BASELINE_CORRECTED_FLAG)
+        )
+
+    @property
+    def y_axis_label(self) -> str:
+        """Axis title: the displayed unit, marked when the curve is corrected."""
+        unit = self.display_y_unit
+        if self.is_baseline_corrected and unit != SpectralUnit.BASELINE_CORRECTED:
+            return f"{unit.value} (baseline corrected)"
+        return str(unit.value)
 
     def converted_to(self, unit: SpectralUnit) -> Spectrum | None:
         """This spectrum with its intensities recomputed into ``unit``.

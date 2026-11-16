@@ -1164,7 +1164,7 @@ class PDFGenerator:
         if comment or spectrum.extra_metadata.get("omnic_comment"):
             _add_row("Comment", comment or spectrum.extra_metadata.get("omnic_comment"))
         # The unit the plot is drawn in, so the table can never contradict it.
-        _add_row("Y unit", spectrum.display_y_unit.value)
+        _add_row("Y unit", spectrum.y_axis_label)
         _x_lo, _x_hi = self._resolve_x_range(options, spectrum)
         _add_row(
             "X range",

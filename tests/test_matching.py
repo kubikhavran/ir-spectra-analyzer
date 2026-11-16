@@ -371,7 +371,7 @@ def test_search_engine_real_fixture_exact_match_has_meaningful_gap():
     from matching.search_engine import SearchEngine
 
     folder = Path(__file__).resolve().parent / "fixtures/reference library_1"
-    if not (folder / "FER60-SE.SPA").exists():
+    if not (folder / "ref03.SPA").exists():
         pytest.skip("lab reference library is not part of the repository")
     fmt = FormatRegistry()
     references = []
@@ -388,7 +388,7 @@ def test_search_engine_real_fixture_exact_match_has_meaningful_gap():
             }
         )
 
-    query = fmt.read(folder / "FER60-SE.SPA")
+    query = fmt.read(folder / "ref03.SPA")
     engine = SearchEngine()
     engine.load_references(references)
     results = engine.search(
@@ -398,7 +398,7 @@ def test_search_engine_real_fixture_exact_match_has_meaningful_gap():
         query_y_unit=query.y_unit,
     )
 
-    assert results[0].name == "FER60-SE"
+    assert results[0].name == "ref03"
     assert results[0].score == pytest.approx(1.0)
     assert results[1].score < 0.9
 

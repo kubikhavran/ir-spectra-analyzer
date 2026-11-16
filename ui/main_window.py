@@ -69,6 +69,7 @@ class MainWindow(QMainWindow):
 
     _MATCH_RESULTS_LIMIT = 20
     _ASSIGNMENT_TRANSFER_TOLERANCE = 8.0  # cm⁻¹ window for copying assignments
+    _DETECT_UNDO_TEXT = "Detect peaks"
     # A detected peak this close to an already assigned one is the same band.
     _DETECT_KEEP_TOLERANCE = 4.0  # cm⁻¹
 
@@ -221,6 +222,8 @@ class MainWindow(QMainWindow):
             self._toolbar._detect_action.triggered.connect(self._on_detect_peaks)
         if self._toolbar._clear_peaks_action is not None:
             self._toolbar._clear_peaks_action.triggered.connect(self._on_clear_peaks)
+        self._toolbar.set_sensitivity(self._settings.get("peak_sensitivity"))
+        self._toolbar.sensitivity_changed.connect(self._on_sensitivity_changed)
         self._toolbar.correct_baseline.connect(self._on_correct_baseline)
         self._toolbar.arrange_labels.connect(self._on_arrange_peak_labels)
         self._toolbar.match_spectrum.connect(self._on_match_spectrum)
@@ -887,12 +890,13 @@ class MainWindow(QMainWindow):
 
         spectrum = self._project.corrected_spectrum or self._project.spectrum
         invert = spectrum.is_dip_spectrum
-        prominence = default_prominence(spectrum)
+        sensitivity = self._toolbar.sensitivity()
+        prominence = default_prominence(spectrum, sensitivity)
         peaks = detect_peaks(
             spectrum.wavenumbers, spectrum.intensities, invert=invert, prominence=prominence
         )
         # Wrap all additions in a macro so it's a single Ctrl+Z
-        self._undo_stack.beginMacro("Detect peaks")
+        self._undo_stack.beginMacro(self._DETECT_UNDO_TEXT)
         from core.commands import AddPeakCommand, DeletePeakCommand  # noqa: PLC0415
         from core.peak_assignments import peak_has_assignment  # noqa: PLC0415
 
@@ -912,10 +916,31 @@ class MainWindow(QMainWindow):
             self._undo_stack.push(AddPeakCommand(self._project, peak))
         self._undo_stack.endMacro()
         self._refresh_peak_views()
-        message = f"Detected {len(self._project.peaks)} peaks"
+        message = f"Detected {len(self._project.peaks)} peaks at sensitivity {sensitivity}"
         if kept:
             message += f" ({len(kept)} assigned kept)"
         self.statusBar().showMessage(message)
+
+    def _on_sensitivity_changed(self, sensitivity: int) -> None:
+        """Remember the sensitivity and, right after a detection, apply it live.
+
+        When the last thing done was Detect Peaks, that detection is replaced by
+        one at the new sensitivity, so the slider can be dragged until the
+        peak set looks right and the whole thing is still a single undo step.
+        Once anything else has been done since (a peak added, an assignment),
+        nothing is touched until Detect Peaks is pressed again.
+        """
+        try:
+            self._settings.set("peak_sensitivity", int(sensitivity))
+        except Exception:  # noqa: BLE001 — remembering the level is best-effort
+            pass
+        if self._project is None or self._project.spectrum is None:
+            return
+        if self._undo_stack.canUndo() and self._undo_stack.undoText() == self._DETECT_UNDO_TEXT:
+            self._undo_stack.undo()
+            self._on_detect_peaks()
+            return
+        self.statusBar().showMessage(f"Sensitivity {sensitivity} — press Detect Peaks to apply it")
 
     def _on_correct_baseline(self) -> None:
         """Apply baseline correction and make it undoable."""
@@ -924,7 +949,11 @@ class MainWindow(QMainWindow):
             return
 
         from core.commands import CorrectBaselineCommand  # noqa: PLC0415
-        from core.spectrum import SpectralUnit, Spectrum  # noqa: PLC0415
+        from core.spectrum import (  # noqa: PLC0415
+            BASELINE_CORRECTED_FLAG,
+            SpectralUnit,
+            Spectrum,
+        )
         from processing.baseline import rubber_band_baseline  # noqa: PLC0415
 
         source_spectrum = self._project.spectrum
@@ -935,16 +964,23 @@ class MainWindow(QMainWindow):
             upper=use_upper_hull,
         )
 
+        # A %T baseline is divided out, so the result is still %T (baseline at
+        # 100 %) and keeps its unit: overlays, the unit switch, matching and
+        # the report all go on working on the familiar scale. Subtracted
+        # absorbance keeps the dedicated "Baseline Corrected" unit.
+        corrected_unit = (
+            source_spectrum.display_y_unit if use_upper_hull else SpectralUnit.BASELINE_CORRECTED
+        )
         corrected_spectrum = Spectrum(
             wavenumbers=source_spectrum.wavenumbers.copy(),
             intensities=corrected_intensities,
             title=source_spectrum.title,
             source_path=source_spectrum.source_path,
             acquired_at=source_spectrum.acquired_at,
-            y_unit=SpectralUnit.BASELINE_CORRECTED,
+            y_unit=corrected_unit,
             x_unit=source_spectrum.x_unit,
             comments=source_spectrum.comments,
-            extra_metadata=dict(source_spectrum.extra_metadata),
+            extra_metadata={**source_spectrum.extra_metadata, BASELINE_CORRECTED_FLAG: True},
         )
 
         command = CorrectBaselineCommand(self._project, corrected_spectrum)
@@ -1232,16 +1268,18 @@ class MainWindow(QMainWindow):
         self._spectrum_widget.set_vibration_range_visible(visible)
 
     def _on_preset_clicked_for_assign(self, preset) -> None:
-        """Assign the clicked preset to the currently selected peak.
+        """Assign the highlighted preset to the currently selected peak.
 
-        Clicking a peak in the viewer only selects it — assignment happens
-        exclusively here, when the user clicks a vibration in the panel.
+        Reached from the panel's Assign button and Enter. A plain click in the
+        list only outlines the vibration's range, so it can be browsed freely.
         """
         if self._project is None:
             return
         peak = self._peak_table.selected_peak()
         if peak is None:
-            self.statusBar().showMessage("Select a peak first, then click a vibration to assign.")
+            self.statusBar().showMessage(
+                "Select a peak first, then double-click a vibration to assign it."
+            )
             return
         from core.commands import AssignPresetCommand  # noqa: PLC0415
 

@@ -7,6 +7,7 @@ import os
 os.environ.setdefault("QT_QPA_PLATFORM", "offscreen")
 
 import numpy as np
+import pytest
 from PySide6.QtGui import QUndoStack
 from PySide6.QtWidgets import QApplication
 
@@ -73,21 +74,21 @@ def test_correct_baseline_command_undo_redo():
 
 
 # ---------------------------------------------------------------------------
-# %Transmittance (upper-hull, upper=True) — new behaviour
+# %Transmittance (upper hull divided out, upper=True)
 # ---------------------------------------------------------------------------
 
 
-def test_rubber_band_upper_flat_spectrum_is_zero():
-    """Flat %T spectrum with upper=True → corrected values are all zero."""
+def test_rubber_band_upper_flat_spectrum_stays_at_100():
+    """Flat %T spectrum with upper=True → corrected values sit on the 100 % line."""
     wn = np.linspace(400.0, 4000.0, 100)
     y = np.full_like(wn, 100.0)  # pure 100 %T baseline
     corrected = rubber_band_baseline(wn, y, upper=True)
     assert corrected.shape == y.shape
-    assert np.allclose(corrected, 0.0, atol=1e-8)
+    assert np.allclose(corrected, 100.0, atol=1e-8)
 
 
-def test_rubber_band_upper_dip_becomes_negative():
-    """%T dip (Gaussian absorption band) is negative after upper-hull correction."""
+def test_rubber_band_upper_dip_stays_a_transmittance_dip():
+    """A %T dip keeps its depth and position; the baseline regions read 100 %."""
     wn = np.linspace(400.0, 4000.0, 3601)
     # Flat 100 %T baseline with a Gaussian absorption dip at 1700 cm-1 going to 60 %T.
     dip = 40.0 * np.exp(-((wn - 1700.0) ** 2) / (2 * 30.0**2))
@@ -95,22 +96,35 @@ def test_rubber_band_upper_dip_becomes_negative():
 
     corrected = rubber_band_baseline(wn, transmittance, upper=True)
 
-    # Baseline regions are near zero.
-    assert abs(corrected[0]) < 1.0
-    assert abs(corrected[-1]) < 1.0
-    # Absorption band appears as a negative trough.
-    assert corrected.min() < -30.0
-    # The trough minimum is near the dip position.
+    assert corrected[0] == pytest.approx(100.0, abs=1.0)
+    assert corrected[-1] == pytest.approx(100.0, abs=1.0)
+    assert corrected.min() == pytest.approx(60.0, abs=1.0)
     peak_wn = wn[np.argmin(corrected)]
     assert abs(peak_wn - 1700.0) < 20.0
+
+
+def test_rubber_band_upper_divides_the_baseline_out():
+    """A sloping baseline multiplies %T, so dividing it out restores the true band.
+
+    The sample transmits 60 % at the band and the baseline falls from 100 % to
+    70 % across the range. Subtracting the hull (the old behaviour) reported
+    the band too shallow wherever the baseline was low; the ratio gives 60 %
+    back regardless of where the band sits.
+    """
+    wn = np.linspace(400.0, 4000.0, 3601)
+    baseline = 100.0 - 30.0 * (wn - 400.0) / 3600.0  # 100 % → 70 %
+    for centre in (800.0, 2000.0, 3400.0):
+        sample = 1.0 - 0.4 * np.exp(-((wn - centre) ** 2) / (2 * 30.0**2))
+        corrected = rubber_band_baseline(wn, baseline * sample, upper=True)
+        assert corrected.min() == pytest.approx(60.0, abs=0.5)
+        assert corrected.max() == pytest.approx(100.0, abs=1e-6)
 
 
 def test_rubber_band_upper_baseline_not_anchored_to_dip_bottoms():
     """Upper-hull correction must NOT use the dip bottoms as baseline reference.
 
     Specifically: if two deep dips flank a flat 100 %T region, the corrected
-    value in that flat region must remain near zero (it is part of the
-    transmission baseline, not an absorption band).
+    value in that flat region must remain at the baseline (100 %).
     """
     wn = np.linspace(400.0, 4000.0, 3601)
     dip1 = 50.0 * np.exp(-((wn - 1000.0) ** 2) / (2 * 30.0**2))  # at 1000 cm-1
@@ -119,22 +133,21 @@ def test_rubber_band_upper_baseline_not_anchored_to_dip_bottoms():
 
     corrected = rubber_band_baseline(wn, transmittance, upper=True)
 
-    # Mid-point between the two dips should be near baseline (corrected ≈ 0).
     mid_idx = np.argmin(np.abs(wn - 2000.0))
-    assert abs(corrected[mid_idx]) < 5.0  # within 5 %T of zero (tolerance for interpolation)
+    assert corrected[mid_idx] == pytest.approx(100.0, abs=5.0)
 
 
-def test_rubber_band_upper_output_all_nonpositive():
-    """upper=True correction should produce non-positive values for clean %T data."""
+def test_rubber_band_upper_output_never_exceeds_100():
+    """upper=True correction keeps clean %T data at or below the 100 % line."""
     wn = np.linspace(400.0, 4000.0, 1001)
     dip = 30.0 * np.exp(-((wn - 2000.0) ** 2) / (2 * 50.0**2))
     transmittance = 100.0 - dip
     corrected = rubber_band_baseline(wn, transmittance, upper=True)
-    assert np.all(corrected <= 1e-8)  # allow tiny floating-point error
+    assert np.all(corrected <= 100.0 + 1e-8)  # allow tiny floating-point error
 
 
 def test_rubber_band_upper_vs_lower_direction():
-    """Confirm that upper=True and upper=False produce opposite correction directions."""
+    """Absorbance bands stay upward peaks, %T bands stay downward dips."""
     wn = np.linspace(400.0, 4000.0, 1001)
     # Absorbance peak at 2000 cm-1.
     peak = 0.5 * np.exp(-((wn - 2000.0) ** 2) / (2 * 50.0**2))
@@ -147,8 +160,18 @@ def test_rubber_band_upper_vs_lower_direction():
     # For a %T dip: upper hull correction.
     transmittance = 100.0 - 50.0 * np.exp(-((wn - 2000.0) ** 2) / (2 * 50.0**2))
     corrected_t = rubber_band_baseline(wn, transmittance, upper=True)
-    # Dip becomes a negative trough.
-    assert corrected_t.min() < -40.0
+    # The dip is still a dip, half-way down the %T scale.
+    assert corrected_t.min() == pytest.approx(50.0, abs=1.0)
+
+
+def test_rubber_band_upper_survives_a_hull_that_touches_zero():
+    """Data that is not a %T curve is shifted to the 100 % line, never divided by ~0."""
+    wn = np.linspace(400.0, 4000.0, 401)
+    y = -20.0 * np.exp(-((wn - 2000.0) ** 2) / (2 * 50.0**2))  # hull at 0
+    corrected = rubber_band_baseline(wn, y, upper=True)
+    assert np.all(np.isfinite(corrected))
+    assert corrected.max() == pytest.approx(100.0, abs=1e-6)
+    assert corrected.min() == pytest.approx(80.0, abs=0.5)
 
 
 # ---------------------------------------------------------------------------
@@ -187,15 +210,20 @@ def test_on_correct_baseline_uses_upper_hull_for_transmittance(qtbot, tmp_path):
 
     assert win._project.corrected_spectrum is not None
     corrected = win._project.corrected_spectrum.intensities
-    # Dip becomes a negative trough.
-    assert corrected.min() < -30.0
-    # Endpoints near zero (baseline regions).
-    assert abs(corrected[0]) < 5.0
-    assert abs(corrected[-1]) < 5.0
-    # Corrected spectrum must NOT retain the raw %T unit — it is now a derived signal.
+    # The dip is still a %T dip, the baseline regions read 100 %.
+    assert corrected.min() == pytest.approx(60.0, abs=1.0)
+    assert corrected[0] == pytest.approx(100.0, abs=1.0)
+    assert corrected[-1] == pytest.approx(100.0, abs=1.0)
+    # Dividing the baseline out leaves a genuine %T curve, so it keeps its unit
+    # (and with it overlays, the unit switch and the report scale); the
+    # correction is recorded as a flag instead.
     from core.spectrum import SpectralUnit
 
-    assert win._project.corrected_spectrum.y_unit == SpectralUnit.BASELINE_CORRECTED
+    corrected_spectrum = win._project.corrected_spectrum
+    assert corrected_spectrum.y_unit == SpectralUnit.TRANSMITTANCE
+    assert corrected_spectrum.is_baseline_corrected
+    assert corrected_spectrum.y_axis_label == "Transmittance (baseline corrected)"
+    assert not spectrum.is_baseline_corrected
 
 
 def test_on_correct_baseline_absorbance_also_gets_baseline_corrected_unit(qtbot, tmp_path):

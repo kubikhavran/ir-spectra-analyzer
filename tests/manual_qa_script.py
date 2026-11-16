@@ -99,8 +99,8 @@ def run_qa() -> None:
     shot(app, "01_fresh_start", win)
 
     # ── Step 2: Load SPA with stored OMNIC peaks ─────────────────────────────
-    print("\n[2] Load FER58-SE.SPA (29 stored OMNIC peaks expected)")
-    spa_path = str(LIBRARY / "FER58-SE.SPA")
+    print("\n[2] Load ref01.SPA (29 stored OMNIC peaks expected)")
+    spa_path = str(LIBRARY / "ref01.SPA")
     win._load_spectrum(spa_path)
     app.processEvents()
 
@@ -111,24 +111,24 @@ def run_qa() -> None:
     check("stored peaks found" in sb_text, "Status bar shows 'stored peaks found'", repr(sb_text))
     shot(app, "02_fer58_loaded_with_peaks", win)
 
-    # ── Step 3: Load file with NO PEAKTABLE (PAR1627-SE.SPA) ─────────────────
-    print("\n[3] Load PAR1627-SE.SPA (no PEAKTABLE)")
-    win._load_spectrum(str(LIBRARY / "PAR1627-SE.SPA"))
+    # ── Step 3: Load file with NO PEAKTABLE (ref06.SPA) ─────────────────
+    print("\n[3] Load ref06.SPA (no PEAKTABLE)")
+    win._load_spectrum(str(LIBRARY / "ref06.SPA"))
     app.processEvents()
     sb2 = win.statusBar().currentMessage()
     check(
         "no PEAKTABLE in source file" in sb2,
-        "Status bar shows 'no PEAKTABLE in source file' for PAR1627",
+        "Status bar shows 'no PEAKTABLE in source file' for ref06",
         repr(sb2),
     )
     shot(app, "03_par1627_no_peaktable", win)
 
-    # ── Step 4: Load KLH293-Ot.SPA (mismatched Absorbance metadata / real %T) ─
-    print("\n[4] Load KLH293-Ot.SPA (40 stored peaks, dip-type heuristic)")
-    win._load_spectrum(str(LIBRARY / "KLH293-Ot.SPA"))
+    # ── Step 4: Load ref04.SPA (mismatched Absorbance metadata / real %T) ─
+    print("\n[4] Load ref04.SPA (40 stored peaks, dip-type heuristic)")
+    win._load_spectrum(str(LIBRARY / "ref04.SPA"))
     app.processEvents()
     n_klh = len(win._project.peaks) if win._project else 0
-    check(n_klh > 0, f"Stored peaks for KLH293 ({n_klh} peaks)")
+    check(n_klh > 0, f"Stored peaks for ref04 ({n_klh} peaks)")
     check(
         win._project.spectrum.is_dip_spectrum,
         "Spectrum detected as dip-type (transmittance heuristic)",
@@ -136,8 +136,8 @@ def run_qa() -> None:
     shot(app, "04_klh293_dip_spectrum", win)
 
     # ── Step 5: Detect Peaks ──────────────────────────────────────────────────
-    print("\n[5] Detect Peaks on FER60-SE.SPA")
-    win._load_spectrum(str(LIBRARY / "FER60-SE.SPA"))
+    print("\n[5] Detect Peaks on ref03.SPA")
+    win._load_spectrum(str(LIBRARY / "ref03.SPA"))
     app.processEvents()
     win._on_detect_peaks()
     app.processEvents()
