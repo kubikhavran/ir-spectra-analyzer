@@ -14,16 +14,25 @@ Interaction summary
 * Hover shortcuts: over an atom ``C O N S P F I H B``, ``L`` = Cl,
   ``R`` = Br, ``+``/``-`` charge, Delete removes it; over a bond ``1 2 3``,
   ``W`` wedge, ``H`` hash, Delete.
-* Global: Ctrl+Z, Ctrl+Y / Ctrl+Shift+Z, Ctrl+C (SMILES), Ctrl+V (SMILES or
-  MOL block), Space / 0 fit view, mouse wheel zoom, middle/right drag pan.
+* Over an atom, Enter (or a double-click with the select tool) opens an
+  inline label editor: type an element (``Na``, ``N+``), an abbreviation
+  (``OMe``, ``CO2Et``, ``NHBoc``), a condensed formula (``CH2CH2OH``), SMILES
+  with ``*`` or a custom group name.
+* Global: Ctrl+Z, Ctrl+Y / Ctrl+Shift+Z, Ctrl+C / Ctrl+X copy or cut the
+  selection (or everything), Ctrl+V pastes — the pasted part follows the
+  cursor, click an atom to attach it or empty space to drop it — Ctrl+D
+  duplicates, Ctrl+A selects all, Alt+H / Alt+V flip, Alt+←/→ rotate 15°,
+  Space / 0 fit view, mouse wheel zoom, middle or right drag pan, right
+  click opens a context menu.
 """
 
 from __future__ import annotations
 
+import json
 import math
 from dataclasses import dataclass, field
 
-from PySide6.QtCore import QBuffer, QIODevice, QPointF, QRectF, QSize, Qt, Signal
+from PySide6.QtCore import QBuffer, QIODevice, QMimeData, QPoint, QPointF, QRectF, QSize, Qt, Signal
 from PySide6.QtGui import (
     QBrush,
     QColor,
@@ -41,12 +50,17 @@ from PySide6.QtGui import (
     QWheelEvent,
 )
 from PySide6.QtWidgets import (
+    QComboBox,
     QDialog,
     QDialogButtonBox,
+    QFormLayout,
     QGridLayout,
     QLabel,
+    QLineEdit,
+    QMenu,
     QPushButton,
     QSizePolicy,
+    QSpinBox,
     QVBoxLayout,
     QWidget,
 )
@@ -58,7 +72,9 @@ from chemistry.mol_editor_model import (
     STEREO_NONE,
     STEREO_WEDGE,
     MolEditorModel,
+    is_element_symbol,
 )
+from chemistry.mol_fragments import Fragment, parse_group
 from ui import theme
 from ui.i18n import tr
 
@@ -87,6 +103,12 @@ ELEMENT_COLORS: dict[str, str] = {
     "P": "#EA580C",
 }
 DEFAULT_ELEMENT_COLOR = "#334155"
+STEREO_LABEL_COLOR = QColor("#7C3AED")
+ATOM_NUMBER_COLOR = QColor("#64748B")
+
+#: Clipboard format carrying a copied part of a structure with its attachment point.
+FRAGMENT_MIME = "application/x-ir-spectra-fragment+json"
+MOLFILE_MIME = "chemical/x-mdl-molfile"
 
 TOOLS: tuple[str, ...] = (
     "select",
@@ -133,6 +155,7 @@ _HOVER_ELEMENT_KEYS: dict[str, str] = {
 }
 _H_FIRST_ELEMENTS = frozenset({"O", "S", "Se", "F", "Cl", "Br", "I"})
 _SUBSCRIPT_DIGITS = str.maketrans("0123456789", "₀₁₂₃₄₅₆₇₈₉")
+_SUPERSCRIPT_DIGITS = str.maketrans("0123456789", "⁰¹²³⁴⁵⁶⁷⁸⁹")
 
 
 def element_color(symbol: str) -> QColor:
@@ -152,6 +175,8 @@ class _AtomLabel:
     hydrogens: int
     charge: int
     h_left: bool
+    isotope: int = 0
+    radicals: int = 0
 
 
 @dataclass
@@ -172,6 +197,8 @@ class MoleculeCanvas(QWidget):
     structure_changed = Signal()
     tool_changed = Signal(str)
     hint_changed = Signal(str)
+    #: A :class:`Fragment` the user wants to keep as a custom group.
+    save_group_requested = Signal(object)
 
     def __init__(self, parent: QWidget | None = None) -> None:
         super().__init__(parent)
@@ -200,9 +227,23 @@ class MoleculeCanvas(QWidget):
         self._drag: _Drag | None = None
         self._hint = ""
 
+        self._placement: Fragment | None = None
+        self._custom_groups: dict[str, str] = {}
+        self._show_atom_numbers = False
+        self._show_stereo_labels = False
+        self._label_atom: int | None = None
+        self._label_editor = QLineEdit(self)
+        self._label_editor.setObjectName("molecule_label_editor")
+        self._label_editor.hide()
+        self._label_editor.setPlaceholderText("OMe, CO2Et, N+ …")
+        self._label_editor.returnPressed.connect(self._commit_label_editor)
+        self._label_editor.installEventFilter(self)
+
         self._cache_revision = -1
         self._invalid: set[int] = set()
         self._labels: dict[int, _AtomLabel] = {}
+        self._stereo_atoms: dict[int, str] = {}
+        self._stereo_bonds: dict[int, str] = {}
         self._update_hint()
 
     # ------------------------------------------------------------------
@@ -347,6 +388,298 @@ class MoleculeCanvas(QWidget):
 
     def selected_atoms(self) -> set[int]:
         return set(self._selection)
+
+    def select_atoms(self, atoms: set[int] | list[int]) -> None:
+        self._selection = {i for i in atoms if 0 <= i < self._model.atom_count}
+        self.update()
+
+    def select_all(self) -> None:
+        self.select_atoms(list(range(self._model.atom_count)))
+
+    # -- clipboard & placement -----------------------------------------
+
+    def _target_atoms(self) -> list[int]:
+        """Selected atoms, or every atom when nothing is selected."""
+        if self._selection:
+            return sorted(self._selection)
+        return list(range(self._model.atom_count))
+
+    def copy_selection(self) -> bool:
+        """Copy the selection (or the whole drawing) to the clipboard.
+
+        The clipboard gets plain SMILES (for other programs), a MOL block and
+        the fragment with its attachment point, so pasting it here can attach
+        it to another atom.
+        """
+        atoms = self._target_atoms()
+        if not atoms:
+            return False
+        fragment = self._model.extract_fragment(atoms)
+        mime = QMimeData()
+        mime.setText(fragment.smiles() if self._selection else self._model.to_smiles())
+        mime.setData(MOLFILE_MIME, fragment.mol_block().encode("utf-8"))
+        mime.setData(FRAGMENT_MIME, json.dumps(fragment.to_json()).encode("utf-8"))
+        QGuiApplication.clipboard().setMimeData(mime)
+        return True
+
+    def cut_selection(self) -> bool:
+        if not self._selection or not self.copy_selection():
+            return False
+        self._model.delete_atoms(self._selection)
+        self._after_edit()
+        return True
+
+    def duplicate_selection(self) -> list[int]:
+        """Copy the selection next to itself and select the copy."""
+        atoms = self._target_atoms()
+        if not atoms:
+            return []
+        fragment = self._model.extract_fragment(atoms)
+        xs = [self._model.atom_position(i)[0] for i in atoms]
+        ys = [self._model.atom_position(i)[1] for i in atoms]
+        width = max(xs) - min(xs)
+        position = (
+            sum(xs) / len(xs) + width + 2 * BOND_LENGTH,
+            sum(ys) / len(ys),
+        )
+        created = self._model.insert_fragment(fragment, position=position)
+        self._after_edit()
+        self.select_atoms(created)
+        return created
+
+    def fragment_from_clipboard(self) -> Fragment | None:
+        mime = QGuiApplication.clipboard().mimeData()
+        if mime is None:
+            return None
+        if mime.hasFormat(FRAGMENT_MIME):
+            try:
+                data = json.loads(bytes(mime.data(FRAGMENT_MIME).data()).decode("utf-8"))
+            except (ValueError, UnicodeDecodeError):
+                data = None
+            if isinstance(data, dict):
+                fragment = Fragment.from_json(data)
+                if fragment is not None:
+                    return fragment
+        if mime.hasFormat(MOLFILE_MIME):
+            fragment = self._fragment_from_text(
+                bytes(mime.data(MOLFILE_MIME).data()).decode("utf-8", "replace")
+            )
+            if fragment is not None:
+                return fragment
+        return self._fragment_from_text(mime.text())
+
+    def _fragment_from_text(self, text: str) -> Fragment | None:
+        if not (text or "").strip():
+            return None
+        if "M  END" in text or "V2000" in text or "V3000" in text:
+            model = MolEditorModel()
+            if not model.load_mol_block(text, record_undo=False):
+                return None
+            whole = model.extract_fragment(range(model.atom_count))
+            whole.attach = None
+            return whole
+        group = parse_group(text.strip(), self._custom_groups)
+        if group is not None:
+            return group
+        model = MolEditorModel()
+        if model.load_smiles(text.strip(), record_undo=False):
+            fragment = model.extract_fragment(range(model.atom_count))
+            fragment.attach = None
+            return fragment
+        return None
+
+    def paste_from_clipboard(self) -> bool:
+        """Start placing whatever is on the clipboard (see :meth:`begin_placement`)."""
+        fragment = self.fragment_from_clipboard()
+        if fragment is None:
+            self._set_hint(tr("The clipboard holds no structure"))
+            return False
+        self.begin_placement(fragment)
+        return True
+
+    def begin_placement(self, fragment: Fragment, label: str = "") -> None:
+        """Let *fragment* follow the cursor until the user clicks.
+
+        Clicking an atom bonds the fragment's attachment atom to it; clicking
+        empty space drops it there as a separate molecule (salt, solvent …).
+        Esc or a right click cancels.
+        """
+        if label:
+            fragment.label = label
+        self._placement = fragment
+        self._drag = None
+        self.setCursor(Qt.CursorShape.CrossCursor)
+        self._update_hint()
+        self.update()
+
+    def cancel_placement(self) -> None:
+        if self._placement is None:
+            return
+        self._placement = None
+        self.unsetCursor()
+        self._update_hint()
+        self.update()
+
+    def placement(self) -> Fragment | None:
+        return self._placement
+
+    def place_fragment(
+        self, *, target_atom: int | None = None, position: tuple[float, float] | None = None
+    ) -> list[int]:
+        """Drop the fragment being placed; returns the new atom indices."""
+        fragment = self._placement
+        if fragment is None:
+            return []
+        if target_atom is not None and fragment.attach is None:
+            # A whole molecule (e.g. a salt) is dropped next to the atom instead.
+            position = self._model.atom_position(target_atom)
+            target_atom = None
+            position = (position[0] + 2 * BOND_LENGTH, position[1])
+        created = self._model.insert_fragment(
+            fragment, target_atom_idx=target_atom, position=position
+        )
+        self._placement = None
+        self.unsetCursor()
+        self._after_edit()
+        self._update_hint()
+        return created
+
+    # -- custom groups, labels and atom properties ---------------------
+
+    def set_custom_groups(self, groups: dict[str, str]) -> None:
+        self._custom_groups = dict(groups)
+
+    def custom_groups(self) -> dict[str, str]:
+        return dict(self._custom_groups)
+
+    def apply_label(self, atom: int, text: str) -> bool:
+        if not self._model.apply_label(atom, text, self._custom_groups):
+            self._set_hint(tr("Unknown label: {text}").format(text=text))
+            return False
+        self._last_atom = atom if atom < self._model.atom_count else None
+        self._after_edit()
+        return True
+
+    def edit_atom_label(self, atom: int) -> None:
+        """Open the inline editor over *atom*."""
+        if not 0 <= atom < self._model.atom_count:
+            return
+        self._label_atom = atom
+        center = self._atom_screen(atom)
+        editor = self._label_editor
+        editor.setText(self._model.atom_symbol(atom))
+        editor.selectAll()
+        editor.setStyleSheet("")
+        editor.resize(120, editor.sizeHint().height())
+        x = int(min(max(4, center.x() - 20), self.width() - editor.width() - 4))
+        y = int(min(max(4, center.y() - editor.height() / 2), self.height() - editor.height() - 4))
+        editor.move(x, y)
+        editor.show()
+        editor.raise_()
+        editor.setFocus(Qt.FocusReason.OtherFocusReason)
+        self._set_hint(
+            tr("Type an element, group (OMe, CO2Et, NHBoc) or SMILES with *; Enter applies")
+        )
+
+    def _commit_label_editor(self) -> None:
+        atom = self._label_atom
+        text = self._label_editor.text().strip()
+        if atom is None or not text:
+            self._close_label_editor()
+            return
+        if self.apply_label(atom, text):
+            self._close_label_editor()
+        else:
+            self._label_editor.setStyleSheet(f"border: 2px solid {INVALID_STROKE.name()};")
+
+    def _close_label_editor(self) -> None:
+        self._label_atom = None
+        self._label_editor.hide()
+        self.setFocus(Qt.FocusReason.OtherFocusReason)
+        self._update_hint()
+
+    def eventFilter(self, watched, event) -> bool:  # noqa: N802, ANN001
+        if watched is self._label_editor and event.type() == event.Type.KeyPress:
+            if event.key() == Qt.Key.Key_Escape:
+                self._close_label_editor()
+                return True
+        if watched is self._label_editor and event.type() == event.Type.FocusOut:
+            if self._label_editor.isVisible():
+                self._close_label_editor()
+        return super().eventFilter(watched, event)
+
+    def open_atom_properties(self, atom: int) -> bool:
+        if not 0 <= atom < self._model.atom_count:
+            return False
+        dialog = AtomPropertiesDialog(self._model, atom, self)
+        if dialog.exec() != QDialog.DialogCode.Accepted:
+            return False
+        values = dialog.values()
+        if not is_element_symbol(str(values["symbol"])):
+            return False
+        self._model.set_atom_properties(atom, **values)  # type: ignore[arg-type]
+        self._last_atom = atom
+        self._after_edit()
+        return True
+
+    # -- transformations -----------------------------------------------
+
+    def rotate_selection(self, angle_deg: float) -> None:
+        atoms = self._target_atoms()
+        if atoms:
+            self._model.rotate_atoms(atoms, angle_deg)
+            self._after_edit(keep_selection=True)
+
+    def flip_selection(self, *, horizontal: bool = True) -> None:
+        atoms = self._target_atoms()
+        if atoms:
+            self._model.flip_atoms(atoms, horizontal=horizontal)
+            self._after_edit(keep_selection=True)
+
+    def add_explicit_hydrogens(self) -> int:
+        added = self._model.add_explicit_hydrogens(sorted(self._selection) or None)
+        if added:
+            self._after_edit()
+        return added
+
+    def remove_explicit_hydrogens(self) -> int:
+        removed = self._model.remove_explicit_hydrogens()
+        if removed:
+            self._after_edit()
+        return removed
+
+    def request_save_group(self) -> bool:
+        """Ask the host to store the selection as a reusable custom group."""
+        if not self._selection:
+            return False
+        self.save_group_requested.emit(self._model.extract_fragment(sorted(self._selection)))
+        return True
+
+    # -- context menu ---------------------------------------------------
+
+    def build_context_menu(self, point: QPointF) -> QMenu:
+        return _build_context_menu(self, point)
+
+    def show_context_menu(self, point: QPointF) -> None:
+        menu = self.build_context_menu(point)
+        menu.exec(self.mapToGlobal(QPoint(int(point.x()), int(point.y()))))
+
+    # -- display options -----------------------------------------------
+
+    def show_atom_numbers(self) -> bool:
+        return self._show_atom_numbers
+
+    def set_show_atom_numbers(self, show: bool) -> None:  # noqa: FBT001
+        self._show_atom_numbers = bool(show)
+        self.update()
+
+    def show_stereo_labels(self) -> bool:
+        return self._show_stereo_labels
+
+    def set_show_stereo_labels(self, show: bool) -> None:  # noqa: FBT001
+        self._show_stereo_labels = bool(show)
+        self._cache_revision = -1
+        self.update()
 
     def zoom(self) -> float:
         return self._zoom
@@ -515,7 +848,9 @@ class MoleculeCanvas(QWidget):
             symbol = model.atom_symbol(idx)
             charge = model.atom_charge(idx)
             degree = model.atom_degree(idx)
-            if symbol == "C" and charge == 0 and degree > 0:
+            isotope = model.atom_isotope(idx)
+            radicals = model.atom_radicals(idx)
+            if symbol == "C" and charge == 0 and degree > 0 and not isotope and not radicals:
                 continue
             hydrogens = model.implicit_hydrogens(idx)
             if degree == 0:
@@ -524,8 +859,14 @@ class MoleculeCanvas(QWidget):
                 ax, _ay = model.atom_position(idx)
                 dx = sum(model.atom_position(n)[0] - ax for n in model.atom_neighbors(idx))
                 h_left = dx > 0.1
-            labels[idx] = _AtomLabel(symbol, hydrogens, charge, h_left)
+            labels[idx] = _AtomLabel(
+                symbol, hydrogens, charge, h_left and not isotope, isotope, radicals
+            )
         self._labels = labels
+        if self._show_stereo_labels:
+            self._stereo_atoms, self._stereo_bonds = model.stereo_labels()
+        else:
+            self._stereo_atoms, self._stereo_bonds = {}, {}
         self._cache_revision = model.revision
 
     # ------------------------------------------------------------------
@@ -596,7 +937,6 @@ class MoleculeCanvas(QWidget):
     def _paint_structure(
         self, painter: QPainter, zoom: float, origin: QPointF, *, interactive: bool
     ) -> None:
-        del interactive
         self._refresh_cache()
         model = self._model
         if model.is_empty():
@@ -641,6 +981,62 @@ class MoleculeCanvas(QWidget):
         small.setPixelSize(max(6, round(font_px * 0.68)))
         for idx, label in self._labels.items():
             self._paint_label(painter, positions[idx], label, font, small)
+        if interactive:
+            self._paint_annotations(painter, positions, small)
+
+    def _paint_annotations(self, painter: QPainter, positions: list[QPointF], small: QFont) -> None:
+        """Atom numbers and R/S, E/Z labels (view options)."""
+        offset = 0.42 * self._font_px(self._zoom) + 4
+        if self._show_atom_numbers:
+            font = QFont(small)
+            font.setWeight(QFont.Weight.Normal)
+            painter.setFont(font)
+            painter.setPen(ATOM_NUMBER_COLOR)
+            metrics = QFontMetricsF(font)
+            for idx, pos in enumerate(positions):
+                text = str(idx + 1)
+                # Bottom-left: top-right is where charges go.
+                painter.drawText(
+                    QPointF(
+                        pos.x() - offset * 0.55 - metrics.horizontalAdvance(text),
+                        pos.y() + offset * 0.55 + metrics.ascent() * 0.5,
+                    ),
+                    text,
+                )
+        if self._stereo_atoms or self._stereo_bonds:
+            font = QFont(small)
+            font.setItalic(True)
+            font.setWeight(QFont.Weight.Bold)
+            painter.setFont(font)
+            painter.setPen(STEREO_LABEL_COLOR)
+            for idx, code in self._stereo_atoms.items():
+                if idx < len(positions):
+                    pos = positions[idx]
+                    painter.drawText(
+                        QPointF(pos.x() + offset * 0.5, pos.y() + offset * 1.2), f"({code})"
+                    )
+            for bond, code in self._stereo_bonds.items():
+                if bond < self._model.bond_count:
+                    a, b = self._model.bond_atoms(bond)
+                    pa, pb = positions[a], positions[b]
+                    mid = (pa + pb) / 2
+                    dx, dy = pb.x() - pa.x(), pb.y() - pa.y()
+                    length = math.hypot(dx, dy) or 1.0
+                    # Put the label beside the bond, on the side away from the double line
+                    # (which sits on the side with more substituents).
+                    nx, ny = dy / length, -dx / length
+                    total = 0.0
+                    for atom, other in ((a, b), (b, a)):
+                        for nbr in self._model.atom_neighbors(atom):
+                            if nbr != other:
+                                q = positions[nbr] - positions[atom]
+                                total += q.x() * nx + q.y() * ny
+                    if total > 0:
+                        nx, ny = -nx, -ny
+                    painter.drawText(
+                        QPointF(mid.x() + nx * offset * 1.4 - 8, mid.y() + ny * offset * 1.4 + 4),
+                        f"({code})",
+                    )
 
     def _paint_bond(
         self,
@@ -772,6 +1168,23 @@ class MoleculeCanvas(QWidget):
         painter.setPen(color)
         painter.setFont(font)
         painter.drawText(QPointF(sym_left, baseline), label.symbol)
+        if label.isotope:
+            painter.setFont(small)
+            iso = str(label.isotope)
+            painter.drawText(
+                QPointF(sym_left - sm.horizontalAdvance(iso) - 0.5, baseline - fm.ascent() * 0.5),
+                iso,
+            )
+            painter.setFont(font)
+        if label.radicals:
+            painter.setPen(Qt.PenStyle.NoPen)
+            painter.setBrush(color)
+            dot = max(1.4, fm.ascent() * 0.09)
+            top = center.y() - fm.ascent() * 0.75
+            for k in range(label.radicals):
+                cx = center.x() + (k - (label.radicals - 1) / 2) * dot * 3
+                painter.drawEllipse(QPointF(cx, top), dot, dot)
+            painter.setPen(color)
         if h_text:
             x = sym_left - h_w if h_left else sym_left + sym_w
             painter.setFont(font)
@@ -801,6 +1214,18 @@ class MoleculeCanvas(QWidget):
             return
         drag = self._drag
         painter.setBrush(Qt.BrushStyle.NoBrush)
+        if self._placement is not None:
+            self._paint_placement_ghost(painter, cursor)
+            return
+        if drag is not None and drag.moved and drag.kind == "move" and len(drag.move_atoms) == 1:
+            target = self._merge_target(drag.move_atoms[0])
+            if target is not None:
+                painter.setBrush(HOVER_COLOR)
+                pen = QPen(QColor(theme.ACCENT))
+                pen.setWidthF(1.5)
+                painter.setPen(pen)
+                painter.drawEllipse(self._atom_screen(target), SNAP_PX * 0.8, SNAP_PX * 0.8)
+            return
         if drag is not None and drag.moved and drag.kind == "draw":
             if self._tool == "chain":
                 points = self._chain_preview(drag, cursor)
@@ -869,6 +1294,60 @@ class MoleculeCanvas(QWidget):
                 self._atom_symbol,
             )
 
+    def _placement_coordinates(self, cursor: QPointF) -> list[tuple[float, float]]:
+        fragment = self._placement
+        if fragment is None:
+            return []
+        if self._hover_atom is not None and fragment.attach is not None:
+            return self._model.fragment_coordinates(fragment, target_atom_idx=self._hover_atom)
+        return self._model.fragment_coordinates(fragment, position=self._to_world(cursor))
+
+    def _paint_placement_ghost(self, painter: QPainter, cursor: QPointF) -> None:
+        fragment = self._placement
+        if fragment is None:
+            return
+        coords = self._placement_coordinates(cursor)
+        if not coords:
+            return
+        points = [self._to_screen(*c) for c in coords]
+        painter.setPen(self._ghost_pen(150))
+        for bond in fragment.mol.GetBonds():
+            pa = points[bond.GetBeginAtomIdx()]
+            pb = points[bond.GetEndAtomIdx()]
+            painter.drawLine(pa, pb)
+            if bond.GetBondTypeAsDouble() >= 2:
+                dx, dy = pb.x() - pa.x(), pb.y() - pa.y()
+                length = math.hypot(dx, dy) or 1.0
+                off = QPointF(-dy / length * 4, dx / length * 4)
+                painter.drawLine(pa + off, pb + off)
+        if self._hover_atom is not None and fragment.attach is not None:
+            painter.drawLine(self._atom_screen(self._hover_atom), points[fragment.attach])
+        font = QFont(self.font())
+        font.setPixelSize(max(9, round(self._font_px(self._zoom) * 0.85)))
+        font.setWeight(QFont.Weight.DemiBold)
+        painter.setFont(font)
+        for atom in fragment.mol.GetAtoms():
+            symbol = atom.GetSymbol()
+            if symbol == "C" and atom.GetDegree() > 0 and not atom.GetFormalCharge():
+                continue
+            color = element_color(symbol)
+            color.setAlpha(170)
+            painter.setPen(color)
+            text = symbol + _charge_text(atom.GetFormalCharge())
+            p = points[atom.GetIdx()]
+            painter.drawText(
+                QRectF(p.x() - 18, p.y() - 10, 36, 20), Qt.AlignmentFlag.AlignCenter, text
+            )
+
+    def _merge_target(self, atom: int) -> int | None:
+        """Atom that *atom* would be fused with if dropped now."""
+        if not 0 <= atom < self._model.atom_count:
+            return None
+        target = self._snap_atom(self._atom_screen(atom), exclude=atom)
+        if target is None or target in self._model.atom_neighbors(atom):
+            return None
+        return target
+
     def _bond_preview(
         self, drag: _Drag, cursor: QPointF
     ) -> tuple[tuple[float, float], tuple[float, float], int | None]:
@@ -908,10 +1387,26 @@ class MoleculeCanvas(QWidget):
             self._hover_bond = bond
             self._update_hint()
 
+    def _set_hint(self, hint: str) -> None:
+        if hint != self._hint:
+            self._hint = hint
+            self.hint_changed.emit(hint)
+
     def _update_hint(self) -> None:
+        if self._placement is not None:
+            name = self._placement.label or self._placement.smiles()
+            if self._placement.attach is None:
+                hint = tr("Click to place {name}; Esc cancels").format(name=name)
+            else:
+                hint = tr(
+                    "Click an atom to attach {name}, or empty space to place it; Esc cancels"
+                ).format(name=name)
+            self._set_hint(hint)
+            return
         if self._hover_atom is not None:
             hint = tr(
-                "Atom: type C, O, N, S, P, F, I, H, B, L (Cl), R (Br); +/− charge; Del removes"
+                "Atom: type C, O, N, S, P, F, I, H, B, L (Cl), R (Br); +/− charge; "
+                "Enter = label or group; Del removes"
             )
         elif self._hover_bond is not None:
             hint = tr("Bond: 1/2/3 order, W wedge, H hash, Del removes")
@@ -945,6 +1440,12 @@ class MoleculeCanvas(QWidget):
         point = event.position()
         self._cursor = point
         button = event.button()
+        if self._placement is not None and button == Qt.MouseButton.LeftButton:
+            self._drag = _Drag(button, point, self._atom_at(point), None, "place", last=point)
+            return
+        if self._placement is not None and button == Qt.MouseButton.RightButton:
+            self.cancel_placement()
+            return
         if button in (Qt.MouseButton.MiddleButton, Qt.MouseButton.RightButton):
             self._drag = _Drag(button, point, None, None, "pan", last=point)
             self.setCursor(Qt.CursorShape.ClosedHandCursor)
@@ -976,7 +1477,7 @@ class MoleculeCanvas(QWidget):
         point = event.position()
         self._cursor = point
         drag = self._drag
-        if drag is None:
+        if drag is None or drag.kind == "place":
             self._update_hover(point)
             self.update()
             return
@@ -1005,12 +1506,26 @@ class MoleculeCanvas(QWidget):
         self._drag = None
         point = event.position()
         self._cursor = point
+        if drag.kind == "place":
+            atom = self._atom_at(point)
+            if atom is not None:
+                self.place_fragment(target_atom=atom)
+            else:
+                self.place_fragment(position=self._to_world(point))
+            return
         self.unsetCursor()
         if drag.kind == "pan":
+            if not drag.moved and drag.button == Qt.MouseButton.RightButton:
+                self.show_context_menu(point)
             self.update()
             return
         if drag.kind == "move":
             if drag.moved:
+                if len(drag.move_atoms) == 1:
+                    target = self._merge_target(drag.move_atoms[0])
+                    if target is not None:
+                        self._model.merge_atoms(target, drag.move_atoms[0], record_undo=False)
+                        self._selection.clear()
                 self._after_edit(keep_selection=True)
             else:
                 self.update()
@@ -1029,10 +1544,14 @@ class MoleculeCanvas(QWidget):
             self._click(drag.atom, drag.bond, drag.start)
 
     def mouseDoubleClickEvent(self, event: QMouseEvent) -> None:  # noqa: N802
-        if self._tool == "select":
+        if self._tool == "select" and self._placement is None:
             atom = self._atom_at(event.position())
             if atom is not None:
-                self._selection = set(self._model.fragment_atoms(atom))
+                self.edit_atom_label(atom)
+                return
+            bond = self._bond_at(event.position())
+            if bond is not None:
+                self._selection = set(self._model.fragment_atoms(self._model.bond_atoms(bond)[0]))
                 self.update()
                 return
         super().mouseDoubleClickEvent(event)
@@ -1162,21 +1681,34 @@ class MoleculeCanvas(QWidget):
         mods = event.modifiers()
         ctrl = bool(mods & Qt.KeyboardModifier.ControlModifier)
         shift = bool(mods & Qt.KeyboardModifier.ShiftModifier)
+        alt = bool(mods & Qt.KeyboardModifier.AltModifier)
         if ctrl:
             if key == Qt.Key.Key_Z:
                 self.redo() if shift else self.undo()
             elif key == Qt.Key.Key_Y:
                 self.redo()
             elif key == Qt.Key.Key_C:
-                self.copy_smiles()
+                self.copy_selection()
+            elif key == Qt.Key.Key_X:
+                self.cut_selection()
             elif key == Qt.Key.Key_V:
-                self.paste_text(QGuiApplication.clipboard().text())
+                self.paste_from_clipboard()
+            elif key == Qt.Key.Key_D:
+                self.duplicate_selection()
             elif key == Qt.Key.Key_A:
-                self._selection = set(range(self._model.atom_count))
-                self.update()
+                self.select_all()
             else:
                 super().keyPressEvent(event)
                 return
+            event.accept()
+            return
+        if alt and key in (Qt.Key.Key_H, Qt.Key.Key_V, Qt.Key.Key_Left, Qt.Key.Key_Right):
+            if key == Qt.Key.Key_H:
+                self.flip_selection(horizontal=True)
+            elif key == Qt.Key.Key_V:
+                self.flip_selection(horizontal=False)
+            else:
+                self.rotate_selection(15.0 if key == Qt.Key.Key_Left else -15.0)
             event.accept()
             return
         if key in (Qt.Key.Key_Space, Qt.Key.Key_0):
@@ -1185,8 +1717,19 @@ class MoleculeCanvas(QWidget):
             return
         if key == Qt.Key.Key_Escape:
             self._drag = None
-            self._selection.clear()
-            self.update()
+            if self._placement is not None:
+                self.cancel_placement()
+            else:
+                self._selection.clear()
+                self.update()
+            event.accept()
+            return
+        if (
+            key in (Qt.Key.Key_Return, Qt.Key.Key_Enter)
+            and self._hover_atom is not None
+            and self._hover_atom < self._model.atom_count
+        ):
+            self.edit_atom_label(self._hover_atom)
             event.accept()
             return
         delete = key in (Qt.Key.Key_Delete, Qt.Key.Key_Backspace)
@@ -1410,3 +1953,163 @@ class PeriodicTableDialog(QDialog):
         if dialog.exec() == QDialog.DialogCode.Accepted and dialog.selected_symbol():
             return dialog.selected_symbol()
         return None
+
+
+# ---------------------------------------------------------------------------
+# Context menu & atom properties
+# ---------------------------------------------------------------------------
+
+
+def _add_action(menu: QMenu, text: str, slot, shortcut: str = "", *, enabled: bool = True):  # noqa: ANN001, ANN202
+    action = menu.addAction(text)
+    if shortcut:
+        action.setShortcut(shortcut)
+        action.setShortcutVisibleInContextMenu(True)
+    action.setEnabled(enabled)
+    action.triggered.connect(lambda _checked=False: slot())
+    return action
+
+
+def _build_context_menu(canvas: MoleculeCanvas, point: QPointF) -> QMenu:
+    """Context menu for whatever is under *point* (atom, bond, selection, empty)."""
+    menu = QMenu(canvas)
+    model = canvas.model()
+    atom = canvas._atom_at(point)
+    bond = None if atom is not None else canvas._bond_at(point)
+    selection = canvas.selected_atoms()
+
+    def after(action):  # noqa: ANN001, ANN202
+        def run() -> None:
+            action()
+            canvas._after_edit(keep_selection=True)
+
+        return run
+
+    if atom is not None:
+        menu.addSection(
+            tr("Atom {n} ({symbol})").format(n=atom + 1, symbol=model.atom_symbol(atom))
+        )
+        _add_action(menu, tr("Edit label…"), lambda: canvas.edit_atom_label(atom), "Enter")
+        _add_action(menu, tr("Atom properties…"), lambda: canvas.open_atom_properties(atom))
+        _add_action(
+            menu, tr("Increase charge (+)"), after(lambda: model.set_atom_charge(atom, 1)), "+"
+        )
+        _add_action(
+            menu, tr("Decrease charge (−)"), after(lambda: model.set_atom_charge(atom, -1)), "-"
+        )
+        _add_action(
+            menu,
+            tr("Show hydrogens as atoms"),
+            after(lambda: model.add_explicit_hydrogens([atom])),
+            enabled=model.implicit_hydrogens(atom) > 0,
+        )
+        _add_action(menu, tr("Delete atom"), after(lambda: model.delete_atom(atom)), "Del")
+    elif bond is not None:
+        menu.addSection(tr("Bond"))
+        for order, text in ((1, tr("Single Bond")), (2, tr("Double Bond")), (3, tr("Triple Bond"))):
+            _add_action(
+                menu, text, after(lambda o=order: model.set_bond_order(bond, o)), str(order)
+            )
+        _add_action(
+            menu, tr("Wedge Up"), after(lambda: model.set_bond_stereo(bond, STEREO_WEDGE)), "W"
+        )
+        _add_action(
+            menu, tr("Hash Down"), after(lambda: model.set_bond_stereo(bond, STEREO_HASH)), "H"
+        )
+        _add_action(menu, tr("Delete bond"), after(lambda: model.delete_bond(bond)), "Del")
+    if selection:
+        menu.addSection(tr("Selection ({count} atoms)").format(count=len(selection)))
+        _add_action(menu, tr("Copy"), canvas.copy_selection, "Ctrl+C")
+        _add_action(menu, tr("Cut"), canvas.cut_selection, "Ctrl+X")
+        _add_action(menu, tr("Duplicate"), canvas.duplicate_selection, "Ctrl+D")
+        _add_action(menu, tr("Save as custom group…"), canvas.request_save_group)
+        _add_action(menu, tr("Rotate left 15°"), lambda: canvas.rotate_selection(15.0), "Alt+Left")
+        _add_action(
+            menu, tr("Rotate right 15°"), lambda: canvas.rotate_selection(-15.0), "Alt+Right"
+        )
+        _add_action(
+            menu, tr("Flip horizontally"), lambda: canvas.flip_selection(horizontal=True), "Alt+H"
+        )
+        _add_action(
+            menu, tr("Flip vertically"), lambda: canvas.flip_selection(horizontal=False), "Alt+V"
+        )
+        _add_action(
+            menu, tr("Delete selection"), after(lambda: model.delete_atoms(selection)), "Del"
+        )
+    menu.addSection(tr("Structure"))
+    _add_action(menu, tr("Paste"), canvas.paste_from_clipboard, "Ctrl+V")
+    _add_action(menu, tr("Copy structure"), canvas.copy_selection, enabled=not model.is_empty())
+    _add_action(menu, tr("Select all"), canvas.select_all, "Ctrl+A", enabled=not model.is_empty())
+    _add_action(
+        menu, tr("Show all hydrogens"), canvas.add_explicit_hydrogens, enabled=not model.is_empty()
+    )
+    _add_action(
+        menu,
+        tr("Hide explicit hydrogens"),
+        canvas.remove_explicit_hydrogens,
+        enabled=not model.is_empty(),
+    )
+    _add_action(menu, tr("Clean 2D"), canvas.clean_2d, enabled=not model.is_empty())
+    _add_action(menu, tr("Fit View"), canvas.fit_to_view, "Space")
+    return menu
+
+
+_RADICAL_CHOICES = ((0, "none"), (1, "monovalent •"), (2, "divalent ••"))
+
+
+class AtomPropertiesDialog(QDialog):
+    """Element, charge, isotope, hydrogen count and radical of one atom."""
+
+    def __init__(self, model: MolEditorModel, atom: int, parent: QWidget | None = None) -> None:
+        super().__init__(parent)
+        self.setWindowTitle(tr("Atom Properties"))
+        form = QFormLayout(self)
+        self.symbol_edit = QLineEdit(model.atom_symbol(atom))
+        self.symbol_edit.setMaxLength(3)
+        self.charge_spin = QSpinBox()
+        self.charge_spin.setRange(-8, 8)
+        self.charge_spin.setValue(model.atom_charge(atom))
+        self.isotope_spin = QSpinBox()
+        self.isotope_spin.setRange(0, 300)
+        self.isotope_spin.setSpecialValueText(tr("natural"))
+        self.isotope_spin.setValue(model.atom_isotope(atom))
+        self.hydrogen_spin = QSpinBox()
+        self.hydrogen_spin.setRange(-1, 8)
+        self.hydrogen_spin.setSpecialValueText(tr("automatic"))
+        self.hydrogen_spin.setValue(
+            model.implicit_hydrogens(atom)
+            if model.atom_hydrogens_fixed(atom) and not model.atom_radicals(atom)
+            else -1
+        )
+        self.radical_combo = QComboBox()
+        for value, text in _RADICAL_CHOICES:
+            self.radical_combo.addItem(tr(text), value)
+        self.radical_combo.setCurrentIndex(max(0, min(2, model.atom_radicals(atom))))
+        form.addRow(tr("Element"), self.symbol_edit)
+        form.addRow(tr("Charge"), self.charge_spin)
+        form.addRow(tr("Isotope (mass number)"), self.isotope_spin)
+        form.addRow(tr("Hydrogens"), self.hydrogen_spin)
+        form.addRow(tr("Radical"), self.radical_combo)
+        buttons = QDialogButtonBox(
+            QDialogButtonBox.StandardButton.Ok | QDialogButtonBox.StandardButton.Cancel
+        )
+        buttons.accepted.connect(self._on_accept)
+        buttons.rejected.connect(self.reject)
+        form.addRow(buttons)
+
+    def _on_accept(self) -> None:
+        symbol = self.symbol_edit.text().strip()
+        if not is_element_symbol(symbol):
+            self.symbol_edit.setStyleSheet(f"border: 2px solid {INVALID_STROKE.name()};")
+            return
+        self.accept()
+
+    def values(self) -> dict[str, object]:
+        hydrogens = self.hydrogen_spin.value()
+        return {
+            "symbol": self.symbol_edit.text().strip(),
+            "charge": self.charge_spin.value(),
+            "isotope": self.isotope_spin.value(),
+            "hydrogens": None if hydrogens < 0 else hydrogens,
+            "radicals": int(self.radical_combo.currentData()),
+        }
