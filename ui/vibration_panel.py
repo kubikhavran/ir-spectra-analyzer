@@ -584,7 +584,7 @@ class VibrationPanel(QWidget):
         menu = QMenu(self)
         # Delete custom preset (only for non-builtin presets)
         if not preset.is_builtin:
-            delete_action = menu.addAction(f"Delete \u201c{preset.name}\u201d")
+            delete_action = menu.addAction(tr("Delete \u201c{name}\u201d").format(name=preset.name))
         else:
             delete_action = None
         # Remove assignment from active peak
@@ -595,7 +595,9 @@ class VibrationPanel(QWidget):
             and preset.db_id in self._active_peak.vibration_ids
         ):
             remove_action = menu.addAction(
-                f"Remove from peak {int(round(self._active_peak.position))} cm\u207b\u00b9"
+                tr("Remove from peak {wavenumber} cm\u207b\u00b9").format(
+                    wavenumber=int(round(self._active_peak.position))
+                )
             )
         if not menu.actions():
             return

@@ -426,6 +426,7 @@ CZECH_TEXTS: dict[str, str] = {
     "e.g. Nicolet iS 50": "např. Nicolet iS 50",
     # ── Functional groups / consensus ───────────────────────────────────────
     "No functional-group analysis": "Analýza funkčních skupin není k dispozici",
+    "{count} functional groups ranked": "{count} funkčních skupin seřazeno",
     "Show highlighted regions in spectrum": "Zobrazovat vyznačené oblasti ve spektru",
     "Select a functional group to inspect its evidence.": (
         "Vyberte funkční skupinu a zobrazí se, o co se opírá."
@@ -434,12 +435,15 @@ CZECH_TEXTS: dict[str, str] = {
         "Vyberte pík a zobrazí se pro něj návrhy přiřazení."
     ),
     "Diagnostic vibrations": "Diagnostické vibrace",
+    "Suggested vibrations and evidence": "Navrhované vibrace a důkazy",
+    "Suggestions for active peak {wavenumber} cm⁻¹": ("Návrhy pro aktivní pík {wavenumber} cm⁻¹"),
     "Confidence score is a heuristic ranking from diagnostic IR bands. "
     "It is not a statistically calibrated probability.": (
         "Skóre je heuristické pořadí podle diagnostických IR pásů. "
         "Není to statisticky kalibrovaná pravděpodobnost."
     ),
     "No consensus analysis": "Souhrn není k dispozici",
+    "Interpretation confidence {score}%": "Jistota interpretace {score} %",
     "Run matching or inspect functional groups to build consensus.": (
         "Spusťte porovnání nebo si projděte funkční skupiny, souhrn se pak sestaví."
     ),
@@ -456,6 +460,8 @@ CZECH_TEXTS: dict[str, str] = {
         "Souhrn spojuje poznatky o funkčních skupinách, shody v knihovně a přiřazené píky. "
         "Je to pomůcka pro interpretaci, ne definitivní identifikace."
     ),
+    "Delete “{name}”": "Smazat „{name}“",
+    "Remove from peak {wavenumber} cm⁻¹": "Odebrat z píku {wavenumber} cm⁻¹",
     # ── Structure ───────────────────────────────────────────────────────────
     "No structure assigned": "Struktura není přiřazena",
     "Edit Structure...": "Upravit strukturu...",

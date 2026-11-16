@@ -16,6 +16,7 @@ from PySide6.QtWidgets import (
     QWidget,
 )
 
+from ui.i18n import tr
 from ui.score_row_delegate import NAME_ROLE, SCORE_ROLE, ScoreRowDelegate
 
 if TYPE_CHECKING:
@@ -97,11 +98,11 @@ class FunctionalGroupPanel(QWidget):
         self._results = []
         self._group_list.clear()
         self._detail_list.clear()
-        self._status_label.setText("No functional-group analysis")
-        self._group_info_label.setText("Select a functional group to inspect its evidence.")
-        self._peak_info_label.setText("Select a peak to see assignment suggestions for it.")
+        self._status_label.setText(tr("No functional-group analysis"))
+        self._group_info_label.setText(tr("Select a functional group to inspect its evidence."))
+        self._peak_info_label.setText(tr("Select a peak to see assignment suggestions for it."))
         self._assignment_preview_map = {}
-        self._detail_label.setText("Diagnostic vibrations")
+        self._detail_label.setText(tr("Diagnostic vibrations"))
 
     def set_results(self, results: list) -> None:
         previous_group_id = None
@@ -115,13 +116,15 @@ class FunctionalGroupPanel(QWidget):
         self._assignment_preview_map = {}
 
         if not results:
-            self._status_label.setText("No functional-group analysis")
-            self._group_info_label.setText("Select a functional group to inspect its evidence.")
-            self._peak_info_label.setText("Select a peak to see assignment suggestions for it.")
-            self._detail_label.setText("Diagnostic vibrations")
+            self._status_label.setText(tr("No functional-group analysis"))
+            self._group_info_label.setText(tr("Select a functional group to inspect its evidence."))
+            self._peak_info_label.setText(tr("Select a peak to see assignment suggestions for it."))
+            self._detail_label.setText(tr("Diagnostic vibrations"))
             return
 
-        self._status_label.setText(f"{len(results)} functional groups ranked")
+        self._status_label.setText(
+            tr("{count} functional groups ranked").format(count=len(results))
+        )
         for result in results:
             item = QListWidgetItem(f"{result.group_name}  —  {result.score:.1f}%")
             item.setData(256, result)
@@ -198,10 +201,12 @@ class FunctionalGroupPanel(QWidget):
 
         if active_peak is not None:
             self._detail_label.setText(
-                f"Suggestions for active peak {active_peak.position:.0f} cm\u207b\u00b9"
+                tr("Suggestions for active peak {wavenumber} cm\u207b\u00b9").format(
+                    wavenumber=f"{active_peak.position:.0f}"
+                )
             )
         else:
-            self._detail_label.setText("Suggested vibrations and evidence")
+            self._detail_label.setText(tr("Suggested vibrations and evidence"))
 
         suggestions = list(result.suggested_bands or result.bands)
         if active_peak is not None:
@@ -259,7 +264,7 @@ class FunctionalGroupPanel(QWidget):
 
     def _rebuild_peak_info(self, result) -> None:
         if self._active_peak is None:
-            self._peak_info_label.setText("Select a peak to see assignment suggestions for it.")
+            self._peak_info_label.setText(tr("Select a peak to see assignment suggestions for it."))
             return
 
         active_position = self._active_peak.position

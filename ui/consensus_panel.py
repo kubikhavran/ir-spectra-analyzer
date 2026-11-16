@@ -9,6 +9,7 @@ from PySide6.QtGui import QColor
 from PySide6.QtWidgets import QLabel, QListWidget, QListWidgetItem, QVBoxLayout, QWidget
 
 from matching.quality import match_quality_label
+from ui.i18n import tr
 from ui.score_row_delegate import NAME_ROLE, SCORE_ROLE, ScoreRowDelegate
 
 
@@ -91,14 +92,14 @@ class ConsensusPanel(QWidget):
     def clear(self) -> None:
         self._hypothesis_list.clear()
         self._match_list.clear()
-        self._status_label.setText("No consensus analysis")
+        self._status_label.setText(tr("No consensus analysis"))
         self._headline_label.setText(
-            "Run matching or inspect functional groups to build consensus."
+            tr("Run matching or inspect functional groups to build consensus.")
         )
         self._overview_label.setText(
-            "Confirmed, uncertain, and conflicting evidence will appear here."
+            tr("Confirmed, uncertain, and conflicting evidence will appear here.")
         )
-        self._detail_label.setText("Select a hypothesis to inspect its evidence.")
+        self._detail_label.setText(tr("Select a hypothesis to inspect its evidence."))
 
     def set_analysis(self, analysis) -> None:
         previous_hypothesis_id = self.current_hypothesis_id()
@@ -110,7 +111,9 @@ class ConsensusPanel(QWidget):
             self.clear()
             return
 
-        self._status_label.setText(f"Interpretation confidence {analysis.overall_score:.0f}%")
+        self._status_label.setText(
+            tr("Interpretation confidence {score}%").format(score=f"{analysis.overall_score:.0f}")
+        )
         self._headline_label.setText(analysis.headline)
         self._overview_label.setText(self._format_overview(analysis))
 
@@ -136,7 +139,7 @@ class ConsensusPanel(QWidget):
         self._detail_label.setText(
             self._format_hypothesis_detail(current)
             if current is not None
-            else "Select a hypothesis to inspect its evidence."
+            else tr("Select a hypothesis to inspect its evidence.")
         )
 
     def current_hypothesis(self):
@@ -206,7 +209,7 @@ class ConsensusPanel(QWidget):
 
     def _on_hypothesis_row_changed(self, row: int) -> None:
         if row < 0:
-            self._detail_label.setText("Select a hypothesis to inspect its evidence.")
+            self._detail_label.setText(tr("Select a hypothesis to inspect its evidence."))
             return
         item = self._hypothesis_list.item(row)
         if item is None:

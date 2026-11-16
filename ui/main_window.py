@@ -453,6 +453,7 @@ class MainWindow(QMainWindow):
 
     def _on_reset_layout(self) -> None:
         """View → Reset Layout."""
+        self._layout_restored = False
         self.restoreState(self._default_window_state)
         self._raise_first_tab()
         self.statusBar().showMessage(tr("Panel layout reset"))
@@ -1832,9 +1833,11 @@ class MainWindow(QMainWindow):
         """Persist the auto-registration preference."""
         self._settings.set("auto_register_saved_projects", bool(enabled))
         self.statusBar().showMessage(
-            "Saved projects are added to the reference library"
-            if enabled
-            else "Saved projects are no longer added to the reference library"
+            tr(
+                "Saved projects are added to the reference library"
+                if enabled
+                else "Saved projects are no longer added to the reference library"
+            )
         )
 
     def _register_saved_project_as_reference(self, project_path: str) -> None:
