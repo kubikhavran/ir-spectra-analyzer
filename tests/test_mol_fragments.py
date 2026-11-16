@@ -1,0 +1,135 @@
+"""Tests for editor fragments, abbreviations and condensed formulas."""
+
+from __future__ import annotations
+
+import pytest
+
+pytest.importorskip("rdkit")
+
+from rdkit import Chem  # noqa: E402
+
+from chemistry.mol_fragments import (  # noqa: E402
+    ABBREVIATIONS,
+    SALTS_AND_SOLVENTS,
+    Fragment,
+    fragment_from_smiles,
+    is_valid_group_smiles,
+    parse_condensed_formula,
+    parse_group,
+    pretty_label,
+)
+
+
+def _canon(smiles: str) -> str:
+    return Chem.MolToSmiles(Chem.MolFromSmiles(smiles))
+
+
+def _attached(fragment: Fragment) -> str:
+    """SMILES of the fragment bonded to a methyl through its attach atom."""
+    rw = Chem.RWMol(fragment.mol)
+    idx = rw.AddAtom(Chem.Atom("C"))
+    assert fragment.attach is not None
+    rw.AddBond(fragment.attach, idx, Chem.BondType.SINGLE)
+    mol = rw.GetMol()
+    for atom in mol.GetAtoms():
+        if atom.GetSymbol() in ("C", "N", "O", "S", "P", "Si") and not atom.GetNumExplicitHs():
+            atom.SetNoImplicit(False)
+    Chem.SanitizeMol(mol)
+    return Chem.MolToSmiles(mol)
+
+
+@pytest.mark.parametrize(
+    ("text", "expected"),
+    [
+        ("OMe", "COC"),
+        ("-OMe", "COC"),
+        ("CO2Et", "CCOC(C)=O"),
+        ("NHBoc", "CNC(=O)OC(C)(C)C"),
+        ("tBu", "CC(C)(C)C"),
+        ("Ph", "Cc1ccccc1"),
+        ("Ts", "Cc1ccc(S(C)(=O)=O)cc1"),
+        ("NO2", "C[N+](=O)[O-]"),
+        ("CN", "CC#N"),
+        ("*OCC(C)C", "COCC(C)C"),
+        ("OCC", "CCOC"),
+        ("CH2CH2OH", "CCCO"),
+        ("OCH2CH3", "CCOC"),
+        ("N(CH3)2", "CN(C)C"),
+        ("C(CH3)3", "CC(C)(C)C"),
+        ("COCH3", "CC(C)=O"),
+        ("CH2COOH", "CCC(=O)O"),
+        ("CH2CO2Me", "CCC(=O)OC"),
+        ("CH2CN", "CCC#N"),
+        ("CH2NO2", "CC[N+](=O)[O-]"),
+        ("SO2CH3", "CS(C)(=O)=O"),
+        ("CF2CF3", "CC(F)(F)C(F)(F)F"),
+        ("CHO", "CC=O"),
+        ("C6H5", "Cc1ccccc1"),
+    ],
+)
+def test_parse_group_variants(text, expected):
+    fragment = parse_group(text)
+    assert fragment is not None
+    assert _attached(fragment) == _canon(expected)
+
+
+def test_parse_group_rejects_nonsense():
+    assert parse_group("") is None
+    assert parse_group("xyz!") is None
+    assert parse_group("**C") is None
+
+
+def test_custom_groups_take_priority():
+    custom = {"Pin": "*B1OC(C)(C)C(C)(C)O1", "CN": "*NC"}
+    fragment = parse_group("Pin", custom)
+    assert fragment is not None
+    assert fragment.label == "Pin"
+    assert _attached(fragment) == _canon("CB1OC(C)(C)C(C)(C)O1")
+    # A custom definition overrides the built-in abbreviation of the same name.
+    override = parse_group("CN", custom)
+    assert override is not None
+    assert _attached(override) == _canon("CNC")
+
+
+def test_condensed_formula_parser_output():
+    assert parse_condensed_formula("CH2CH2OH") == "*CCO"
+    assert parse_condensed_formula("N(CH3)2") == "*N(C)(C)"
+    assert parse_condensed_formula("CH2(") is None
+    assert parse_condensed_formula("Q") is None
+
+
+def test_fragment_from_smiles_attach_and_anchor():
+    fragment = fragment_from_smiles("*C(=O)O")
+    assert fragment is not None
+    assert fragment.atom_count == 3
+    assert fragment.attach is not None
+    assert fragment.mol.GetAtomWithIdx(fragment.attach).GetSymbol() == "C"
+    assert fragment.anchor is not None
+    plain = fragment_from_smiles("OCC")
+    assert plain is not None
+    assert plain.attach == 0
+    assert plain.anchor is None
+    assert fragment_from_smiles("*C*") is None
+    assert is_valid_group_smiles("*OC")
+    assert not is_valid_group_smiles("not smiles")
+
+
+def test_fragment_json_round_trip():
+    fragment = fragment_from_smiles("*OCC", label="OEt")
+    assert fragment is not None
+    restored = Fragment.from_json(fragment.to_json())
+    assert restored is not None
+    assert restored.attach == fragment.attach
+    assert restored.anchor == pytest.approx(fragment.anchor)
+    assert restored.label == "OEt"
+    assert restored.smiles() == fragment.smiles()
+    assert Fragment.from_json({"mol_block": "junk"}) is None
+
+
+def test_abbreviation_and_salt_tables_parse():
+    for label, smiles in ABBREVIATIONS.items():
+        assert fragment_from_smiles(smiles) is not None, label
+    for label, smiles in SALTS_AND_SOLVENTS:
+        assert Chem.MolFromSmiles(smiles) is not None, label
+    assert pretty_label("CO2Et") == "CO₂Et"
+    assert pretty_label("SO3H") == "SO₃H"

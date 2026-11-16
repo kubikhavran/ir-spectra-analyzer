@@ -525,3 +525,233 @@ def test_paste_text_inserts_next_to_existing_drawing():
     assert model.paste_text(mol_block)
     assert model.to_smiles() == _canon("CCO.O")
     assert not model.paste_text("not a smiles !!")
+
+
+# ---------------------------------------------------------------------------
+# Charges, atom properties and calculated values
+# ---------------------------------------------------------------------------
+
+
+def test_salt_components_formula_and_charge():
+    model = MolEditorModel.from_smiles("C[NH3+].[Cl-]")
+    assert model.display_formula() == "CH₆N⁺ · Cl⁻"
+    assert model.net_charge() == 0
+    neutral = MolEditorModel.from_smiles("CCN.Cl")
+    assert neutral.display_formula() == "C₂H₇N · HCl"
+    assert len(neutral.components()) == 2
+    cation = MolEditorModel.from_smiles("[NH4+]")
+    assert cation.net_charge() == 1
+
+
+def test_exact_mass_and_unsaturation():
+    model = MolEditorModel.from_smiles("c1ccccc1C(=O)O")
+    assert model.exact_mass() == pytest.approx(122.0368, abs=1e-3)
+    assert model.unsaturation() == 5
+    assert MolEditorModel.from_smiles("CCO").unsaturation() == 0
+    assert MolEditorModel().unsaturation() == 0
+
+
+@pytest.mark.parametrize(
+    ("charge", "expected"),
+    [(-1, "C[O-]"), (1, "C[OH2+]"), (0, "CO")],
+)
+def test_charge_adjusts_hydrogens(charge, expected):
+    model = MolEditorModel.from_smiles("CO")
+    model.set_atom_properties(1, charge=charge)
+    assert model.to_smiles() == expected
+
+
+def test_charge_on_nitrogen_and_metals():
+    model = MolEditorModel.from_smiles("CN")
+    model.set_atom_charge(1, 1)
+    assert model.to_smiles() == "C[NH3+]"
+    metal = MolEditorModel()
+    idx = metal.add_free_atom(0.0, 0.0, "Mg")
+    metal.set_atom_charge(idx, 2, relative=False)
+    assert metal.to_smiles() == "[Mg+2]"
+    assert metal.display_formula() == "Mg²⁺"
+
+
+def test_radicals_isotopes_and_fixed_hydrogens():
+    model = MolEditorModel.from_smiles("CC")
+    model.set_atom_radicals(1, 1)
+    assert model.to_smiles() == "[CH2]C"
+    assert model.atom_radicals(1) == 1
+    assert ("radical", 1) in model.structure_problems()
+    model.set_atom_radicals(1, 0)
+    assert model.to_smiles() == "CC"
+    model.set_atom_isotope(1, 13)
+    assert model.to_smiles() == "C[13CH3]"
+    assert model.atom_isotope(1) == 13
+    amine = MolEditorModel.from_smiles("CN")
+    amine.set_atom_hydrogens(1, 0)
+    assert amine.atom_hydrogens_fixed(1)
+    assert amine.implicit_hydrogens(1) == 0
+    amine.set_atom_hydrogens(1, None)
+    assert amine.to_smiles() == "CN"
+
+
+def test_set_atom_properties_is_one_undo_step():
+    model = MolEditorModel.from_smiles("CC")
+    model.set_atom_properties(1, symbol="N", charge=1, isotope=15)
+    assert model.to_smiles() == "C[15NH3+]"
+    assert model.undo()
+    assert model.to_smiles() == "CC"
+
+
+def test_structure_problems_report_valence():
+    model = MolEditorModel.from_smiles("C")
+    for _ in range(5):
+        model.sprout_atom(0)
+    assert ("valence", 0) in model.structure_problems()
+
+
+def test_stereo_labels_and_inchi():
+    atoms, bonds = MolEditorModel.from_smiles("C[C@H](N)O").stereo_labels()
+    assert atoms == {1: "R"}
+    assert bonds == {}
+    atoms, bonds = MolEditorModel.from_smiles("C/C=C/C").stereo_labels()
+    assert list(bonds.values()) == ["E"]
+    inchi, key = MolEditorModel.from_smiles("CC(=O)O").inchi()
+    assert inchi.startswith("InChI=1S/C2H4O2")
+    assert key == "QTBSBXVTEAMEQO-UHFFFAOYSA-N"
+    assert MolEditorModel().inchi() == ("", "")
+
+
+# ---------------------------------------------------------------------------
+# Labels, fragments and transformations
+# ---------------------------------------------------------------------------
+
+
+@pytest.mark.parametrize(
+    ("label", "expected"),
+    [
+        ("OMe", "COc1ccccc1"),
+        ("CO2Et", "CCOC(=O)c1ccccc1"),
+        ("CH2CH2OH", "OCCc1ccccc1"),
+        ("N+", "[NH3+]c1ccccc1"),
+        ("O-", "[O-]c1ccccc1"),
+        ("D", "[2H]c1ccccc1"),
+        ("NHBoc", "CC(C)(C)OC(=O)Nc1ccccc1"),
+        ("*OCC(C)C", "CC(C)COc1ccccc1"),
+        ("Cl", "Clc1ccccc1"),
+    ],
+)
+def test_apply_label_on_terminal_atom(label, expected):
+    model = MolEditorModel.from_smiles("c1ccccc1C")
+    assert model.apply_label(6, label)
+    assert model.to_smiles() == _canon(expected)
+    assert not model.invalid_atom_indices()
+    assert model.undo()
+    assert model.to_smiles() == "Cc1ccccc1"
+
+
+def test_apply_label_rejects_unknown_text_and_inner_atoms():
+    model = MolEditorModel.from_smiles("CCC")
+    assert not model.apply_label(2, "xyz!")
+    assert not model.apply_label(1, "OMe")  # not a terminal atom
+    assert model.apply_label(1, "N")  # elements are always fine
+    assert model.to_smiles() == "CNC"
+
+
+def test_apply_label_uses_custom_groups():
+    model = MolEditorModel.from_smiles("CC")
+    assert model.apply_label(1, "Pin", {"Pin": "*B1OC(C)(C)C(C)(C)O1"})
+    assert model.to_smiles() == _canon("CB1OC(C)(C)C(C)(C)O1")
+
+
+def test_copy_part_of_molecule_and_attach_it_to_a_chain():
+    source = MolEditorModel.from_smiles("CCCC(=O)O")
+    fragment = source.extract_fragment([3, 4, 5])  # the COOH part
+    assert fragment.attach == 0
+    assert fragment.anchor is not None
+    chain = MolEditorModel.from_smiles("CCCCC")
+    new_atoms = chain.insert_fragment(fragment, target_atom_idx=4)
+    assert chain.to_smiles() == "CCCCCC(=O)O"
+    assert fragment.attach is not None
+    assert _bond_length(chain, 4, new_atoms[fragment.attach]) == pytest.approx(BOND_LENGTH)
+    assert not chain.invalid_atom_indices()
+    assert chain.undo()
+    assert chain.to_smiles() == "CCCCC"
+
+
+def test_extract_fragment_resets_hydrogens_and_keeps_charges():
+    source = MolEditorModel.from_smiles("CC[N+](=O)[O-]")
+    fragment = source.extract_fragment([2, 3, 4])
+    target = MolEditorModel.from_smiles("c1ccccc1")
+    target.insert_fragment(fragment, target_atom_idx=0)
+    assert target.to_smiles() == _canon("O=[N+]([O-])c1ccccc1")
+
+
+def test_insert_fragment_as_separate_molecule():
+    from chemistry.mol_fragments import fragment_from_smiles
+
+    model = MolEditorModel.from_smiles("CCN")
+    fragment = fragment_from_smiles("Cl")
+    assert fragment is not None
+    model.insert_fragment(fragment)
+    assert model.to_smiles() == "CCN.Cl"
+    bounds_main = max(model.atom_position(i)[0] for i in range(3))
+    assert model.atom_position(3)[0] > bounds_main
+    model.insert_fragment(fragment, position=(-20.0, 0.0))
+    assert model.atom_position(4) == pytest.approx((-20.0, 0.0))
+
+
+def test_fragment_coordinates_preview_matches_insert():
+    from chemistry.mol_fragments import parse_group
+
+    model = MolEditorModel.from_smiles("CCC")
+    fragment = parse_group("CO2Me")
+    assert fragment is not None
+    preview = model.fragment_coordinates(fragment, target_atom_idx=2)
+    atoms = model.insert_fragment(fragment, target_atom_idx=2)
+    placed = [c for i in atoms for c in model.atom_position(i)]
+    assert placed == pytest.approx([c for p in preview for c in p])
+
+
+def test_rotate_and_flip_keep_structure_and_stereo():
+    model = MolEditorModel.from_smiles("C[C@H](N)O")
+    before = model.atom_position(0)
+    model.rotate_atoms(None, 90.0)
+    assert model.to_smiles() == "C[C@H](N)O"
+    assert model.atom_position(0) != pytest.approx(before)
+    model.flip_atoms(None, horizontal=True)
+    assert model.to_smiles() == "C[C@H](N)O"
+    model.flip_atoms(None, horizontal=False)
+    assert model.to_smiles() == "C[C@H](N)O"
+    assert model.undo()
+    assert model.undo()
+    assert model.undo()
+    assert model.atom_position(0) == pytest.approx(before)
+
+
+def test_rotate_selected_atoms_only():
+    model = MolEditorModel.from_smiles("CC.O")
+    water = model.atom_position(2)
+    model.rotate_atoms([0, 1], 180.0)
+    assert model.atom_position(2) == pytest.approx(water)
+
+
+def test_merge_atoms_joins_fragments():
+    model = MolEditorModel.from_smiles("CC.CO")
+    keep = model.merge_atoms(1, 2)
+    assert model.to_smiles() == "CCO"
+    assert keep == 1
+    assert model.undo()
+    assert model.to_smiles() == "CC.CO"
+
+
+def test_explicit_hydrogens_round_trip():
+    model = MolEditorModel.from_smiles("CO")
+    assert model.add_explicit_hydrogens() == 4
+    assert model.atom_count == 6
+    assert model.to_smiles() == "[H]OC([H])([H])[H]"
+    assert model.remove_explicit_hydrogens() == 4
+    assert model.to_smiles() == "CO"
+    pyrrole = MolEditorModel.from_smiles("c1cc[nH]c1")
+    pyrrole.add_explicit_hydrogens()
+    pyrrole.remove_explicit_hydrogens()
+    assert pyrrole.to_smiles() == "c1cc[nH]c1"
+    selected = MolEditorModel.from_smiles("CO")
+    assert selected.add_explicit_hydrogens([1]) == 1
+    assert MolEditorModel().add_explicit_hydrogens() == 0

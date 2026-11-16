@@ -30,6 +30,8 @@ from rdkit import Chem, rdBase
 from rdkit.Chem import Descriptors, rdDepictor, rdMolDescriptors
 from rdkit.Geometry import Point3D
 
+from chemistry.mol_fragments import Fragment, parse_group
+
 BOND_LENGTH = 1.50
 UNDO_LIMIT = 100
 
@@ -1266,3 +1268,560 @@ class MolEditorModel:
                 target = self._mol.GetBondBetweenAtoms(begin, end)
             target.SetBondDir(direction)
         self._touch()
+
+    # ------------------------------------------------------------------
+    # Atom properties (charge, isotope, hydrogens, radicals)
+    # ------------------------------------------------------------------
+
+    def atom_isotope(self, atom_idx: int) -> int:
+        return int(self._mol.GetAtomWithIdx(atom_idx).GetIsotope())
+
+    def atom_radicals(self, atom_idx: int) -> int:
+        return int(self._mol.GetAtomWithIdx(atom_idx).GetNumRadicalElectrons())
+
+    def atom_hydrogens_fixed(self, atom_idx: int) -> bool:
+        """True when the H count was set by hand (not derived from valence)."""
+        atom = self._mol.GetAtomWithIdx(atom_idx)
+        return atom.GetSymbol() in _IMPLICIT_H_ELEMENTS and atom.GetNoImplicit()
+
+    def _auto_hydrogens(self, atom: Chem.Atom) -> int:
+        probe = Chem.RWMol(self._mol)
+        work = probe.GetAtomWithIdx(atom.GetIdx())
+        work.SetNoImplicit(work.GetSymbol() not in _IMPLICIT_H_ELEMENTS)
+        work.SetNumExplicitHs(0)
+        work.SetNumRadicalElectrons(0)
+        with _quiet_rdkit():
+            probe.UpdatePropertyCache(strict=False)
+        return int(work.GetNumImplicitHs())
+
+    def set_atom_properties(
+        self,
+        atom_idx: int,
+        *,
+        symbol: str | None = None,
+        charge: int | None = None,
+        isotope: int | None = None,
+        hydrogens: int | None | str = "keep",
+        radicals: int | None = None,
+    ) -> None:
+        """Change several atom properties in one undo step.
+
+        ``hydrogens``: ``"keep"`` leaves the H count alone, ``None`` returns
+        it to automatic (from valence), an int fixes it.  Radicals (unpaired
+        electrons) take hydrogens away from the automatic count.
+        """
+        if symbol is not None:
+            self._make_atom(symbol)  # validates
+        self._push_undo()
+        atom = self._mol.GetAtomWithIdx(atom_idx)
+        if symbol is not None and symbol != atom.GetSymbol():
+            template = self._make_atom(symbol)
+            atom.SetAtomicNum(template.GetAtomicNum())
+            atom.SetNoImplicit(template.GetNoImplicit())
+            atom.SetNumExplicitHs(0)
+            atom.SetIsAromatic(False)
+        if charge is not None:
+            atom.SetFormalCharge(max(-8, min(8, int(charge))))
+        if isotope is not None:
+            atom.SetIsotope(max(0, int(isotope)))
+        if radicals is not None:
+            atom.SetNumRadicalElectrons(max(0, min(3, int(radicals))))
+        if hydrogens != "keep":
+            if hydrogens is None:
+                atom.SetNoImplicit(atom.GetSymbol() not in _IMPLICIT_H_ELEMENTS)
+                atom.SetNumExplicitHs(0)
+            else:
+                atom.SetNoImplicit(True)
+                atom.SetNumExplicitHs(max(0, int(hydrogens)))
+        elif charge is not None or symbol is not None:
+            # A new charge or element changes how many H the atom carries.
+            atom.SetNoImplicit(atom.GetSymbol() not in _IMPLICIT_H_ELEMENTS)
+            atom.SetNumExplicitHs(0)
+        if atom.GetNumRadicalElectrons() and not self.atom_hydrogens_fixed(atom_idx):
+            auto = self._auto_hydrogens(atom)
+            atom.SetNoImplicit(True)
+            atom.SetNumExplicitHs(max(0, auto - atom.GetNumRadicalElectrons()))
+        self._touch()
+
+    def set_atom_isotope(self, atom_idx: int, isotope: int) -> None:
+        self.set_atom_properties(atom_idx, isotope=isotope)
+
+    def set_atom_radicals(self, atom_idx: int, radicals: int) -> None:
+        atom = self._mol.GetAtomWithIdx(atom_idx)
+        if radicals == 0 and atom.GetNumRadicalElectrons():
+            self.set_atom_properties(atom_idx, radicals=0, hydrogens=None)
+        else:
+            self.set_atom_properties(atom_idx, radicals=radicals)
+
+    def set_atom_hydrogens(self, atom_idx: int, hydrogens: int | None) -> None:
+        self.set_atom_properties(atom_idx, hydrogens=hydrogens)
+
+    # ------------------------------------------------------------------
+    # Calculated values & checks
+    # ------------------------------------------------------------------
+
+    def net_charge(self) -> int:
+        return sum(a.GetFormalCharge() for a in self._mol.GetAtoms())
+
+    def components(self) -> list[list[int]]:
+        """Connected components (molecules / ions), left to right."""
+        seen: set[int] = set()
+        parts: list[list[int]] = []
+        for idx in range(self.atom_count):
+            if idx not in seen:
+                part = self.fragment_atoms(idx)
+                seen.update(part)
+                parts.append(part)
+        parts.sort(key=lambda p: min(self.atom_position(i)[0] for i in p))
+        return parts
+
+    def component_formulas(self) -> list[str]:
+        """Formula of each component with sub-/superscripts (e.g. ``C₆H₇N``, ``HCl``)."""
+        formulas = []
+        for part in self.components():
+            sub = self._submol(part)
+            with _quiet_rdkit():
+                sub.UpdatePropertyCache(strict=False)
+                formulas.append(format_formula(rdMolDescriptors.CalcMolFormula(sub)))
+        return formulas
+
+    def display_formula(self) -> str:
+        """``C₆H₈N⁺ · Cl⁻`` style formula of everything drawn."""
+        return " · ".join(self.component_formulas())
+
+    def exact_mass(self) -> float:
+        if self.atom_count == 0:
+            return 0.0
+        mol = Chem.Mol(self._mol)
+        with _quiet_rdkit():
+            mol.UpdatePropertyCache(strict=False)
+            return float(rdMolDescriptors.CalcExactMolWt(mol))
+
+    def unsaturation(self) -> int:
+        """Rings + π bonds (double bond equivalents) of the drawn structure."""
+        if self.atom_count == 0:
+            return 0
+        rings = self.bond_count - self.atom_count + len(self.components())
+        pi_bonds = sum(self.bond_order(i) - 1 for i in range(self.bond_count))
+        return rings + pi_bonds
+
+    def structure_problems(self) -> list[tuple[str, int | None]]:
+        """``(kind, atom index)`` for things a chemist would want to check.
+
+        Kinds: ``"valence"`` (too many bonds), ``"radical"`` (unpaired
+        electrons drawn on purpose or not).
+        """
+        problems: list[tuple[str, int | None]] = [
+            ("valence", idx) for idx in sorted(self.invalid_atom_indices())
+        ]
+        problems += [
+            ("radical", atom.GetIdx())
+            for atom in self._mol.GetAtoms()
+            if atom.GetNumRadicalElectrons()
+        ]
+        return problems
+
+    def stereo_labels(self) -> tuple[dict[int, str], dict[int, str]]:
+        """CIP labels: ``({atom: "R"/"S"}, {bond: "E"/"Z"})`` as drawn."""
+        empty: tuple[dict[int, str], dict[int, str]] = ({}, {})
+        if self.atom_count == 0:
+            return empty
+        try:
+            from rdkit.Chem import rdCIPLabeler  # noqa: PLC0415
+
+            with _quiet_rdkit():
+                mol = Chem.MolFromMolBlock(self.to_mol_block(), removeHs=False)
+                if mol is None:
+                    return empty
+                rdCIPLabeler.AssignCIPLabels(mol)
+        except Exception:  # noqa: BLE001
+            return empty
+        atoms = {
+            a.GetIdx(): str(a.GetProp("_CIPCode")).upper()
+            for a in mol.GetAtoms()
+            if a.HasProp("_CIPCode")
+        }
+        bonds: dict[int, str] = {}
+        for bond in mol.GetBonds():
+            if bond.HasProp("_CIPCode"):
+                idx = self.find_bond(bond.GetBeginAtomIdx(), bond.GetEndAtomIdx())
+                if idx is not None:
+                    bonds[idx] = str(bond.GetProp("_CIPCode")).upper()
+        return atoms, bonds
+
+    def inchi(self) -> tuple[str, str]:
+        """``(InChI, InChIKey)``; empty strings when unavailable."""
+        if self.atom_count == 0:
+            return "", ""
+        try:
+            with _quiet_rdkit():
+                mol = self._export_mol()
+                inchi = Chem.MolToInchi(mol) or ""
+                key = Chem.InchiToInchiKey(inchi) if inchi else ""
+        except Exception:  # noqa: BLE001
+            return "", ""
+        return str(inchi), str(key or "")
+
+    # ------------------------------------------------------------------
+    # Fragments: copy, paste, attach, groups
+    # ------------------------------------------------------------------
+
+    def _submol(self, atom_indices: Iterable[int]) -> Chem.RWMol:
+        indices = sorted(set(atom_indices))
+        index_map: dict[int, int] = {}
+        sub = Chem.RWMol()
+        sub.AddConformer(Chem.Conformer(0), assignId=True)
+        for old in indices:
+            new = sub.AddAtom(Chem.Atom(self._mol.GetAtomWithIdx(old)))
+            x, y = self.atom_position(old)
+            sub.GetConformer().SetAtomPosition(new, Point3D(x, y, 0.0))
+            index_map[old] = new
+        for bond in self._mol.GetBonds():
+            a, b = bond.GetBeginAtomIdx(), bond.GetEndAtomIdx()
+            if a in index_map and b in index_map:
+                sub.AddBond(index_map[a], index_map[b], bond.GetBondType())
+                sub.GetBondBetweenAtoms(index_map[a], index_map[b]).SetBondDir(bond.GetBondDir())
+        return sub
+
+    def extract_fragment(self, atom_indices: Iterable[int]) -> Fragment:
+        """Copy the given atoms (and bonds between them) as a :class:`Fragment`.
+
+        If a copied atom was bonded to an atom outside the selection, it
+        becomes the attachment point, so pasting onto an atom re-creates
+        that bond in the same orientation.
+        """
+        indices = sorted(set(atom_indices))
+        if not indices:
+            raise ValueError("Nothing to copy")
+        selected = set(indices)
+        attach: int | None = None
+        anchor: tuple[float, float] | None = None
+        for position, old in enumerate(indices):
+            outside = [n for n in self.atom_neighbors(old) if n not in selected]
+            if outside:
+                attach = position
+                anchor = self.atom_position(outside[0])
+                break
+        sub = self._submol(indices)
+        for atom in sub.GetAtoms():
+            if atom.GetSymbol() in _IMPLICIT_H_ELEMENTS and not atom.GetNumRadicalElectrons():
+                atom.SetNoImplicit(False)
+                atom.SetNumExplicitHs(0)
+        mol = sub.GetMol()
+        with _quiet_rdkit():
+            mol.UpdatePropertyCache(strict=False)
+        return Fragment(mol=mol, attach=attach if attach is not None else 0, anchor=anchor)
+
+    def fragment_coordinates(
+        self,
+        fragment: Fragment,
+        *,
+        target_atom_idx: int | None = None,
+        position: tuple[float, float] | None = None,
+    ) -> list[tuple[float, float]]:
+        """Where :meth:`insert_fragment` would put each fragment atom."""
+        pts = [complex(x, y) for x, y in fragment.coordinates()]
+        if not pts:
+            return []
+        centroid = sum(pts) / len(pts)
+        if target_atom_idx is not None and fragment.attach is not None:
+            attach = pts[fragment.attach]
+            target = complex(*self.atom_position(target_atom_idx))
+            direction = cmath.exp(1j * self._sprout_direction(target_atom_idx))
+            attach_pos = target + BOND_LENGTH * direction
+            if fragment.anchor is not None:
+                inward = complex(*fragment.anchor) - attach
+            else:
+                inward = (attach - centroid) if abs(attach - centroid) > 1e-6 else complex(-1, 0)
+                inward = -inward
+            if abs(inward) < 1e-6:
+                inward = complex(-1, 0)
+            # The bond back to the target points along -direction.
+            rotation = (-direction) / (inward / abs(inward))
+            options = [
+                [attach_pos + (p - attach) * rotation for p in pts],
+                [
+                    attach_pos
+                    + ((p - attach).conjugate()) * (-direction) / (inward.conjugate() / abs(inward))
+                    for p in pts
+                ],
+            ]
+            others = [
+                complex(*self.atom_position(i))
+                for i in range(self.atom_count)
+                if i != target_atom_idx
+            ]
+
+            def crowding(placed: list[complex]) -> float:
+                return sum(1.0 / max(abs(p - o), 0.2) ** 2 for p in placed for o in others)
+
+            placed = (
+                options[0] if crowding(options[0]) <= crowding(options[1]) * 1.05 else options[1]
+            )
+        else:
+            if position is None:
+                bounds = self.bounds()
+                if bounds is None:
+                    target = complex(0.0, 0.0)
+                else:
+                    xs = [p.real for p in pts]
+                    width = max(xs) - min(xs)
+                    target = complex(
+                        bounds[2] + 1.5 * BOND_LENGTH + width / 2, (bounds[1] + bounds[3]) / 2
+                    )
+            else:
+                target = complex(*position)
+            placed = [target + (p - centroid) for p in pts]
+        return [(p.real, p.imag) for p in placed]
+
+    def insert_fragment(
+        self,
+        fragment: Fragment,
+        *,
+        target_atom_idx: int | None = None,
+        position: tuple[float, float] | None = None,
+    ) -> list[int]:
+        """Add *fragment*; bonded to *target_atom_idx* through its attach atom.
+
+        Without a target the fragment is centred at *position* (or placed to
+        the right of the drawing) as a separate molecule — e.g. a counter-ion.
+        """
+        coords = self.fragment_coordinates(
+            fragment, target_atom_idx=target_atom_idx, position=position
+        )
+        self._push_undo()
+        index_map: dict[int, int] = {}
+        for atom in fragment.mol.GetAtoms():
+            x, y = coords[atom.GetIdx()]
+            index_map[atom.GetIdx()] = self._add_atom(Chem.Atom(atom), x, y)
+        for bond in fragment.mol.GetBonds():
+            a = index_map[bond.GetBeginAtomIdx()]
+            b = index_map[bond.GetEndAtomIdx()]
+            self._mol.AddBond(a, b, bond.GetBondType())
+            self._mol.GetBondBetweenAtoms(a, b).SetBondDir(bond.GetBondDir())
+        if target_atom_idx is not None and fragment.attach is not None:
+            self._add_bond(target_atom_idx, index_map[fragment.attach], 1)
+        self._touch()
+        return [index_map[i] for i in range(fragment.atom_count)]
+
+    def replace_atom_with_fragment(self, atom_idx: int, fragment: Fragment) -> list[int]:
+        """Put a group in place of a (terminal or lone) atom, like typing ``OMe`` on it.
+
+        Returns the new atom indices (valid after the replacement).
+        """
+        nbrs = self.atom_neighbors(atom_idx)
+        if len(nbrs) > 1:
+            raise ValueError("A group can only replace a terminal atom")
+        with self.compound():
+            if not nbrs:
+                ax, ay = self.atom_position(atom_idx)
+                if fragment.attach is not None:
+                    fx, fy = fragment.coordinates()[fragment.attach]
+                    cx = sum(x for x, _ in fragment.coordinates()) / fragment.atom_count
+                    cy = sum(y for _, y in fragment.coordinates()) / fragment.atom_count
+                    position = (ax + cx - fx, ay + cy - fy)
+                else:
+                    position = (ax, ay)
+                created = self.insert_fragment(fragment, position=position)
+            else:
+                neighbour = nbrs[0]
+                nx, ny = self.atom_position(neighbour)
+                ax, ay = self.atom_position(atom_idx)
+                bond = self.find_bond(neighbour, atom_idx)
+                order = self.bond_order(bond) if bond is not None else 1
+                # Temporarily drop the atom's bond so the group grows where it sat.
+                self._mol.RemoveBond(neighbour, atom_idx)
+                saved = self.atom_position(atom_idx)
+                self._set_position(atom_idx, 1e6, 1e6)
+                angle = math.degrees(math.atan2(ay - ny, ax - nx))
+                coords = self._fragment_coords_at_angle(fragment, neighbour, angle)
+                self._set_position(atom_idx, *saved)
+                index_map: dict[int, int] = {}
+                for atom in fragment.mol.GetAtoms():
+                    index_map[atom.GetIdx()] = self._add_atom(
+                        Chem.Atom(atom), *coords[atom.GetIdx()]
+                    )
+                for fbond in fragment.mol.GetBonds():
+                    a = index_map[fbond.GetBeginAtomIdx()]
+                    b = index_map[fbond.GetEndAtomIdx()]
+                    self._mol.AddBond(a, b, fbond.GetBondType())
+                attach = fragment.attach if fragment.attach is not None else 0
+                self._add_bond(neighbour, index_map[attach], 1 if order > 1 else order)
+                created = [index_map[i] for i in range(fragment.atom_count)]
+            self._mol.RemoveAtom(atom_idx)
+            self._touch()
+        return [i - 1 if i > atom_idx else i for i in created]
+
+    def _fragment_coords_at_angle(
+        self, fragment: Fragment, target_atom_idx: int, angle_deg: float
+    ) -> list[tuple[float, float]]:
+        pts = [complex(x, y) for x, y in fragment.coordinates()]
+        attach = pts[fragment.attach if fragment.attach is not None else 0]
+        centroid = sum(pts) / len(pts)
+        direction = cmath.exp(1j * math.radians(angle_deg))
+        target = complex(*self.atom_position(target_atom_idx))
+        attach_pos = target + BOND_LENGTH * direction
+        if fragment.anchor is not None:
+            inward = complex(*fragment.anchor) - attach
+        else:
+            inward = -(attach - centroid) if abs(attach - centroid) > 1e-6 else complex(-1, 0)
+        if abs(inward) < 1e-6:
+            inward = complex(-1, 0)
+        rotation = (-direction) / (inward / abs(inward))
+        return [
+            (
+                (attach_pos + (p - attach) * rotation).real,
+                (attach_pos + (p - attach) * rotation).imag,
+            )
+            for p in pts
+        ]
+
+    def apply_label(
+        self, atom_idx: int, text: str, custom_groups: dict[str, str] | None = None
+    ) -> bool:
+        """Apply what the user typed on an atom: an element or a group.
+
+        ``N``, ``Cl``, ``Na`` change the element; ``OMe``, ``CO2Et``,
+        ``CH2CH2OH``, ``*OCC`` or a custom group replace the atom by that group.
+        Returns ``False`` when the text is not understood.
+        """
+        label = (text or "").strip()
+        if not label:
+            return False
+        charge_match = re.fullmatch(r"([A-Z][a-z]?)(\d*)([+-])", label)
+        if charge_match and is_element_symbol(charge_match.group(1)):
+            symbol, count, sign = charge_match.groups()
+            charge = int(count or 1) * (1 if sign == "+" else -1)
+            self.set_atom_properties(atom_idx, symbol=symbol, charge=charge)
+            return True
+        if is_element_symbol(label):
+            self.set_atom_symbol(atom_idx, label)
+            return True
+        if label in ("D", "T"):
+            self.set_atom_properties(atom_idx, symbol="H", isotope=2 if label == "D" else 3)
+            return True
+        fragment = parse_group(label, custom_groups)
+        if fragment is None:
+            return False
+        try:
+            self.replace_atom_with_fragment(atom_idx, fragment)
+        except ValueError:
+            return False
+        return True
+
+    # ------------------------------------------------------------------
+    # Transformations
+    # ------------------------------------------------------------------
+
+    def _centroid(self, atoms: list[int]) -> tuple[float, float]:
+        xs = [self.atom_position(i)[0] for i in atoms]
+        ys = [self.atom_position(i)[1] for i in atoms]
+        return (sum(xs) / len(xs), sum(ys) / len(ys))
+
+    def rotate_atoms(
+        self,
+        atom_indices: Iterable[int] | None,
+        angle_deg: float,
+        center: tuple[float, float] | None = None,
+    ) -> None:
+        """Rotate atoms (all when ``None``) counter-clockwise around their centroid."""
+        atoms = list(range(self.atom_count)) if atom_indices is None else sorted(set(atom_indices))
+        if not atoms:
+            return
+        cx, cy = center if center is not None else self._centroid(atoms)
+        rotation = cmath.exp(1j * math.radians(angle_deg))
+        self._push_undo()
+        for idx in atoms:
+            p = (complex(*self.atom_position(idx)) - complex(cx, cy)) * rotation + complex(cx, cy)
+            self._set_position(idx, p.real, p.imag)
+        self._touch()
+
+    def flip_atoms(self, atom_indices: Iterable[int] | None, *, horizontal: bool = True) -> None:
+        """Mirror atoms left↔right (or up↔down); wedges swap so stereo is kept."""
+        atoms = list(range(self.atom_count)) if atom_indices is None else sorted(set(atom_indices))
+        if not atoms:
+            return
+        cx, cy = self._centroid(atoms)
+        chosen = set(atoms)
+        self._push_undo()
+        for idx in atoms:
+            x, y = self.atom_position(idx)
+            if horizontal:
+                self._set_position(idx, 2 * cx - x, y)
+            else:
+                self._set_position(idx, x, 2 * cy - y)
+        for bond in self._mol.GetBonds():
+            if bond.GetBeginAtomIdx() in chosen and bond.GetEndAtomIdx() in chosen:
+                if bond.GetBondDir() == Chem.BondDir.BEGINWEDGE:
+                    bond.SetBondDir(Chem.BondDir.BEGINDASH)
+                elif bond.GetBondDir() == Chem.BondDir.BEGINDASH:
+                    bond.SetBondDir(Chem.BondDir.BEGINWEDGE)
+        self._touch()
+
+    def merge_atoms(self, keep: int, remove: int, *, record_undo: bool = True) -> int:
+        """Fuse *remove* into *keep* (e.g. an atom dropped onto another).
+
+        Returns the index of the kept atom after the removal.
+        """
+        if keep == remove:
+            return keep
+        if record_undo:
+            self._push_undo()
+        for bond in list(self._mol.GetAtomWithIdx(remove).GetBonds()):
+            other = bond.GetOtherAtomIdx(remove)
+            if other != keep and self.find_bond(keep, other) is None:
+                self._mol.AddBond(keep, other, bond.GetBondType())
+        self._mol.RemoveAtom(remove)
+        self._touch()
+        return keep - 1 if keep > remove else keep
+
+    # ------------------------------------------------------------------
+    # Explicit hydrogens
+    # ------------------------------------------------------------------
+
+    def add_explicit_hydrogens(self, atom_indices: Iterable[int] | None = None) -> int:
+        """Draw every implicit H as an atom; returns how many were added."""
+        atoms = list(range(self.atom_count)) if atom_indices is None else sorted(set(atom_indices))
+        targets = [
+            (idx, self.implicit_hydrogens(idx))
+            for idx in atoms
+            if self.atom_symbol(idx) != "H" and self.implicit_hydrogens(idx) > 0
+        ]
+        if not targets:
+            return 0
+        added = 0
+        self._push_undo()
+        for idx, count in targets:
+            atom = self._mol.GetAtomWithIdx(idx)
+            fixed = atom.GetNoImplicit() and atom.GetSymbol() in _IMPLICIT_H_ELEMENTS
+            for _ in range(count):
+                self._sprout(idx, self._make_atom("H"), 1, STEREO_NONE, None)
+                added += 1
+            if fixed:
+                atom.SetNumExplicitHs(0)
+            self._touch()
+        return added
+
+    def remove_explicit_hydrogens(self) -> int:
+        """Fold plain H atoms back into their neighbours' labels."""
+        removable = []
+        for atom in self._mol.GetAtoms():
+            if (
+                atom.GetAtomicNum() == 1
+                and atom.GetIsotope() == 0
+                and atom.GetFormalCharge() == 0
+                and atom.GetDegree() == 1
+                and atom.GetNeighbors()[0].GetAtomicNum() > 1
+                and atom.GetBonds()[0].GetBondDir() == Chem.BondDir.NONE
+            ):
+                removable.append(atom.GetIdx())
+        if not removable:
+            return 0
+        self._push_undo()
+        for idx in sorted(removable, reverse=True):
+            heavy = self._mol.GetAtomWithIdx(idx).GetNeighbors()[0]
+            if heavy.GetNoImplicit() and heavy.GetSymbol() in _IMPLICIT_H_ELEMENTS:
+                heavy.SetNumExplicitHs(heavy.GetNumExplicitHs() + 1)
+            self._mol.RemoveAtom(idx)
+        self._touch()
+        return len(removable)
