@@ -225,6 +225,7 @@ def test_wedge_bond_defines_stereocentre_and_flips():
     first = model.to_smiles()
     assert "@" in first
     bond = model.find_bond(center, methyl)
+    assert bond is not None
     assert model.bond_stereo(bond) == "wedge"
     model.add_or_update_bond(center, methyl, 1, "hash")
     second = model.to_smiles()
@@ -234,7 +235,9 @@ def test_wedge_bond_defines_stereocentre_and_flips():
 
 def test_delete_atom_and_bond():
     model = MolEditorModel.from_smiles("CCO")
-    model.delete_bond(model.find_bond(1, 2))
+    bond = model.find_bond(1, 2)
+    assert bond is not None
+    model.delete_bond(bond)
     assert model.to_smiles() == "CC.O"
     model.delete_atom(2)
     assert model.to_smiles() == "CC"
@@ -360,6 +363,7 @@ def test_heteroaromatic_fusion(ring_type, expected):
 def test_fusion_goes_to_less_crowded_side():
     model = MolEditorModel.from_smiles("c1ccccc1")
     ring_center = model.bond_ring_center(0)
+    assert ring_center is not None
     model.add_ring_template("cyclohexane", target_bond_idx=0)
     assert model.atom_count == 10
     new_atoms = range(6, 10)
@@ -474,8 +478,10 @@ def test_clean_2d_keeps_structure_stereo_and_centroid():
 def test_bond_ring_center_for_ring_and_chain_bonds():
     model = MolEditorModel.from_smiles("Cc1ccccc1")
     chain_bond = model.find_bond(0, 1)
-    assert model.bond_ring_center(chain_bond) is None
     ring_bond = model.find_bond(1, 2)
+    assert chain_bond is not None
+    assert ring_bond is not None
+    assert model.bond_ring_center(chain_bond) is None
     assert model.bond_ring_center(ring_bond) is not None
 
 
@@ -503,6 +509,8 @@ def test_ring_template_bonds_match_coordinates():
     bonds = MolEditorModel.ring_template_bonds("benzene")
     assert len(bonds) == 6
     assert sorted(order for _a, _b, order in bonds) == [1, 1, 1, 2, 2, 2]
+    assert MolEditorModel.ring_template_symbols("pyridine").count("N") == 1
+    assert MolEditorModel.ring_template_symbols("furan").count("O") == 1
 
 
 def test_paste_text_inserts_next_to_existing_drawing():

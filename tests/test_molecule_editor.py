@@ -71,28 +71,6 @@ def test_molecule_editor_dialog_creates(qtbot):
     assert dlg is not None
 
 
-def test_draw_tab_shows_loading_label_when_jsme_unavailable(qtbot, monkeypatch):
-    """When _ensure_jsme_cached returns None, the Draw tab shows a fallback label."""
-    import ui.dialogs.molecule_editor_dialog as med_module
-    from ui.dialogs.molecule_editor_dialog import MoleculeEditorDialog
-
-    monkeypatch.setattr(med_module, "_ensure_jsme_cached", lambda: None)
-
-    dlg = MoleculeEditorDialog()
-    qtbot.addWidget(dlg)
-
-    # Draw tab (index 0) should contain the fallback label
-    draw_tab = dlg._tabs.widget(0)
-    fallback_labels = draw_tab.findChildren(
-        __import__("PySide6.QtWidgets", fromlist=["QLabel"]).QLabel,
-        "jsme_fallback_label",
-    )
-    assert len(fallback_labels) == 1
-    assert "SMILES tab" in fallback_labels[0].text()
-    # The web view should not have been created
-    assert dlg._web_view is None
-
-
 def test_molecule_editor_dialog_with_initial_smiles(qtbot):
     """MoleculeEditorDialog accepts an initial SMILES."""
     from ui.dialogs.molecule_editor_dialog import MoleculeEditorDialog
@@ -245,7 +223,7 @@ def test_molecule_widget_smiles_changed_signal(qtbot):
     emitted: list[str] = []
     w.smiles_changed.connect(emitted.append)
 
-    # Patch _open_editor on the class to avoid launching real webengine dialog
+    # Patch _open_editor on the class to avoid running a modal dialog
     mock_dlg = MagicMock()
     mock_dlg.exec.return_value = QDialog.DialogCode.Accepted
     mock_dlg.smiles.return_value = "c1ccccc1"
@@ -302,101 +280,9 @@ def test_molecule_widget_no_signal_if_same_smiles(qtbot):
     assert emitted == []
 
 
-def test_molecule_editor_html_queues_structure_until_jsme_ready():
-    """Regression: structures loaded before jsmeOnLoad must be queued, not dropped.
-
-    Qt's loadFinished fires before JSME finishes its async GWT bootstrap, so
-    loadMolBlock()/loadSMILES() used to no-op and re-opening the editor always
-    showed an empty canvas.
-    """
-    from ui.dialogs.molecule_editor_dialog import _JSME_HTML_TEMPLATE
-
-    assert "pendingMolBlock" in _JSME_HTML_TEMPLATE
-    assert "pendingSmiles" in _JSME_HTML_TEMPLATE
-    # jsmeOnLoad must apply the queued structure after the applet exists
-    on_load = _JSME_HTML_TEMPLATE.split("function jsmeOnLoad()")[1].split("function loadSMILES")[0]
-    assert "readMolFile(pendingMolBlock)" in on_load
-
-
-def test_jsme_download_url_is_version_pinned():
-    from ui.dialogs import molecule_editor_dialog as module
-
-    assert module._JSME_VERSION in module._JSME_BASE_URL
-    assert f"@{module._JSME_VERSION}" in module._JSME_BASE_URL
-    assert module._JSME_VERSION in module._JSME_CACHE_DIR.parts
-
-
-@pytest.mark.parametrize(
-    "url",
-    [
-        "http://unpkg.com/jsme-editor@2024.4.29/jsme.nocache.js",
-        "https://unpkg.com.evil.example/jsme-editor@2024.4.29/jsme.nocache.js",
-        "https://user@unpkg.com/jsme-editor@2024.4.29/jsme.nocache.js",
-        "https://unpkg.com:444/jsme-editor@2024.4.29/jsme.nocache.js",
-        "https://unpkg.com/jsme-editor@2024.4.29/../other/script.js",
-    ],
-)
-def test_jsme_asset_url_validation_rejects_untrusted_origins(url):
-    from ui.dialogs import molecule_editor_dialog as module
-
-    with pytest.raises(ValueError, match="JSME"):
-        module._validate_jsme_asset_url(url)
-
-
-def test_jsme_redirect_handler_rejects_before_following_offsite_redirect():
-    from ui.dialogs import molecule_editor_dialog as module
-
-    handler = module._JSMERedirectHandler()
-    with pytest.raises(ValueError, match="JSME"):
-        handler.redirect_request(
-            None,
-            None,
-            302,
-            "Found",
-            {},
-            "https://evil.example/payload.js",
-        )
-
-
-def test_jsme_web_view_uses_an_isolated_profile(qtbot, monkeypatch, tmp_path):
-    from PySide6.QtWebEngineCore import QWebEngineProfile
-
-    from ui.dialogs import molecule_editor_dialog as module
-
-    html_path = tmp_path / "editor.html"
-    html_path.write_text("<html></html>", encoding="utf-8")
-    monkeypatch.setattr(module, "_ensure_jsme_cached", lambda: html_path)
-    monkeypatch.setattr(module, "_write_jsme_html", lambda: html_path)
-
-    dialog = module.MoleculeEditorDialog()
-    qtbot.addWidget(dialog)
-
-    assert dialog._web_view.page().profile() is dialog._web_profile
-    assert dialog._web_profile is not QWebEngineProfile.defaultProfile()
-    assert dialog._web_profile.parent() is None
-    assert dialog._web_page.parent() is dialog._web_view
-
-
-def test_atomic_cache_cleanup_does_not_mask_original_error(tmp_path, monkeypatch):
-    from ui.dialogs import molecule_editor_dialog as module
-
-    def fail_replace(source, destination):
-        raise RuntimeError("original replace failure")
-
-    def fail_cleanup(self, *, missing_ok=False):
-        raise OSError("cleanup failure")
-
-    monkeypatch.setattr(module.os, "replace", fail_replace)
-    monkeypatch.setattr(module.Path, "unlink", fail_cleanup)
-
-    with pytest.raises(RuntimeError, match="original replace failure"):
-        module._atomic_write_bytes(tmp_path / "asset.js", b"payload")
-
-
 def test_smiles_ok_revalidates_text_changed_after_preview(qtbot, monkeypatch):
     from ui.dialogs import molecule_editor_dialog as module
 
-    monkeypatch.setattr(module, "_ensure_jsme_cached", lambda: None)
     monkeypatch.setattr(
         "chemistry.structure_renderer.render_smiles_to_png",
         lambda smiles, size: b"png" if smiles == "CCO" else None,

@@ -39,9 +39,6 @@ hiddenimports += collect_submodules("rdkit")
 hiddenimports += collect_submodules("pyqtgraph")
 hiddenimports += [
     "PySide6.QtSvg",
-    "PySide6.QtWebChannel",
-    "PySide6.QtWebEngineCore",
-    "PySide6.QtWebEngineWidgets",
     "PySide6.QtPrintSupport",
 ]
 
@@ -63,6 +60,10 @@ a = Analysis(
         "pytest_qt",
         "mypy",
         "ruff",
+        # The structure editor is native Qt; the web engine is not needed.
+        "PySide6.QtWebChannel",
+        "PySide6.QtWebEngineCore",
+        "PySide6.QtWebEngineWidgets",
     ],
     win_no_prefer_redirects=False,
     win_private_assemblies=False,

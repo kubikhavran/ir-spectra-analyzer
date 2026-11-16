@@ -958,6 +958,12 @@ class MolEditorModel:
         return coords
 
     @staticmethod
+    def ring_template_symbols(ring_type: str) -> list[str]:
+        """Element symbol of every template atom (same order as the coordinates)."""
+        template = _kekulized_template(RING_TEMPLATES[ring_type].smiles)
+        return [atom.GetSymbol() for atom in template.GetAtoms()]
+
+    @staticmethod
     def ring_template_bonds(ring_type: str) -> list[tuple[int, int, int]]:
         """``(atom_a, atom_b, order)`` of a template, matching the preview coordinates."""
         template = _kekulized_template(RING_TEMPLATES[ring_type].smiles)

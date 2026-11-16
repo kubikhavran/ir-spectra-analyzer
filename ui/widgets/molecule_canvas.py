@@ -203,6 +203,7 @@ class MoleculeCanvas(QWidget):
         self._cache_revision = -1
         self._invalid: set[int] = set()
         self._labels: dict[int, _AtomLabel] = {}
+        self._update_hint()
 
     # ------------------------------------------------------------------
     # Public API
