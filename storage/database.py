@@ -187,6 +187,25 @@ class Database:
         except sqlite3.OperationalError:
             pass  # column already exists
 
+        # Migration: built-in vibrations became editable. ``seed_name`` keeps
+        # the name a built-in entry shipped with (its identity for re-seeding,
+        # for "reset to defaults" and for the functional-group knowledge base,
+        # which refers to vibrations by that name); ``is_hidden`` marks a
+        # built-in entry the user removed, so it can be brought back.
+        for column_sql in (
+            "ALTER TABLE vibration_presets ADD COLUMN seed_name TEXT",
+            "ALTER TABLE vibration_presets ADD COLUMN is_hidden INTEGER NOT NULL DEFAULT 0",
+        ):
+            try:
+                self._conn.execute(column_sql)
+                self._conn.commit()
+            except sqlite3.OperationalError:
+                pass  # column already exists
+        self._conn.execute(
+            "CREATE TABLE IF NOT EXISTS app_meta (key TEXT PRIMARY KEY, value TEXT NOT NULL)"
+        )
+        self._conn.commit()
+
         for column_sql in (
             "ALTER TABLE reference_spectra ADD COLUMN source_norm TEXT NOT NULL DEFAULT ''",
             "ALTER TABLE reference_spectra ADD COLUMN source_provider TEXT NOT NULL DEFAULT 'local'",
@@ -307,27 +326,79 @@ class Database:
         )
         self._conn.commit()
 
-    def _seed_vibration_presets(self) -> None:
-        """Insert the builtin IR vibration preset library.
+    #: Raise when the built-in catalog below gains entries; databases seeded
+    #: with a lower number get the new entries added, nothing else is touched.
+    _BUILTIN_VIBRATIONS_SEED_VERSION = 1
+    _SEED_VERSION_KEY = "builtin_vibrations_seed_version"
 
-        The library started from the original VŠCHT Praha table and is extended
-        with additional sourced diagnostic bands used by the functional-group
-        scoring assistant. Re-seeds when the builtin library is outdated.
+    def _get_meta(self, key: str) -> str | None:
+        assert self._conn is not None
+        row = self._conn.execute("SELECT value FROM app_meta WHERE key = ?", (key,)).fetchone()
+        return None if row is None else str(row[0])
+
+    def _set_meta(self, key: str, value: str) -> None:
+        assert self._conn is not None
+        self._conn.execute(
+            "INSERT INTO app_meta (key, value) VALUES (?, ?) "
+            "ON CONFLICT(key) DO UPDATE SET value = excluded.value",
+            (key, value),
+        )
+
+    def _seed_vibration_presets(self) -> None:
+        """Make sure the built-in IR vibration library is present.
+
+        Built-in vibrations can be edited and removed by the user, so seeding
+        must never undo that. Once a database carries a seed version, seeding
+        only *adds* catalog entries it does not have yet (identified by
+        ``seed_name``). The whole-library replacement that used to run whenever
+        the count was not exactly right would have wiped every edit at the next
+        start; it is kept only for databases from before editing existed, where
+        the built-in rows cannot contain anything of the user's.
         """
         assert self._conn is not None
         cursor = self._conn.cursor()
-        count_builtin = cursor.execute(
-            "SELECT COUNT(*) FROM vibration_presets WHERE is_builtin = 1"
-        ).fetchone()[0]
-        has_silyl_wave = cursor.execute(
-            "SELECT 1 FROM vibration_presets WHERE is_builtin = 1 AND name = ? LIMIT 1",
-            ("δs(Si–CH₃) TMS/TBS",),
-        ).fetchone()
-        # Re-seed if the builtin library does not contain the current sourced expansion.
-        if count_builtin == 168 and has_silyl_wave:
-            return
-        cursor.execute("DELETE FROM vibration_presets WHERE is_builtin = 1")
+        catalog = self._builtin_vibration_catalog()
+        catalog_names = {entry[0] for entry in catalog}
 
+        if self._get_meta(self._SEED_VERSION_KEY) is None:
+            existing = {
+                str(row[0])
+                for row in cursor.execute(
+                    "SELECT name FROM vibration_presets WHERE is_builtin = 1"
+                ).fetchall()
+            }
+            if existing != catalog_names:
+                cursor.execute("DELETE FROM vibration_presets WHERE is_builtin = 1")
+            cursor.execute(
+                "UPDATE vibration_presets SET seed_name = name "
+                "WHERE is_builtin = 1 AND seed_name IS NULL"
+            )
+
+        present = {
+            str(row[0])
+            for row in cursor.execute(
+                "SELECT seed_name FROM vibration_presets "
+                "WHERE is_builtin = 1 AND seed_name IS NOT NULL"
+            ).fetchall()
+        }
+        cursor.executemany(
+            """INSERT INTO vibration_presets
+               (name, typical_range_min, typical_range_max, category, description, color,
+                is_builtin, seed_name)
+               VALUES (?, ?, ?, ?, ?, ?, 1, ?)""",
+            [(*entry, entry[0]) for entry in catalog if entry[0] not in present],
+        )
+        self._set_meta(self._SEED_VERSION_KEY, str(self._BUILTIN_VIBRATIONS_SEED_VERSION))
+        self._conn.commit()
+
+    @staticmethod
+    def _builtin_vibration_catalog() -> list[tuple[str, float, float, str, str, str]]:
+        """The built-in vibration library as shipped.
+
+        The library started from the original VŠCHT Praha table and is extended
+        with additional sourced diagnostic bands used by the functional-group
+        scoring assistant.
+        """
         presets = [
             # (name, range_min, range_max, category, description, color)
             # O-H stretch
@@ -528,20 +599,13 @@ class Database:
             ("δ(CH₃) iPr TIPS", 1458.0, 1472.0, "silyl", "", "#6D4C41"),
             ("ν(Si–Ph) TBDPS", 1100.0, 1120.0, "silyl", "", "#6D4C41"),
         ]
-
-        cursor.executemany(
-            """INSERT INTO vibration_presets
-               (name, typical_range_min, typical_range_max, category, description, color, is_builtin)
-               VALUES (?, ?, ?, ?, ?, ?, 1)""",
-            presets,
-        )
-        self._conn.commit()
+        return presets
 
     def get_vibration_presets(self) -> list[dict]:
-        """Return all vibration presets as list of dicts."""
+        """Return the vibration presets in use (removed built-ins left out)."""
         assert self._conn is not None
         rows = self._conn.execute(
-            "SELECT * FROM vibration_presets ORDER BY typical_range_max DESC"
+            "SELECT * FROM vibration_presets WHERE is_hidden = 0 ORDER BY typical_range_max DESC"
         ).fetchall()
         return [dict(row) for row in rows]
 
@@ -569,14 +633,124 @@ class Database:
             raise RuntimeError("SQLite did not return an id for the inserted vibration preset")
         return row_id
 
+    def update_vibration_preset(
+        self,
+        preset_id: int,
+        *,
+        name: str,
+        range_min: float,
+        range_max: float,
+        category: str = "",
+        description: str = "",
+        color: str | None = None,
+    ) -> None:
+        """Change a vibration preset, built-in or custom.
+
+        A built-in entry keeps its ``seed_name``, so it can still be reset to
+        what it shipped as and the functional-group knowledge base still finds
+        it under its original name.
+
+        Raises:
+            ValueError: If the name is empty.
+        """
+        assert self._conn is not None
+        clean_name = name.strip()
+        if not clean_name:
+            raise ValueError("A vibration needs a name")
+        low, high = sorted((float(range_min), float(range_max)))
+        if color is None:
+            self._conn.execute(
+                """UPDATE vibration_presets
+                   SET name = ?, typical_range_min = ?, typical_range_max = ?,
+                       category = ?, description = ?
+                   WHERE id = ?""",
+                (clean_name, low, high, category, description, preset_id),
+            )
+        else:
+            self._conn.execute(
+                """UPDATE vibration_presets
+                   SET name = ?, typical_range_min = ?, typical_range_max = ?,
+                       category = ?, description = ?, color = ?
+                   WHERE id = ?""",
+                (clean_name, low, high, category, description, color, preset_id),
+            )
+        self._conn.commit()
+
     def delete_vibration_preset(self, preset_id: int) -> None:
-        """Delete a custom (non-builtin) vibration preset by id."""
+        """Remove a vibration preset by id.
+
+        A custom preset is deleted. A built-in one is only hidden, so
+        :meth:`reset_builtin_vibration_presets` can bring it back and a later
+        seed does not mistake it for a missing entry.
+        """
         assert self._conn is not None
         self._conn.execute(
             "DELETE FROM vibration_presets WHERE id = ? AND is_builtin = 0",
             (preset_id,),
         )
+        self._conn.execute(
+            "UPDATE vibration_presets SET is_hidden = 1 WHERE id = ? AND is_builtin = 1",
+            (preset_id,),
+        )
         self._conn.commit()
+
+    def reset_builtin_vibration_presets(self) -> int:
+        """Put every built-in vibration back the way it shipped.
+
+        Edited entries get their original name, range, category, description
+        and colour; removed ones return. Row ids are kept, so assignments that
+        refer to a built-in vibration stay valid. Custom vibrations are not
+        touched. Returns how many built-in entries were changed or restored.
+        """
+        assert self._conn is not None
+        cursor = self._conn.cursor()
+        existing = {
+            str(row["seed_name"]): row
+            for row in cursor.execute(
+                "SELECT * FROM vibration_presets WHERE is_builtin = 1 AND seed_name IS NOT NULL"
+            ).fetchall()
+        }
+        changed = 0
+        for (
+            name,
+            range_min,
+            range_max,
+            category,
+            description,
+            color,
+        ) in self._builtin_vibration_catalog():
+            row = existing.get(name)
+            if row is None:
+                cursor.execute(
+                    """INSERT INTO vibration_presets
+                       (name, typical_range_min, typical_range_max, category, description,
+                        color, is_builtin, seed_name)
+                       VALUES (?, ?, ?, ?, ?, ?, 1, ?)""",
+                    (name, range_min, range_max, category, description, color, name),
+                )
+                changed += 1
+                continue
+            current = (
+                row["name"],
+                float(row["typical_range_min"]),
+                float(row["typical_range_max"]),
+                row["category"],
+                row["description"],
+                row["color"],
+                int(row["is_hidden"]),
+            )
+            if current == (name, range_min, range_max, category, description, color, 0):
+                continue
+            cursor.execute(
+                """UPDATE vibration_presets
+                   SET name = ?, typical_range_min = ?, typical_range_max = ?, category = ?,
+                       description = ?, color = ?, is_hidden = 0
+                   WHERE id = ?""",
+                (name, range_min, range_max, category, description, color, row["id"]),
+            )
+            changed += 1
+        self._conn.commit()
+        return changed
 
     def add_reference_spectrum(
         self,
