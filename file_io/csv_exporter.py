@@ -12,6 +12,7 @@ Zodpovědnost:
 from __future__ import annotations
 
 import csv
+import math
 from itertools import zip_longest
 from pathlib import Path
 from typing import TYPE_CHECKING
@@ -88,7 +89,10 @@ class CSVExporter:
             raise ValueError("A spectrum-only export needs a spectrum")
 
         def _number(value: float, decimals: int) -> str:
-            text = f"{float(value):.{decimals}f}"
+            numeric = float(value)
+            if not math.isfinite(numeric):
+                return ""
+            text = f"{numeric:.{decimals}f}"
             return text.replace(".", ",") if decimal_separator == "," else text
 
         y_unit_label = intensity_unit_label(spectrum)

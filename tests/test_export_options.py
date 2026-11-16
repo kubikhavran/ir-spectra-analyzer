@@ -168,6 +168,12 @@ def test_blanked_points_are_empty_cells(tmp_path: Path) -> None:
     assert ws.cell(row=12, column=2).value is None
     assert ws.cell(row=2, column=2).value is not None
 
+    csv_out = tmp_path / "n.csv"
+    CSVExporter().export([], csv_out, spectrum, mode="spectrum_only")
+    csv_rows = _rows(csv_out)
+    assert csv_rows[11][1] == ""
+    assert csv_rows[1][1] != ""
+
 
 def test_structure_is_placed_beside_the_metadata(tmp_path: Path, qtbot) -> None:
     project = Project(name="p", spectrum=_absorbance(), smiles="CC(=O)O")

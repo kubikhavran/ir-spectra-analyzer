@@ -1427,7 +1427,8 @@ class MainWindow(QMainWindow):
             return False
         suffix = Path(path).suffix.lower()
         if suffix not in (".png", ".svg"):
-            suffix = ".svg" if chosen_filter == svg_filter else ".png"
+            is_svg = chosen_filter == svg_filter or "*.svg" in chosen_filter.lower()
+            suffix = ".svg" if is_svg else ".png"
             path = f"{path}{suffix}"
         from file_io.atomic_output import atomic_output_path  # noqa: PLC0415
 
