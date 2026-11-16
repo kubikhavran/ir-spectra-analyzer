@@ -22,6 +22,7 @@ from PySide6.QtWidgets import (
 )
 
 from chemistry.structure_renderer import render_to_svg
+from ui.i18n import tr
 
 
 class _AspectSvgWidget(QWidget):
@@ -158,7 +159,7 @@ class MoleculeWidget(QWidget):
         self._current_svg = ""
         self._current_image_bytes = b""
         self._placeholder.setPixmap(QPixmap())
-        self._placeholder.setText(text)
+        self._placeholder.setText(tr(text))
         self._svg_widget.setVisible(False)
         self._placeholder.setVisible(True)
 

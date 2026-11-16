@@ -359,7 +359,7 @@ class MatchResultsPanel(QWidget):
         for result in self._visible_results:
             score_pct = result.score * 100
             fingerprint_pct = float(getattr(result, "fingerprint_score", 0.0)) * 100
-            quality = match_quality_label(result.score)
+            quality = tr(match_quality_label(result.score))
             saved = self.has_saved_project(result)
             marker = f"{SAVED_PROJECT_MARKER} " if saved and not saved_only else ""
             # A clearly better skeleton score is the substituent-swap signature,
@@ -372,13 +372,15 @@ class MatchResultsPanel(QWidget):
             item.setData(256, result)  # store in UserRole
             item.setData(_NAME_ROLE, f"{marker}{result.name}")
             tips = [
-                "fp = skeleton region 400–1600 cm⁻¹ only. "
-                f"{SKELETON_MARKER} marks a skeleton score at least "
-                f"{SKELETON_LEAD_PP:.0f} points above the overall one — typically the "
-                "same skeleton carrying a different substituent."
+                tr(
+                    "fp = skeleton region 400–1600 cm⁻¹ only. "
+                    f"{SKELETON_MARKER} marks a skeleton score at least "
+                    f"{SKELETON_LEAD_PP:.0f} points above the overall one — typically the "
+                    "same skeleton carrying a different substituent."
+                )
             ]
             if saved:
-                tips.append("Saved .irproj found — assignments can be applied from this match")
+                tips.append(tr("Saved .irproj found — assignments can be applied from this match"))
             item.setToolTip("\n".join(tips))
             self._list.addItem(item)
 

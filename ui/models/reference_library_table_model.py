@@ -69,7 +69,7 @@ class ReferenceLibraryTableModel(QAbstractTableModel):
                 return "—" if score is None else f"{score * 100:.1f}%"
             if column == COL_QUALITY:
                 score = self._similarity_score(row)
-                return "—" if score is None else match_quality_label(score)
+                return "—" if score is None else tr(match_quality_label(score))
             if column == COL_DESCRIPTION:
                 return str(row.get("description", ""))
             if column == COL_SOURCE:

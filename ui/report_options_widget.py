@@ -17,6 +17,7 @@ from PySide6.QtWidgets import (
 
 from app.report_presets import ReportPresetManager
 from reporting.pdf_generator import LAYOUT_FULL_BLEED, LAYOUT_STANDARD, ReportOptions
+from ui.i18n import tr
 
 
 class ReportOptionsWidget(QWidget):
@@ -139,9 +140,9 @@ class ReportOptionsWidget(QWidget):
 
         self._preset_combo.blockSignals(True)
         self._preset_combo.clear()
-        self._preset_combo.addItem("Current defaults", self._DEFAULT_ID)
+        self._preset_combo.addItem(tr("Current defaults"), self._DEFAULT_ID)
         if keep_custom:
-            self._preset_combo.addItem("Custom", self._CUSTOM_ID)
+            self._preset_combo.addItem(tr("Custom"), self._CUSTOM_ID)
         for preset in presets:
             self._preset_combo.addItem(preset.name, preset.name)
 

@@ -464,6 +464,7 @@ CZECH_TEXTS: dict[str, str] = {
     "Remove from peak {wavenumber} cm⁻¹": "Odebrat z píku {wavenumber} cm⁻¹",
     # ── Structure ───────────────────────────────────────────────────────────
     "No structure assigned": "Struktura není přiřazena",
+    "Invalid structure": "Neplatná struktura",
     "Edit Structure...": "Upravit strukturu...",
     # ── Export dialog ───────────────────────────────────────────────────────
     "PDF Report": "PDF report",
@@ -472,6 +473,7 @@ CZECH_TEXTS: dict[str, str] = {
     "Include peaks without assignment": "Zahrnout píky bez přiřazení",
     "Preset:": "Předvolba:",
     "Current defaults": "Aktuální výchozí",
+    "Custom": "Vlastní",
     "Save Preset...": "Uložit předvolbu...",
     "Delete Preset": "Smazat předvolbu",
     "Include metadata": "Zahrnout údaje o měření",
@@ -545,7 +547,22 @@ CZECH_TEXTS: dict[str, str] = {
     "Quality": "Kvalita",
     "Description": "Popis",
     "Imported": "Importováno",
+    "Created At": "Importováno",
     "Source": "Zdroj",
+    "Y Unit": "Jednotka Y",
+    "Excellent": "Vynikající",
+    "Strong": "Silná",
+    "Possible": "Možná",
+    "Weak": "Slabá",
+    "fp = skeleton region 400–1600 cm⁻¹ only. ▲ marks a skeleton score at least "
+    "10 points above the overall one — typically the same skeleton carrying a "
+    "different substituent.": (
+        "fp = jen oblast skeletu 400–1600 cm⁻¹. ▲ označuje skóre skeletu alespoň "
+        "o 10 bodů vyšší než celkové — typicky stejný skelet s jiným substituentem."
+    ),
+    "Saved .irproj found — assignments can be applied from this match": (
+        "Nalezen uložený .irproj — z této shody lze převzít přiřazení"
+    ),
     "Current spectrum": "Aktuální spektrum",
     "Reference library folder: {path}": "Složka knihovny referencí: {path}",
     "Reference library folder: syncing…": "Složka knihovny referencí: synchronizuji…",

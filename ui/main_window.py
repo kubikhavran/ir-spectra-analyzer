@@ -2308,7 +2308,7 @@ class MainWindow(QMainWindow):
         if welcome is not None:
             welcome.set_recent_files(list(recent) if isinstance(recent, list) else [])
         if not recent:
-            no_action = self._recent_menu.addAction("(empty)")
+            no_action = self._recent_menu.addAction(tr("(empty)"))
             no_action.setEnabled(False)
             return
         for path in recent:

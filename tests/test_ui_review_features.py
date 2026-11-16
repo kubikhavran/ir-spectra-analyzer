@@ -248,3 +248,49 @@ def test_spectrum_widget_range_presets_crosshair_and_declutter(qapp) -> None:
 
     widget.set_declutter_enabled(False)
     assert widget.hidden_label_count() == 0
+
+
+def test_dynamic_czech_translations_in_widgets_and_models(qapp, tmp_path) -> None:
+    from PySide6.QtCore import Qt
+
+    from app.report_presets import ReportPresetManager
+    from storage.settings import Settings
+    from ui import i18n
+    from ui.models.reference_library_table_model import (
+        COL_CREATED_AT,
+        COL_QUALITY,
+        COL_Y_UNIT,
+        ReferenceLibraryTableModel,
+    )
+    from ui.molecule_widget import MoleculeWidget
+    from ui.report_options_widget import ReportOptionsWidget
+
+    i18n.set_language(i18n.CZECH)
+    try:
+        settings = Settings(settings_path=tmp_path / "settings.json")
+        options_widget = ReportOptionsWidget(preset_manager=ReportPresetManager(settings))
+        options_widget._include_metadata_checkbox.setChecked(False)
+        combo_texts = [
+            options_widget._preset_combo.itemText(i)
+            for i in range(options_widget._preset_combo.count())
+        ]
+        assert "Aktuální výchozí" in combo_texts
+        assert "Vlastní" in combo_texts
+
+        mol_widget = MoleculeWidget()
+        mol_widget.set_structure("", "")
+        assert mol_widget.text() == "Struktura není přiřazena"
+
+        model = ReferenceLibraryTableModel()
+        assert (
+            model.headerData(COL_Y_UNIT, Qt.Orientation.Horizontal, Qt.ItemDataRole.DisplayRole)
+            == "Jednotka Y"
+        )
+        assert (
+            model.headerData(COL_CREATED_AT, Qt.Orientation.Horizontal, Qt.ItemDataRole.DisplayRole)
+            == "Importováno"
+        )
+        model.set_rows([{"id": 1, "name": "Ref", "_similarity_score": 0.96}])
+        assert model.data(model.index(0, COL_QUALITY), Qt.ItemDataRole.DisplayRole) == "Vynikající"
+    finally:
+        i18n.set_language(i18n.ENGLISH)
