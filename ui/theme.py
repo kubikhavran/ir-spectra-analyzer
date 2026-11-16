@@ -216,11 +216,7 @@ QLineEdit:focus, QSpinBox:focus, QDoubleSpinBox:focus, QComboBox:focus {{
 QLineEdit:disabled, QSpinBox:disabled, QDoubleSpinBox:disabled, QComboBox:disabled {{
     background: {WINDOW}; color: {TEXT_FAINT};
 }}
-QComboBox {{ min-height: 20px; padding-right: 18px; }}
-QComboBox::drop-down {{
-    subcontrol-origin: padding; subcontrol-position: top right;
-    width: 18px; border-left: 1px solid {BORDER};
-}}
+QComboBox {{ min-height: 20px; }}
 QPushButton {{
     background: {SURFACE}; color: {TEXT};
     border: 1px solid {BORDER_STRONG}; border-radius: 5px;

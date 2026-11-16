@@ -115,31 +115,17 @@ QWidget#plotToolbarBar QLabel {
     color: #5E6B78;
     background: transparent;
 }
-QWidget#rangeSegmentGroup {
-    background: #FFFFFF;
-    border: 1px solid #9AA7B4;
-    border-radius: 5px;
-}
 QWidget#plotToolbarBar QPushButton {
     background: #FFFFFF;
     color: #1B2733;
     border: 1px solid #9AA7B4;
     border-radius: 4px;
-    padding: 1px 10px;
+    padding: 1px 7px;
     min-height: 0px;
-}
-QWidget#rangeSegmentGroup QPushButton {
-    border: 1px solid transparent;
-    border-radius: 3px;
-    padding: 1px 9px;
 }
 QWidget#plotToolbarBar QPushButton:hover {
     background: #F4F8FC;
     border-color: #14507A;
-}
-QWidget#rangeSegmentGroup QPushButton:hover {
-    background: #EDF4FB;
-    border-color: transparent;
 }
 QWidget#plotToolbarBar QPushButton:checked,
 QWidget#plotToolbarBar QPushButton[activeRange="true"] {
@@ -472,18 +458,13 @@ class SpectrumWidget(QWidget):
         self._toolbar_bar.setObjectName("plotToolbarBar")
         self._toolbar_bar.setStyleSheet(_PLOT_TOOLBAR_STYLE)
         toolbar_row = QHBoxLayout(self._toolbar_bar)
-        toolbar_row.setContentsMargins(8, 2, 8, 2)
-        toolbar_row.setSpacing(8)
+        toolbar_row.setContentsMargins(6, 2, 6, 2)
+        toolbar_row.setSpacing(4)
         # Quick wavenumber windows — one click instead of a zoom drag.
-        self._range_group = QWidget(self._toolbar_bar)
-        self._range_group.setObjectName("rangeSegmentGroup")
-        range_layout = QHBoxLayout(self._range_group)
-        range_layout.setContentsMargins(2, 1, 2, 1)
-        range_layout.setSpacing(1)
         self._range_buttons: list[QPushButton] = []
         for idx, (text, low, high) in enumerate(_RANGE_PRESETS):
             button = QPushButton(tr(text))
-            button.setFixedHeight(20)
+            button.setFixedHeight(22)
             button.setProperty("activeRange", "true" if idx == 0 else "false")
             button.setToolTip(
                 tr("Show the whole spectrum")
@@ -493,9 +474,8 @@ class SpectrumWidget(QWidget):
                 )
             )
             button.clicked.connect(lambda _=False, lo=low, hi=high: self.show_range(lo, hi))
-            range_layout.addWidget(button)
+            toolbar_row.addWidget(button)
             self._range_buttons.append(button)
-        toolbar_row.addWidget(self._range_group)
 
         self._split_btn = QPushButton(tr("Split view"))
         self._split_btn.setCheckable(True)
@@ -513,7 +493,7 @@ class SpectrumWidget(QWidget):
         # Wide enough for "Transmittance (as loaded)" — a clipped unit name is
         # exactly the thing this selector must not leave to guesswork.
         self._unit_combo.setSizeAdjustPolicy(QComboBox.SizeAdjustPolicy.AdjustToContents)
-        self._unit_combo.setMinimumWidth(180)
+        self._unit_combo.setMinimumWidth(150)
         self._unit_combo.setToolTip(
             "Redraw the spectrum in another intensity unit.\n"
             "The loaded data is not changed; overlays follow the same unit."
