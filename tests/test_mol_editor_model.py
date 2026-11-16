@@ -755,3 +755,183 @@ def test_explicit_hydrogens_round_trip():
     selected = MolEditorModel.from_smiles("CO")
     assert selected.add_explicit_hydrogens([1]) == 1
     assert MolEditorModel().add_explicit_hydrogens() == 0
+
+
+# ---------------------------------------------------------------------------
+# Bond cycling, bond length, component layout and sugar templates
+# ---------------------------------------------------------------------------
+
+
+def _bond(model: MolEditorModel, a: int, b: int) -> int:
+    bond = model.find_bond(a, b)
+    assert bond is not None
+    return bond
+
+
+def test_cycle_bond_runs_through_wedges_both_ways():
+    model = MolEditorModel.from_smiles("CC(N)O")
+    bond = _bond(model, 0, 1)
+    states = []
+    for _ in range(6):
+        bond = model.cycle_bond(bond)
+        states.append((model.bond_order(bond), model.bond_stereo(bond), model.bond_atoms(bond)[0]))
+    assert states == [
+        (2, "none", 0),
+        (3, "none", 0),
+        (1, "wedge", 0),  # narrow end on atom 0
+        (1, "wedge", 1),  # same wedge, the other way round
+        (1, "none", 0),
+        (2, "none", 0),
+    ]
+    # Each click is one undo step.
+    assert model.undo()
+    assert model.bond_order(_bond(model, 0, 1)) == 1
+
+
+def test_cycle_bond_from_hash_returns_to_single():
+    model = MolEditorModel.from_smiles("CC(N)O")
+    model.set_bond_stereo(_bond(model, 0, 1), "hash")
+    bond = model.cycle_bond(_bond(model, 0, 1))
+    assert model.bond_stereo(bond) == "none"
+    assert model.bond_order(bond) == 1
+
+
+def test_set_bond_length_moves_the_smaller_side():
+    model = MolEditorModel.from_smiles("CCCCC")
+    bond = _bond(model, 3, 4)
+    before = [c for i in range(4) for c in model.atom_position(i)]
+    model.set_bond_length(bond, 2 * BOND_LENGTH)
+    assert model.bond_length(bond) == pytest.approx(2 * BOND_LENGTH)
+    assert [c for i in range(4) for c in model.atom_position(i)] == pytest.approx(before)
+    model.scale_bond_length(bond, 0.5)
+    assert model.bond_length(bond) == pytest.approx(BOND_LENGTH)
+    model.set_bond_length(bond, 100.0)  # clamped
+    assert model.bond_length(bond) == pytest.approx(6 * BOND_LENGTH)
+    assert model.to_smiles() == "CCCCC"
+
+
+def test_set_bond_length_in_ring_moves_only_the_end_atom():
+    model = MolEditorModel.from_smiles("C1CCCCC1")
+    bond = 0
+    a, b = model.bond_atoms(bond)
+    fixed = [c for i in range(6) if i != b for c in model.atom_position(i)]
+    model.set_bond_length(bond, 2.0)
+    assert model.bond_length(bond) == pytest.approx(2.0)
+    assert [c for i in range(6) if i != b for c in model.atom_position(i)] == pytest.approx(fixed)
+    del a
+
+
+def test_sprout_with_custom_length():
+    model = MolEditorModel()
+    a = model.add_free_atom(0.0, 0.0)
+    b = model.sprout_atom(a, preferred_angle=0.0, length=3.0)
+    assert model.atom_position(b) == pytest.approx((3.0, 0.0))
+
+
+def test_components_from_smiles_are_spaced_apart():
+    model = MolEditorModel.from_smiles("C[NH3+].[Cl-].[Na+].CC(=O)[O-]")
+    parts = model.components()
+    assert len(parts) == 4
+    spans = sorted(
+        (
+            min(model.atom_position(i)[0] for i in part),
+            max(model.atom_position(i)[0] for i in part),
+        )
+        for part in parts
+    )
+    for (_l1, r1), (l2, _r2) in zip(spans, spans[1:], strict=False):
+        assert l2 - r1 >= 2 * BOND_LENGTH - 1e-6
+    model.clean_2d()
+    spans = sorted(
+        (
+            min(model.atom_position(i)[0] for i in part),
+            max(model.atom_position(i)[0] for i in part),
+        )
+        for part in model.components()
+    )
+    for (_l1, r1), (l2, _r2) in zip(spans, spans[1:], strict=False):
+        assert l2 - r1 >= 2 * BOND_LENGTH - 1e-6
+
+
+@pytest.mark.parametrize(
+    ("ring_type", "expected"),
+    [
+        ("oxane", "C1CCOCC1"),
+        ("oxolane", "C1CCOC1"),
+        ("dioxane", "C1COCCO1"),
+        ("piperidine", "C1CCNCC1"),
+        ("morpholine", "C1COCCN1"),
+        ("piperazine", "C1CNCCN1"),
+        ("chair", "C1CCCCC1"),
+        ("oxane_chair", "C1CCOCC1"),
+        ("beta_glucopyranose", "OC[C@H]1O[C@@H](O)[C@H](O)[C@@H](O)[C@@H]1O"),
+        ("alpha_glucopyranose", "OC[C@H]1O[C@H](O)[C@H](O)[C@@H](O)[C@@H]1O"),
+        ("beta_ribofuranose", "OC[C@H]1O[C@@H](O)[C@H](O)[C@@H]1O"),
+    ],
+)
+def test_ether_rings_chairs_and_sugars(ring_type, expected):
+    model = MolEditorModel()
+    model.add_ring_template(ring_type, center=(0.0, 0.0))
+    assert model.to_smiles() == _canon(expected)
+    # The stored MOL block keeps the stereo too.
+    assert MolEditorModel.from_mol_block(model.to_mol_block()).to_smiles() == _canon(expected)
+
+
+def test_chair_template_has_three_pairs_of_parallel_bonds():
+    model = MolEditorModel()
+    atoms = model.add_ring_template("chair", center=(0.0, 0.0))
+    vectors = []
+    for k in range(6):
+        a, b = atoms[k], atoms[(k + 1) % 6]
+        (ax, ay), (bx, by) = model.atom_position(a), model.atom_position(b)
+        vectors.append((bx - ax, by - ay))
+    for k in range(3):
+        (x1, y1), (x2, y2) = vectors[k], vectors[k + 3]
+        assert x1 * y2 - y1 * x2 == pytest.approx(0.0, abs=1e-6)  # parallel
+    mean = sum(math.hypot(x, y) for x, y in vectors) / 6
+    assert mean == pytest.approx(BOND_LENGTH)
+
+
+def test_glucose_on_alcohol_or_carbon_gives_the_same_beta_glucoside():
+    expected = _canon("CCO[C@@H]1O[C@H](CO)[C@@H](O)[C@H](O)[C@H]1O")
+    on_oxygen = MolEditorModel.from_smiles("CCO")
+    on_oxygen.add_ring_template("beta_glucopyranose", target_atom_idx=2)
+    assert on_oxygen.to_smiles() == expected  # glycoside, not a peroxide
+    on_carbon = MolEditorModel.from_smiles("CC")
+    on_carbon.add_ring_template("beta_glucopyranose", target_atom_idx=1)
+    assert on_carbon.to_smiles() == expected
+    amine = MolEditorModel.from_smiles("CCN")
+    amine.add_ring_template("beta_glucopyranose", target_atom_idx=2)
+    assert "N[C@@H]1O" in amine.to_smiles() or "N[C@H]1O" in amine.to_smiles()
+    assert not amine.invalid_atom_indices()
+
+
+def test_sugar_clicked_on_bond_attaches_instead_of_fusing():
+    model = MolEditorModel.from_smiles("CCO")
+    model.add_ring_template("beta_glucopyranose", target_bond_idx=_bond(model, 1, 2))
+    assert model.to_smiles() == _canon("CCO[C@@H]1O[C@H](CO)[C@@H](O)[C@H](O)[C@H]1O")
+
+
+def test_disaccharide_keeps_both_configurations():
+    model = MolEditorModel()
+    atoms = model.add_ring_template("beta_glucopyranose", center=(0.0, 0.0))
+    anomeric_oh = atoms[5]
+    model.add_ring_template("beta_glucopyranose", target_atom_idx=anomeric_oh)
+    from rdkit import Chem
+
+    mol = Chem.MolFromSmiles(model.to_smiles())
+    assert mol is not None
+    assert len(Chem.FindMolChiralCenters(mol)) == 10
+    assert all(label != "?" for _idx, label in Chem.FindMolChiralCenters(mol))
+
+
+def test_mirrored_paste_keeps_stereo():
+    source = MolEditorModel.from_smiles("C[C@H](N)C(=O)O")
+    fragment = source.extract_fragment(list(range(source.atom_count)))
+    results: set[str] = set()
+    for smiles, target in (("CC", 1), ("c1ccccc1", 0), ("CCCC", 1)):
+        model = MolEditorModel.from_smiles(smiles)
+        model.insert_fragment(fragment, target_atom_idx=target)
+        atoms, _bonds = model.stereo_labels()
+        results.update(atoms.values())
+    assert results == {"S"}

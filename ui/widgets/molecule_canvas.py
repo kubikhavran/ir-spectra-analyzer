@@ -174,9 +174,41 @@ class _AtomLabel:
     symbol: str
     hydrogens: int
     charge: int
-    h_left: bool
+    h_side: str  # preferred side for the H: "right", "left", "up" or "down"
     isotope: int = 0
     radicals: int = 0
+
+    @property
+    def h_left(self) -> bool:
+        return self.h_side == "left"
+
+
+@dataclass
+class _LabelLayout:
+    """Where every glyph of an atom label goes, and the boxes it covers."""
+
+    texts: list[tuple[str, QPointF, bool]]  # (text, baseline origin, small font)
+    boxes: list[QRectF]
+    dots: list[QPointF]
+    dot_radius: float
+
+
+_H_SIDES = {"right": 0.0, "left": 180.0, "down": -90.0, "up": 90.0}
+
+
+def _angle_gap(angle: float, others: list[float]) -> float:
+    """Smallest angular distance (degrees) from *angle* to any of *others*."""
+    if not others:
+        return 180.0
+    return min(abs((angle - o + 180.0) % 360.0 - 180.0) for o in others)
+
+
+def _pick_side(options: dict[str, float], others: list[float], threshold: float) -> str:
+    """First option (in order) whose direction is clear of bonds, else the clearest."""
+    for name, angle in options.items():
+        if _angle_gap(angle, others) >= threshold:
+            return name
+    return max(options, key=lambda name: _angle_gap(options[name], others))
 
 
 @dataclass
@@ -189,6 +221,7 @@ class _Drag:
     moved: bool = False
     last: QPointF = field(default_factory=QPointF)
     move_atoms: list[int] = field(default_factory=list)
+    free_length: bool = False  # Shift held: the bond follows the cursor distance
 
 
 class MoleculeCanvas(QWidget):
@@ -721,21 +754,57 @@ class MoleculeCanvas(QWidget):
         self.update()
 
     def render_to_png_bytes(self, width: int = 400, height: int = 300) -> bytes:
-        """Render the structure (no hover/selection) to PNG; ``b""`` when empty."""
+        """Render the structure (no hover/selection) to a tightly cropped PNG.
+
+        The molecule is scaled to fit ``width`` × ``height`` without being
+        distorted, and the empty border is cut off, so the image is shaped
+        like the molecule.  ``b""`` when empty.
+        """
         if self._model.is_empty():
             return b""
-        image = QImage(QSize(width, height), QImage.Format.Format_ARGB32)
-        image.fill(QColor("white"))
-        zoom, origin = self._fit_transform(width, height, max_zoom=2.0)
-        painter = QPainter(image)
-        painter.setRenderHint(QPainter.RenderHint.Antialiasing, True)
-        painter.setRenderHint(QPainter.RenderHint.TextAntialiasing, True)
-        self._paint_structure(painter, zoom, origin, interactive=False)
+        # Pass 1 measures how big the drawing (labels included) comes out;
+        # pass 2 scales it so the cropped image fills the requested box.
+        bounds = self._model.bounds() or (0.0, 0.0, 0.0, 0.0)
+        span_w = (bounds[2] - bounds[0] + 1.5 * BOND_LENGTH) * BASE_SCALE
+        span_h = (bounds[3] - bounds[1] + 1.5 * BOND_LENGTH) * BASE_SCALE
+        zoom = min(width / span_w, height / span_h)
+        image = QImage()
+        for _ in range(4):
+            canvas = QImage(QSize(width * 2, height * 2), QImage.Format.Format_ARGB32)
+            canvas.fill(Qt.GlobalColor.transparent)
+            origin = self._export_origin(zoom, canvas.width(), canvas.height())
+            painter = QPainter(canvas)
+            painter.setRenderHint(QPainter.RenderHint.Antialiasing, True)
+            painter.setRenderHint(QPainter.RenderHint.TextAntialiasing, True)
+            self._paint_structure(painter, zoom, origin, interactive=False)
+            painter.end()
+            image = crop_to_content(canvas, margin=2)
+            fill = min(
+                (width - 4) / max(image.width() - 4, 1), (height - 4) / max(image.height() - 4, 1)
+            )
+            if 0.97 <= fill <= 1.0:
+                break
+            zoom = max(0.05, zoom * fill * 0.995)
+        flat = QImage(image.size(), QImage.Format.Format_ARGB32)
+        flat.fill(QColor("white"))
+        painter = QPainter(flat)
+        painter.drawImage(0, 0, image)
         painter.end()
+        image = flat
         buffer = QBuffer()
         buffer.open(QIODevice.OpenModeFlag.WriteOnly)
         image.save(buffer, "PNG")  # type: ignore[call-overload]
         return bytes(buffer.data().data())
+
+    def _export_origin(self, zoom: float, width: int, height: int) -> QPointF:
+        """Origin that centres the structure in a ``width`` × ``height`` image."""
+        bounds = self._model.bounds()
+        scale = self._scale(zoom)
+        if bounds is None:
+            return QPointF(width / 2, height / 2)
+        cx = (bounds[0] + bounds[2]) / 2
+        cy = (bounds[1] + bounds[3]) / 2
+        return QPointF(width / 2 - cx * scale, height / 2 + cy * scale)
 
     def hint(self) -> str:
         return self._hint
@@ -861,15 +930,16 @@ class MoleculeCanvas(QWidget):
             if symbol == "C" and charge == 0 and degree > 0 and not isotope and not radicals:
                 continue
             hydrogens = model.implicit_hydrogens(idx)
+            ax, ay = model.atom_position(idx)
+            bond_angles = [
+                math.degrees(math.atan2(ny - ay, nx - ax))
+                for nx, ny in (model.atom_position(n) for n in model.atom_neighbors(idx))
+            ]
             if degree == 0:
-                h_left = symbol in _H_FIRST_ELEMENTS
+                h_side = "left" if symbol in _H_FIRST_ELEMENTS else "right"
             else:
-                ax, _ay = model.atom_position(idx)
-                dx = sum(model.atom_position(n)[0] - ax for n in model.atom_neighbors(idx))
-                h_left = dx > 0.1
-            labels[idx] = _AtomLabel(
-                symbol, hydrogens, charge, h_left and not isotope, isotope, radicals
-            )
+                h_side = _pick_side(_H_SIDES, bond_angles, 75.0)
+            labels[idx] = _AtomLabel(symbol, hydrogens, charge, h_side, isotope, radicals)
         self._labels = labels
         if self._show_stereo_labels:
             self._stereo_atoms, self._stereo_bonds = model.stereo_labels()
@@ -982,13 +1052,10 @@ class MoleculeCanvas(QWidget):
             q1, q2 = _shorten(p1, p2, r1, r2)
             self._paint_bond(painter, pen, bond, q1, q2, bond_px, zoom, origin)
 
-        font = QFont(self.font())
-        font.setPixelSize(round(font_px))
-        font.setWeight(QFont.Weight.DemiBold)
-        small = QFont(font)
-        small.setPixelSize(max(6, round(font_px * 0.68)))
+        font, small = self._label_fonts(zoom)
         for idx, label in self._labels.items():
-            self._paint_label(painter, positions[idx], label, font, small)
+            bonds = [positions[n] for n in model.atom_neighbors(idx)]
+            self._paint_label(painter, positions[idx], label, font, small, bonds)
         if interactive:
             self._paint_annotations(painter, positions, small)
 
@@ -1144,69 +1211,190 @@ class MoleculeCanvas(QWidget):
         painter.drawLine(p1, p2)
         painter.drawLine(*_offset_line(p1, p2, nx * side * offset, ny * side * offset, 0.14))
 
+    def _layout_label(
+        self,
+        center: QPointF,
+        label: _AtomLabel,
+        fm: QFontMetricsF,
+        sm: QFontMetricsF,
+        bonds: list[QPointF] | None = None,
+    ) -> _LabelLayout:
+        """Place symbol, H, H count, charge, isotope and radical dots.
+
+        *bonds* are the screen positions of the bonded neighbours; the H and
+        the charge go where they do not touch any of those bond lines.
+        """
+        cap = fm.capHeight()
+        small_cap = sm.capHeight()
+        sym_w = fm.horizontalAdvance(label.symbol)
+        baseline = center.y() + cap / 2
+        sym_left = center.x() - sym_w / 2
+        texts: list[tuple[str, QPointF, bool]] = [
+            (label.symbol, QPointF(sym_left, baseline), False)
+        ]
+        boxes = [QRectF(sym_left, center.y() - cap / 2, sym_w, cap)]
+        clear = 0.62 * self._font_px(self._zoom)
+        segments = [
+            (
+                center
+                + (p - center)
+                * (clear / max(math.dist((p.x(), p.y()), (center.x(), center.y())), 1e-6)),
+                p,
+            )
+            for p in (bonds or [])
+        ]
+
+        def free(box: QRectF) -> bool:
+            grown = box.adjusted(-1.0, -1.0, 1.0, 1.0)
+            return not any(_rect_hits_segment(grown, a, b) for a, b in segments)
+
+        left, right = sym_left, sym_left + sym_w
+        iso_w = sm.horizontalAdvance(str(label.isotope)) if label.isotope else 0.0
+        if label.hydrogens:
+            count = str(label.hydrogens) if label.hydrogens > 1 else ""
+            h_w = fm.horizontalAdvance("H")
+            c_w = sm.horizontalAdvance(count) if count else 0.0
+            drop = cap * 0.45
+
+            def h_box(side: str) -> tuple[float, float, QRectF]:
+                if side == "right":
+                    hx, hb = right, baseline
+                elif side == "left":
+                    hx, hb = left - iso_w - h_w - c_w, baseline
+                else:
+                    hx = center.x() - (h_w + c_w) / 2
+                    hb = baseline + (cap * 1.35 if side == "down" else -cap * 1.35)
+                return hx, hb, QRectF(hx, hb - cap, h_w + c_w, cap + (drop if count else 0.0))
+
+            order = [label.h_side] + [side for side in _H_SIDES if side != label.h_side]
+            side = next((o for o in order if free(h_box(o)[2])), label.h_side)
+            hx, hb, box = h_box(side)
+            texts.append(("H", QPointF(hx, hb), False))
+            boxes.append(box)
+            if count:
+                texts.append((count, QPointF(hx + h_w, hb + drop), True))
+            if side == "right":
+                right += h_w + c_w
+            elif side == "left":
+                left = hx
+
+        if label.isotope:
+            iso = str(label.isotope)
+            ix = sym_left - iso_w - 0.5  # mass number sits right before the symbol
+            ib = center.y() - cap * 0.15
+            texts.append((iso, QPointF(ix, ib), True))
+            boxes.append(QRectF(ix, ib - small_cap, iso_w, small_cap))
+            left = min(left, ix)
+
+        charge = _charge_text(label.charge)
+        if charge:
+            c_w = sm.horizontalAdvance(charge)
+
+            def charge_box(corner: str) -> QRectF:
+                top = corner.startswith("t")
+                cb = center.y() - cap * 0.15 if top else center.y() + cap * 0.5 + small_cap * 0.9
+                cx = right + 0.5 if corner.endswith("r") else left - c_w - 0.5
+                return QRectF(cx, cb - small_cap, c_w, small_cap)
+
+            def clear_of_text(box: QRectF) -> bool:
+                return free(box) and not any(box.intersects(other) for other in boxes[1:])
+
+            corner = next(
+                (c for c in ("tr", "br", "tl", "bl") if clear_of_text(charge_box(c))), None
+            )
+            if corner is not None:
+                box = charge_box(corner)
+            else:
+                # Crowded atom (e.g. a quaternary N⁺): walk round it and use the
+                # first spot between the bonds.
+                radius = max(sym_w, cap) * 0.5 + max(c_w, small_cap) * 0.9 + 2.0
+                box = charge_box("tr")
+                for step in range(24):
+                    angle = math.radians(45.0 + step * 15.0)
+                    cx = center.x() + radius * math.cos(angle)
+                    cy = center.y() - radius * math.sin(angle)
+                    trial = QRectF(cx - c_w / 2, cy - small_cap / 2, c_w, small_cap)
+                    if clear_of_text(trial):
+                        box = trial
+                        break
+            texts.append((charge, QPointF(box.left(), box.bottom()), True))
+            boxes.append(box)
+
+        dots: list[QPointF] = []
+        dot_r = max(1.4, cap * 0.12)
+        if label.radicals:
+            for dy in (-cap * 0.95, cap * 0.95):
+                candidate = [
+                    QPointF(
+                        center.x() + (k - (label.radicals - 1) / 2) * dot_r * 3, center.y() + dy
+                    )
+                    for k in range(label.radicals)
+                ]
+                dot_boxes = [
+                    QRectF(d.x() - dot_r, d.y() - dot_r, 2 * dot_r, 2 * dot_r) for d in candidate
+                ]
+                if all(free(b) and not any(b.intersects(o) for o in boxes) for b in dot_boxes):
+                    break
+            dots = candidate
+            boxes.extend(dot_boxes)
+        return _LabelLayout(texts, boxes, dots, dot_r)
+
+    def _label_boxes(
+        self, zoom: float | None = None, origin: QPointF | None = None
+    ) -> dict[int, list[QRectF]]:
+        """Screen boxes covered by each atom label (used for layout checks)."""
+        self._refresh_cache()
+        zoom = self._zoom if zoom is None else zoom
+        font, small = self._label_fonts(zoom)
+        fm, sm = QFontMetricsF(font), QFontMetricsF(small)
+        result = {}
+        positions = [
+            self._to_screen(*self._model.atom_position(i), zoom=zoom, origin=origin)
+            for i in range(self._model.atom_count)
+        ]
+        for idx, label in self._labels.items():
+            bonds = [positions[n] for n in self._model.atom_neighbors(idx)]
+            result[idx] = self._layout_label(positions[idx], label, fm, sm, bonds).boxes
+        return result
+
+    def _label_fonts(self, zoom: float) -> tuple[QFont, QFont]:
+        font_px = self._font_px(zoom)
+        font = QFont(self.font())
+        font.setPixelSize(round(font_px))
+        font.setWeight(QFont.Weight.DemiBold)
+        small = QFont(font)
+        small.setPixelSize(max(6, round(font_px * 0.68)))
+        return font, small
+
     def _paint_label(
-        self, painter: QPainter, center: QPointF, label: _AtomLabel, font: QFont, small: QFont
+        self,
+        painter: QPainter,
+        center: QPointF,
+        label: _AtomLabel,
+        font: QFont,
+        small: QFont,
+        bonds: list[QPointF] | None = None,
     ) -> None:
         fm = QFontMetricsF(font)
         sm = QFontMetricsF(small)
+        layout = self._layout_label(center, label, fm, sm, bonds)
         color = element_color(label.symbol)
-        sym_w = fm.horizontalAdvance(label.symbol)
-        baseline = center.y() + (fm.ascent() - fm.descent()) / 2
-        sym_left = center.x() - sym_w / 2
-
-        h_text = "H" if label.hydrogens else ""
-        h_count = str(label.hydrogens) if label.hydrogens > 1 else ""
-        h_w = fm.horizontalAdvance(h_text) + (sm.horizontalAdvance(h_count) if h_count else 0)
-        h_left = label.h_left and bool(h_text)
-        sub_drop = fm.ascent() * 0.35
 
         # A soft halo keeps crossing lines away from the glyphs.
-        halo_left = sym_left - (h_w if h_left else 0) - 1
-        halo_right = sym_left + sym_w + (0 if h_left else h_w) + 1
         painter.setPen(Qt.PenStyle.NoPen)
         painter.setBrush(QColor(theme.SURFACE))
-        painter.drawRoundedRect(
-            QRectF(
-                halo_left, center.y() - fm.ascent() / 2 - 1, halo_right - halo_left, fm.ascent() + 2
-            ),
-            3,
-            3,
-        )
+        for box in layout.boxes:
+            painter.drawRoundedRect(box.adjusted(-1.5, -1.5, 1.5, 1.5), 2.5, 2.5)
 
         painter.setPen(color)
-        painter.setFont(font)
-        painter.drawText(QPointF(sym_left, baseline), label.symbol)
-        if label.isotope:
-            painter.setFont(small)
-            iso = str(label.isotope)
-            painter.drawText(
-                QPointF(sym_left - sm.horizontalAdvance(iso) - 0.5, baseline - fm.ascent() * 0.5),
-                iso,
-            )
-            painter.setFont(font)
-        if label.radicals:
+        for text, origin, is_small in layout.texts:
+            painter.setFont(small if is_small else font)
+            painter.drawText(origin, text)
+        if layout.dots:
             painter.setPen(Qt.PenStyle.NoPen)
             painter.setBrush(color)
-            dot = max(1.4, fm.ascent() * 0.09)
-            top = center.y() - fm.ascent() * 0.75
-            for k in range(label.radicals):
-                cx = center.x() + (k - (label.radicals - 1) / 2) * dot * 3
-                painter.drawEllipse(QPointF(cx, top), dot, dot)
-            painter.setPen(color)
-        if h_text:
-            x = sym_left - h_w if h_left else sym_left + sym_w
-            painter.setFont(font)
-            painter.drawText(QPointF(x, baseline), h_text)
-            if h_count:
-                painter.setFont(small)
-                painter.drawText(
-                    QPointF(x + fm.horizontalAdvance(h_text), baseline + sub_drop), h_count
-                )
-        charge = _charge_text(label.charge)
-        if charge:
-            painter.setFont(small)
-            right = sym_left + sym_w + (0 if h_left else h_w)
-            painter.drawText(QPointF(right + 0.5, baseline - fm.ascent() * 0.55), charge)
+            for dot in layout.dots:
+                painter.drawEllipse(dot, layout.dot_radius, layout.dot_radius)
 
     def _ghost_pen(self, alpha: int = 170) -> QPen:
         color = QColor(theme.ACCENT)
@@ -1253,6 +1441,13 @@ class MoleculeCanvas(QWidget):
             start, end, target = self._bond_preview(drag, cursor)
             painter.setPen(self._ghost_pen())
             painter.drawLine(self._to_screen(*start), self._to_screen(*end))
+            if drag.free_length and target is None:
+                factor = math.hypot(end[0] - start[0], end[1] - start[1]) / BOND_LENGTH
+                font = QFont(self.font())
+                font.setPixelSize(12)
+                painter.setFont(font)
+                painter.setPen(QColor(theme.ACCENT_DARK))
+                painter.drawText(QPointF(cursor.x() + 12, cursor.y() - 10), f"×{factor:.2f}")
             if target is not None:
                 painter.setBrush(HOVER_COLOR)
                 painter.setPen(Qt.PenStyle.NoPen)
@@ -1368,8 +1563,18 @@ class MoleculeCanvas(QWidget):
         if target is not None:
             return start, self._model.atom_position(target), target
         angle = math.radians(self._snapped_angle(start, cursor))
-        end = (start[0] + BOND_LENGTH * math.cos(angle), start[1] + BOND_LENGTH * math.sin(angle))
+        length = self._drag_length(drag, start, cursor)
+        end = (start[0] + length * math.cos(angle), start[1] + length * math.sin(angle))
         return start, end, None
+
+    def _drag_length(self, drag: _Drag, start: tuple[float, float], cursor: QPointF) -> float:
+        """Standard bond length, or with Shift the cursor distance in ¼-bond steps."""
+        if not drag.free_length:
+            return BOND_LENGTH
+        wx, wy = self._to_world(cursor)
+        distance = math.hypot(wx - start[0], wy - start[1])
+        step = 0.25 * BOND_LENGTH
+        return max(0.5 * BOND_LENGTH, min(6 * BOND_LENGTH, round(distance / step) * step))
 
     def _chain_preview(self, drag: _Drag, cursor: QPointF) -> list[tuple[float, float]]:
         sx, sy = (
@@ -1417,12 +1622,15 @@ class MoleculeCanvas(QWidget):
                 "Enter = label or group; Del removes"
             )
         elif self._hover_bond is not None:
-            hint = tr("Bond: 1/2/3 order, W wedge, H hash, Del removes")
+            hint = tr("Bond: 1/2/3 order, W wedge, H hash, +/− length, Del removes")
         else:
             hints = {
                 "select": tr("Drag atoms to move them, drag empty space to select"),
                 "erase": tr("Click an atom or bond to delete it"),
-                "bond_single": tr("Click or drag to draw bonds; click a bond to cycle its order"),
+                "bond_single": tr(
+                    "Click or drag to draw bonds (Shift = longer); click a bond: "
+                    "single → double → triple → wedge → reversed wedge"
+                ),
                 "bond_double": tr("Click or drag to draw double bonds"),
                 "bond_triple": tr("Click or drag to draw triple bonds"),
                 "bond_wedge": tr("Wedge bond (towards viewer); click again to flip"),
@@ -1489,6 +1697,7 @@ class MoleculeCanvas(QWidget):
             self._update_hover(point)
             self.update()
             return
+        drag.free_length = bool(event.modifiers() & Qt.KeyboardModifier.ShiftModifier)
         if not drag.moved:
             delta = point - drag.start
             if math.hypot(delta.x(), delta.y()) < DRAG_THRESHOLD_PX:
@@ -1514,6 +1723,8 @@ class MoleculeCanvas(QWidget):
         self._drag = None
         point = event.position()
         self._cursor = point
+        if drag.kind == "draw":
+            drag.free_length = bool(event.modifiers() & Qt.KeyboardModifier.ShiftModifier)
         if drag.kind == "place":
             atom = self._atom_at(point)
             if atom is not None:
@@ -1611,10 +1822,12 @@ class MoleculeCanvas(QWidget):
             if atom is not None:
                 self._last_atom = model.sprout_atom(atom, "C", order, stereo)
             elif bond is not None:
-                a, b = model.bond_atoms(bond)
-                model.add_or_update_bond(
-                    a, b, order, stereo, cycle_on_existing=tool == "bond_single"
-                )
+                if tool == "bond_single":
+                    # single → double → triple → wedge → wedge reversed → single
+                    model.cycle_bond(bond)
+                else:
+                    a, b = model.bond_atoms(bond)
+                    model.add_or_update_bond(a, b, order, stereo, cycle_on_existing=False)
             else:
                 with model.compound():
                     start = model.add_free_atom(*world)
@@ -1672,8 +1885,14 @@ class MoleculeCanvas(QWidget):
                     self._last_atom = target
                 else:
                     angle = math.degrees(math.atan2(end[1] - start[1], end[0] - start[0]))
+                    length = math.hypot(end[0] - start[0], end[1] - start[1])
                     self._last_atom = model.sprout_atom(
-                        origin_atom, symbol, order, stereo, preferred_angle=angle
+                        origin_atom,
+                        symbol,
+                        order,
+                        stereo,
+                        preferred_angle=angle,
+                        length=length if drag.free_length else None,
                     )
             self._after_edit()
             return
@@ -1769,6 +1988,10 @@ class MoleculeCanvas(QWidget):
                 model.set_bond_stereo(bond, STEREO_WEDGE)
             elif key == Qt.Key.Key_H:
                 model.set_bond_stereo(bond, STEREO_HASH)
+            elif text in ("+", "="):
+                model.scale_bond_length(bond, 1.25)
+            elif text in ("-", "_"):
+                model.scale_bond_length(bond, 0.8)
             elif delete:
                 model.delete_bond(bond)
             else:
@@ -1799,6 +2022,55 @@ class MoleculeCanvas(QWidget):
 # ---------------------------------------------------------------------------
 # Geometry helpers
 # ---------------------------------------------------------------------------
+
+
+def crop_to_content(image: QImage, margin: int = 2) -> QImage:
+    """Cut the fully transparent border off *image*, keeping *margin* pixels."""
+    import numpy as np  # noqa: PLC0415
+
+    image = image.convertToFormat(QImage.Format.Format_ARGB32)
+    width, height = image.width(), image.height()
+    if width == 0 or height == 0:
+        return image
+    raw = np.frombuffer(image.constBits(), dtype=np.uint8, count=image.sizeInBytes())
+    pixels = raw.reshape(height, image.bytesPerLine())[:, : width * 4].reshape(height, width, 4)
+    # Ink = visible and not white: the white halos behind atom labels do not
+    # count as content, so they never leave a blank rim around the drawing.
+    ink = (pixels[:, :, 3] > 8) & (pixels[:, :, :3].min(axis=2) < 245)
+    rows = np.flatnonzero(ink.any(axis=1))
+    cols = np.flatnonzero(ink.any(axis=0))
+    if rows.size == 0 or cols.size == 0:
+        return image
+    top = max(int(rows[0]) - margin, 0)
+    bottom = min(int(rows[-1]) + margin, height - 1)
+    left = max(int(cols[0]) - margin, 0)
+    right = min(int(cols[-1]) + margin, width - 1)
+    return image.copy(left, top, right - left + 1, bottom - top + 1)
+
+
+def _rect_hits_segment(rect: QRectF, a: QPointF, b: QPointF) -> bool:
+    """True when the segment a–b touches the rectangle (Liang–Barsky clip)."""
+    x0, y0 = a.x(), a.y()
+    dx, dy = b.x() - x0, b.y() - y0
+    t0, t1 = 0.0, 1.0
+    for p, q in (
+        (-dx, x0 - rect.left()),
+        (dx, rect.right() - x0),
+        (-dy, y0 - rect.top()),
+        (dy, rect.bottom() - y0),
+    ):
+        if abs(p) < 1e-12:
+            if q < 0:
+                return False
+            continue
+        t = q / p
+        if p < 0:
+            t0 = max(t0, t)
+        else:
+            t1 = min(t1, t)
+        if t0 > t1:
+            return False
+    return True
 
 
 def _segment_distance(p: QPointF, a: QPointF, b: QPointF) -> float:
@@ -2023,6 +2295,15 @@ def _build_context_menu(canvas: MoleculeCanvas, point: QPointF) -> QMenu:
         )
         _add_action(
             menu, tr("Hash Down"), after(lambda: model.set_bond_stereo(bond, STEREO_HASH)), "H"
+        )
+        _add_action(
+            menu, tr("Longer bond"), after(lambda: model.scale_bond_length(bond, 1.25)), "+"
+        )
+        _add_action(
+            menu, tr("Shorter bond"), after(lambda: model.scale_bond_length(bond, 0.8)), "-"
+        )
+        _add_action(
+            menu, tr("Standard length"), after(lambda: model.set_bond_length(bond, BOND_LENGTH))
         )
         _add_action(menu, tr("Delete bond"), after(lambda: model.delete_bond(bond)), "Del")
     if selection:

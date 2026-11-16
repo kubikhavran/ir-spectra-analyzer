@@ -343,7 +343,10 @@ def test_render_to_png_bytes(canvas):
     from PySide6.QtGui import QImage
 
     image = QImage.fromData(png)
-    assert (image.width(), image.height()) == (320, 200)
+    # Shaped like the molecule: it fills the box in one direction, never more.
+    assert image.width() <= 320
+    assert image.height() <= 200
+    assert max(image.width() / 320, image.height() / 200) > 0.95
 
 
 def test_paint_handles_hover_invalid_atoms_and_ghosts(canvas):
@@ -630,3 +633,66 @@ def test_explicit_hydrogen_actions(canvas):
     assert canvas.add_explicit_hydrogens() == 4
     assert canvas.remove_explicit_hydrogens() == 4
     assert canvas.to_smiles() == "CO"
+
+
+# ---------------------------------------------------------------------------
+# Bond cycling and bond length on the canvas
+# ---------------------------------------------------------------------------
+
+
+def test_clicking_a_bond_cycles_through_wedges_both_ways(canvas):
+    canvas.load_smiles("CC(N)O")
+    model = canvas.model()
+    seen = []
+    for _ in range(5):
+        bond = model.find_bond(0, 1)
+        QTest.mouseClick(canvas, Qt.MouseButton.LeftButton, pos=_bond_mid(canvas, bond))
+        bond = model.find_bond(0, 1)
+        seen.append((model.bond_order(bond), model.bond_stereo(bond), model.bond_atoms(bond)[0]))
+    assert seen == [
+        (2, "none", 0),
+        (3, "none", 0),
+        (1, "wedge", 0),
+        (1, "wedge", 1),
+        (1, "none", 0),
+    ]
+
+
+def test_shift_drag_draws_a_longer_bond(canvas):
+    canvas.load_smiles("C")
+    start = _pt(canvas, 0)
+    step = BOND_LENGTH * canvas._scale()
+    end = QPoint(int(start.x() + 2 * step), start.y())
+    QTest.mousePress(canvas, Qt.MouseButton.LeftButton, Qt.KeyboardModifier.NoModifier, start)
+    QTest.mouseMove(canvas, QPoint(start.x() + 20, start.y()))
+    QTest.mouseMove(canvas, end)
+    QTest.mouseRelease(canvas, Qt.MouseButton.LeftButton, Qt.KeyboardModifier.ShiftModifier, end)
+    model = canvas.model()
+    assert model.bond_length(0) == pytest.approx(2 * BOND_LENGTH, abs=0.25 * BOND_LENGTH)
+    # Without Shift the bond keeps the standard length.
+    canvas.load_smiles("C")
+    _drag(canvas, start, end)
+    assert canvas.model().bond_length(0) == pytest.approx(BOND_LENGTH)
+
+
+def test_plus_minus_over_bond_change_its_length(canvas):
+    canvas.load_smiles("CCC")
+    bond = canvas.model().find_bond(1, 2)
+    _hover(canvas, _bond_mid(canvas, bond))
+    QTest.keyClick(canvas, Qt.Key.Key_Plus)
+    assert canvas.model().bond_length(bond) == pytest.approx(1.25 * BOND_LENGTH)
+    _hover(canvas, _bond_mid(canvas, bond))
+    QTest.keyClick(canvas, Qt.Key.Key_Minus)
+    assert canvas.model().bond_length(bond) == pytest.approx(BOND_LENGTH)
+
+
+def test_bond_context_menu_length_actions(canvas):
+    canvas.load_smiles("CCC")
+    bond = canvas.model().find_bond(1, 2)
+    menu = canvas.build_context_menu(QPointF(_bond_mid(canvas, bond)))
+    actions = {a.text(): a for a in menu.actions()}
+    actions["Longer bond"].trigger()
+    assert canvas.model().bond_length(bond) == pytest.approx(1.25 * BOND_LENGTH)
+    menu = canvas.build_context_menu(QPointF(_bond_mid(canvas, bond)))
+    {a.text(): a for a in menu.actions()}["Standard length"].trigger()
+    assert canvas.model().bond_length(bond) == pytest.approx(BOND_LENGTH)

@@ -25,6 +25,7 @@ from collections import deque
 from collections.abc import Iterable, Iterator
 from contextlib import contextmanager
 from dataclasses import dataclass
+from functools import lru_cache
 
 from rdkit import Chem, rdBase
 from rdkit.Chem import Descriptors, rdDepictor, rdMolDescriptors
@@ -86,6 +87,14 @@ class _RingTemplate:
     attach_atom: int  # template atom bonded to the target atom
     fusion_bond: tuple[int, int]  # template edge laid onto a target bond
     aromatic: bool
+    # Hand-made 2D coordinates (e.g. a chair), in template atom order.
+    coords: tuple[tuple[float, float], ...] | None = None
+    # Whole building blocks (sugars) are attached through an atom, never fused.
+    fusable: bool = True
+
+
+# Chair conformation as chemists draw it: three pairs of parallel bonds.
+_CHAIR = ((0.0, 0.0), (1.2, -0.6), (2.7, -0.35), (3.45, 0.4), (2.25, 1.0), (0.75, 0.75))
 
 
 RING_TEMPLATES: dict[str, _RingTemplate] = {
@@ -103,6 +112,28 @@ RING_TEMPLATES: dict[str, _RingTemplate] = {
     "pyrrole": _RingTemplate("c1ccc[nH]1", 0, (0, 1), True),
     # 1-naphthyl when attached.
     "naphthalene": _RingTemplate("c1ccc2ccccc2c1", 9, (0, 1), True),
+    # Saturated heterocycles: the ether rings sugars are built on, and amines.
+    "oxane": _RingTemplate("C1CCOCC1", 0, (0, 1), False),
+    "oxolane": _RingTemplate("C1CCOC1", 0, (0, 1), False),
+    "dioxane": _RingTemplate("C1COCCO1", 0, (0, 1), False),
+    "piperidine": _RingTemplate("N1CCCCC1", 0, (1, 2), False),
+    "morpholine": _RingTemplate("N1CCOCC1", 0, (1, 2), False),
+    "piperazine": _RingTemplate("N1CCNCC1", 0, (1, 2), False),
+    # Chair conformations; the oxane chair has O at the back, next to the
+    # right-hand tip (C1 of a pyranose).
+    "chair": _RingTemplate("C1CCCCC1", 3, (0, 1), False, _CHAIR),
+    "oxane_chair": _RingTemplate("C1CCCOC1", 3, (0, 1), False, _CHAIR),
+    # Sugars with wedges; they attach through the anomeric OH oxygen
+    # (a glycosidic bond) and are never fused.
+    "beta_glucopyranose": _RingTemplate(
+        "OC[C@H]1O[C@@H](O)[C@H](O)[C@@H](O)[C@@H]1O", 5, (2, 3), False, fusable=False
+    ),
+    "alpha_glucopyranose": _RingTemplate(
+        "OC[C@H]1O[C@H](O)[C@H](O)[C@@H](O)[C@@H]1O", 5, (2, 3), False, fusable=False
+    ),
+    "beta_ribofuranose": _RingTemplate(
+        "OC[C@H]1O[C@@H](O)[C@H](O)[C@@H]1O", 5, (2, 3), False, fusable=False
+    ),
 }
 
 # Functional groups: SMILES whose atom 0 bonds to the target atom.
@@ -164,6 +195,64 @@ def _kekulized_template(smiles: str) -> Chem.Mol:
     return mol
 
 
+@lru_cache(maxsize=64)
+def _template_cached(ring_type: str) -> Chem.Mol:
+    spec = RING_TEMPLATES[ring_type]
+    mol = _kekulized_template(spec.smiles)
+    if spec.coords is not None:
+        conf = mol.GetConformer()
+        lengths = [
+            math.dist(spec.coords[b.GetBeginAtomIdx()], spec.coords[b.GetEndAtomIdx()])
+            for b in mol.GetBonds()
+        ]
+        factor = BOND_LENGTH / (sum(lengths) / len(lengths))
+        for idx, (x, y) in enumerate(spec.coords):
+            conf.SetAtomPosition(idx, Point3D(x * factor, y * factor, 0.0))
+    if any(a.GetChiralTag() != Chem.ChiralType.CHI_UNSPECIFIED for a in mol.GetAtoms()):
+        with _quiet_rdkit():
+            Chem.WedgeMolBonds(mol, mol.GetConformer())
+    return mol
+
+
+def _template_mol(ring_type: str) -> Chem.Mol:
+    """Template molecule with 2D coordinates (and wedges for stereo templates)."""
+    if ring_type not in RING_TEMPLATES:
+        raise ValueError(f"Unknown ring template: {ring_type!r}")
+    return Chem.Mol(_template_cached(ring_type))
+
+
+def _swap_wedges(mol: Chem.Mol) -> None:
+    """Swap wedge ↔ hash: a 2D mirror image needs it to stay the same molecule."""
+    for bond in mol.GetBonds():
+        if bond.GetBondDir() == Chem.BondDir.BEGINWEDGE:
+            bond.SetBondDir(Chem.BondDir.BEGINDASH)
+        elif bond.GetBondDir() == Chem.BondDir.BEGINDASH:
+            bond.SetBondDir(Chem.BondDir.BEGINWEDGE)
+
+
+def _arrange_components(mol: Chem.Mol) -> None:
+    """Lay disconnected molecules/ions out side by side, largest first.
+
+    RDKit packs the components of ``CC[NH3+].[Cl-].[Na+]`` so tightly that
+    the labels run into each other; this puts a clear gap between them.
+    """
+    frags = Chem.GetMolFrags(mol, asMols=False, sanitizeFrags=False)
+    if len(frags) < 2 or mol.GetNumConformers() == 0:
+        return
+    conf = mol.GetConformer()
+    ordered = sorted(frags, key=lambda f: (-len(f), min(conf.GetAtomPosition(i).x for i in f)))
+    cursor_x = 0.0
+    for frag in ordered:
+        xs = [conf.GetAtomPosition(i).x for i in frag]
+        ys = [conf.GetAtomPosition(i).y for i in frag]
+        dx = cursor_x - min(xs)
+        dy = -(min(ys) + max(ys)) / 2
+        for i in frag:
+            pos = conf.GetAtomPosition(i)
+            conf.SetAtomPosition(i, Point3D(pos.x + dx, pos.y + dy, 0.0))
+        cursor_x += (max(xs) - min(xs)) + 2.0 * BOND_LENGTH
+
+
 def _angle_of(dx: float, dy: float) -> float:
     return math.atan2(dy, dx)
 
@@ -186,6 +275,7 @@ class MolEditorModel:
         self._redo: list[Chem.RWMol] = []
         self._revision = 0
         self._compound_depth = 0
+        self._last_fragment_mirrored = False
         self._ring_cache: tuple[int, list[tuple[tuple[int, ...], tuple[int, ...]]]] | None = None
 
     # ------------------------------------------------------------------
@@ -229,6 +319,7 @@ class MolEditorModel:
         except Exception:  # noqa: BLE001
             return False
         rdDepictor.Compute2DCoords(parsed)
+        _arrange_components(parsed)
         with _quiet_rdkit():
             Chem.WedgeMolBonds(parsed, parsed.GetConformer())
         if record_undo:
@@ -687,13 +778,15 @@ class MolEditorModel:
         bond_order: int,
         stereo_dir: str,
         preferred_angle: float | None,
+        length: float | None = None,
     ) -> int:
         angle = self._sprout_direction(
             from_atom_idx, bond_order=bond_order, preferred_angle=preferred_angle
         )
         ax, ay = self.atom_position(from_atom_idx)
-        x = ax + BOND_LENGTH * math.cos(angle)
-        y = ay + BOND_LENGTH * math.sin(angle)
+        bond_length = BOND_LENGTH if length is None else max(0.4 * BOND_LENGTH, float(length))
+        x = ax + bond_length * math.cos(angle)
+        y = ay + bond_length * math.sin(angle)
         existing = self.nearest_atom(x, y, 0.25 * BOND_LENGTH, exclude=[from_atom_idx])
         if existing is not None and self.find_bond(from_atom_idx, existing) is None:
             self._add_bond(from_atom_idx, existing, bond_order, stereo_dir)
@@ -798,6 +891,7 @@ class MolEditorModel:
         bond_order: int = 1,
         stereo_dir: str = STEREO_NONE,
         preferred_angle: float | None = None,
+        length: float | None = None,
     ) -> int:
         """Add a new atom bonded to *from_atom_idx*; returns its index.
 
@@ -808,7 +902,7 @@ class MolEditorModel:
         """
         atom = self._make_atom(symbol)
         self._push_undo()
-        idx = self._sprout(from_atom_idx, atom, bond_order, stereo_dir, preferred_angle)
+        idx = self._sprout(from_atom_idx, atom, bond_order, stereo_dir, preferred_angle, length)
         self._touch()
         return idx
 
@@ -950,6 +1044,9 @@ class MolEditorModel:
         target_bond_idx: int | None = None,
     ) -> list[tuple[float, float]]:
         """Where the ring atoms would go (for ghost previews); nothing is changed."""
+        target_atom_idx, target_bond_idx = self._ring_target(
+            ring_type, target_atom_idx, target_bond_idx
+        )
         template, coords, _mapping = self._place_ring(
             ring_type,
             center=center,
@@ -962,13 +1059,13 @@ class MolEditorModel:
     @staticmethod
     def ring_template_symbols(ring_type: str) -> list[str]:
         """Element symbol of every template atom (same order as the coordinates)."""
-        template = _kekulized_template(RING_TEMPLATES[ring_type].smiles)
+        template = _template_mol(ring_type)
         return [atom.GetSymbol() for atom in template.GetAtoms()]
 
     @staticmethod
     def ring_template_bonds(ring_type: str) -> list[tuple[int, int, int]]:
         """``(atom_a, atom_b, order)`` of a template, matching the preview coordinates."""
-        template = _kekulized_template(RING_TEMPLATES[ring_type].smiles)
+        template = _template_mol(ring_type)
         return [
             (
                 b.GetBeginAtomIdx(),
@@ -994,6 +1091,9 @@ class MolEditorModel:
           for a lone atom, builds the ring through it).
         * otherwise the ring is centred at *center* (or next to the drawing).
         """
+        target_atom_idx, target_bond_idx = self._ring_target(
+            ring_type, target_atom_idx, target_bond_idx
+        )
         template, coords, mapping = self._place_ring(
             ring_type,
             center=center,
@@ -1016,6 +1116,9 @@ class MolEditorModel:
             atom = Chem.Atom(t_atom)
             atom.SetNoImplicit(atom.GetSymbol() not in _IMPLICIT_H_ELEMENTS)
             atom.SetNumExplicitHs(0)
+            # Stereo comes from the copied wedges, which do not depend on the
+            # order neighbours are added in (chiral tags do).
+            atom.SetChiralTag(Chem.ChiralType.CHI_UNSPECIFIED)
             index_map[t_idx] = self._add_atom(atom, x, y)
         new_bonds: list[int] = []
         for t_bond in template.GetBonds():
@@ -1025,6 +1128,8 @@ class MolEditorModel:
                 continue
             order = 2 if t_bond.GetBondType() == Chem.BondType.DOUBLE else 1
             new_bonds.append(self._add_bond(a, b, order))
+            if t_bond.GetBondDir() != Chem.BondDir.NONE:
+                self._mol.GetBondWithIdx(new_bonds[-1]).SetBondDir(t_bond.GetBondDir())
         if target_atom_idx is not None and target_atom_idx not in index_map.values():
             self._add_bond(target_atom_idx, index_map[spec.attach_atom], 1)
         self._touch()
@@ -1040,10 +1145,9 @@ class MolEditorModel:
         target_atom_idx: int | None,
         target_bond_idx: int | None,
     ) -> tuple[Chem.Mol, list[tuple[float, float]], dict[int, int]]:
-        if ring_type not in RING_TEMPLATES:
-            raise ValueError(f"Unknown ring template: {ring_type!r}")
-        spec = RING_TEMPLATES[ring_type]
-        template = _kekulized_template(spec.smiles)
+        spec = RING_TEMPLATES[ring_type] if ring_type in RING_TEMPLATES else None
+        template = _template_mol(ring_type)
+        assert spec is not None
         conf = template.GetConformer()
         pts = [
             complex(conf.GetAtomPosition(i).x, conf.GetAtomPosition(i).y)
@@ -1076,10 +1180,25 @@ class MolEditorModel:
                 return sum(1.0 / max(abs(ring_center - o), 0.1) ** 2 for o in others)
 
             placed = min(options, key=crowding)
+            if placed is options[1]:
+                _swap_wedges(template)
             mapping = {t0: a, t1: b}
         elif target_atom_idx is not None:
             anchor = complex(*self.atom_position(target_atom_idx))
             t_a = spec.attach_atom
+            merged: int | None = None
+            attach_atom = template.GetAtomWithIdx(t_a)
+            if (
+                not spec.fusable
+                and self.atom_degree(target_atom_idx) > 0
+                and self.atom_symbol(target_atom_idx) in ("O", "N", "S")
+                and attach_atom.GetSymbol() == "O"
+                and attach_atom.GetDegree() == 1
+            ):
+                # Sugar onto an OH / NH / SH: the target atom takes the place of
+                # the anomeric OH oxygen, giving a glycoside instead of a peroxide.
+                merged = t_a
+                t_a = attach_atom.GetNeighbors()[0].GetIdx()
             outward = pts[t_a] - centroid
             outward /= abs(outward)
             if self.atom_degree(target_atom_idx) == 0:
@@ -1093,7 +1212,29 @@ class MolEditorModel:
                 direction = cmath.exp(1j * angle)
                 attach_pos = anchor + BOND_LENGTH * direction
                 rotation = -direction / outward
-                placed = [attach_pos + (p - pts[t_a]) * rotation for p in pts]
+                straight = [attach_pos + (p - pts[t_a]) * rotation for p in pts]
+                # The mirror image about the new bond often clears a neighbour
+                # (two rings side by side on a benzene, a crowded chain end).
+                axis = direction
+                mirrored = [
+                    attach_pos + ((p - attach_pos) / axis).conjugate() * axis for p in straight
+                ]
+                others = [
+                    complex(*self.atom_position(i))
+                    for i in range(self.atom_count)
+                    if i != target_atom_idx
+                ]
+
+                def clash(placed: list[complex]) -> float:
+                    return sum(1.0 / max(abs(p - o), 0.2) ** 4 for p in placed for o in others)
+
+                use_mirror = clash(mirrored) < clash(straight) / 1.001
+                placed = mirrored if use_mirror else straight
+                if use_mirror:
+                    _swap_wedges(template)
+                if merged is not None:
+                    placed[merged] = anchor
+                    mapping = {merged: target_atom_idx}
         else:
             if center is None:
                 bounds = self.bounds()
@@ -1106,6 +1247,19 @@ class MolEditorModel:
             placed = [target + (p - centroid) for p in pts]
         coords = [(p.real, p.imag) for p in placed]
         return template, coords, mapping
+
+    def _ring_target(
+        self, ring_type: str, target_atom_idx: int | None, target_bond_idx: int | None
+    ) -> tuple[int | None, int | None]:
+        """Building blocks that cannot be fused attach to the clicked bond's free end."""
+        spec = RING_TEMPLATES.get(ring_type)
+        if spec is None:
+            raise ValueError(f"Unknown ring template: {ring_type!r}")
+        if target_bond_idx is not None and not spec.fusable and target_atom_idx is None:
+            a, b = self.bond_atoms(target_bond_idx)
+            target_atom_idx = a if self.atom_degree(a) <= self.atom_degree(b) else b
+            target_bond_idx = None
+        return target_atom_idx, target_bond_idx
 
     def _rekekulize(self, atoms: set[int]) -> None:
         """Re-assign Kekulé bonds of a freshly fused aromatic system.
@@ -1245,6 +1399,7 @@ class MolEditorModel:
             if has_wedges:
                 Chem.AssignChiralTypesFromBondDirs(work, replaceExistingTags=True)
             rdDepictor.Compute2DCoords(work)
+            _arrange_components(work)
             for bond in work.GetBonds():
                 bond.SetBondDir(Chem.BondDir.NONE)
             if has_wedges:
@@ -1520,6 +1675,7 @@ class MolEditorModel:
         position: tuple[float, float] | None = None,
     ) -> list[tuple[float, float]]:
         """Where :meth:`insert_fragment` would put each fragment atom."""
+        self._last_fragment_mirrored = False
         pts = [complex(x, y) for x, y in fragment.coordinates()]
         if not pts:
             return []
@@ -1555,9 +1711,9 @@ class MolEditorModel:
             def crowding(placed: list[complex]) -> float:
                 return sum(1.0 / max(abs(p - o), 0.2) ** 2 for p in placed for o in others)
 
-            placed = (
-                options[0] if crowding(options[0]) <= crowding(options[1]) * 1.05 else options[1]
-            )
+            mirrored = crowding(options[0]) > crowding(options[1]) * 1.05
+            placed = options[1] if mirrored else options[0]
+            self._last_fragment_mirrored = mirrored
         else:
             if position is None:
                 bounds = self.bounds()
@@ -1598,7 +1754,14 @@ class MolEditorModel:
             a = index_map[bond.GetBeginAtomIdx()]
             b = index_map[bond.GetEndAtomIdx()]
             self._mol.AddBond(a, b, bond.GetBondType())
-            self._mol.GetBondBetweenAtoms(a, b).SetBondDir(bond.GetBondDir())
+            direction = bond.GetBondDir()
+            if self._last_fragment_mirrored:
+                # Placed as a mirror image: swap wedges so the stereo is unchanged.
+                direction = {
+                    Chem.BondDir.BEGINWEDGE: Chem.BondDir.BEGINDASH,
+                    Chem.BondDir.BEGINDASH: Chem.BondDir.BEGINWEDGE,
+                }.get(direction, direction)
+            self._mol.GetBondBetweenAtoms(a, b).SetBondDir(direction)
         if target_atom_idx is not None and fragment.attach is not None:
             self._add_bond(target_atom_idx, index_map[fragment.attach], 1)
         self._touch()
@@ -1825,3 +1988,91 @@ class MolEditorModel:
             self._mol.RemoveAtom(idx)
         self._touch()
         return len(removable)
+
+    # ------------------------------------------------------------------
+    # Bond cycling and bond length
+    # ------------------------------------------------------------------
+
+    def cycle_bond(self, bond_idx: int) -> int:
+        """Next bond style on a click: single → double → triple → wedge one
+        way → wedge the other way → single.  Returns the (new) bond index."""
+        a, b = self.bond_atoms(bond_idx)
+        low, high = min(a, b), max(a, b)
+        order = self.bond_order(bond_idx)
+        stereo = self.bond_stereo(bond_idx)
+        with self.compound():
+            if stereo == STEREO_WEDGE and a == low:
+                return self._replace_bond(low, high, 1, STEREO_WEDGE, begin=high)
+            if stereo != STEREO_NONE:
+                return self._replace_bond(low, high, 1, STEREO_NONE, begin=low)
+            if order == 1:
+                return self._replace_bond(low, high, 2, STEREO_NONE, begin=a)
+            if order == 2:
+                return self._replace_bond(low, high, 3, STEREO_NONE, begin=a)
+            return self._replace_bond(low, high, 1, STEREO_WEDGE, begin=low)
+
+    def _replace_bond(self, a: int, b: int, order: int, stereo: str, *, begin: int) -> int:
+        self._push_undo()
+        bond = self._mol.GetBondBetweenAtoms(a, b)
+        if bond.GetBeginAtomIdx() == begin:
+            # Same direction: change it in place so the bond keeps its index.
+            bond.SetBondType(_ORDER_TO_TYPE[order])
+            bond.SetBondDir(_STEREO_TO_DIR[stereo])
+            bond.SetIsAromatic(False)
+            bond.SetStereo(Chem.BondStereo.STEREONONE)
+            self._touch()
+            return int(bond.GetIdx())
+        self._mol.RemoveBond(a, b)
+        end = b if begin == a else a
+        idx = self._add_bond(begin, end, order, stereo)
+        self._touch()
+        return idx
+
+    def bond_length(self, bond_idx: int) -> float:
+        a, b = self.bond_atoms(bond_idx)
+        return math.dist(self.atom_position(a), self.atom_position(b))
+
+    def _side_atoms(self, start: int, blocked: int) -> set[int]:
+        """Atoms reachable from *start* without walking through *blocked*."""
+        seen = {start}
+        queue = deque([start])
+        while queue:
+            current = queue.popleft()
+            for nbr in self.atom_neighbors(current):
+                if nbr == blocked and current == start:
+                    continue
+                if nbr not in seen:
+                    seen.add(nbr)
+                    queue.append(nbr)
+        return seen
+
+    def set_bond_length(self, bond_idx: int, length: float) -> None:
+        """Stretch or shrink a bond, moving the smaller part of the molecule.
+
+        A ring bond only moves its end atom, so the ring is not torn apart.
+        """
+        length = max(0.4 * BOND_LENGTH, min(6.0 * BOND_LENGTH, float(length)))
+        a, b = self.bond_atoms(bond_idx)
+        ax, ay = self.atom_position(a)
+        bx, by = self.atom_position(b)
+        current = math.hypot(bx - ax, by - ay)
+        if current < 1e-6:
+            return
+        ux, uy = (bx - ax) / current, (by - ay) / current
+        side_b = self._side_atoms(b, a)
+        side_a = self._side_atoms(a, b)
+        if a in side_b:  # ring bond
+            moving, sign = {b}, 1.0
+        elif len(side_b) <= len(side_a):
+            moving, sign = side_b, 1.0
+        else:
+            moving, sign = side_a, -1.0
+        delta = (length - current) * sign
+        self._push_undo()
+        for idx in moving:
+            x, y = self.atom_position(idx)
+            self._set_position(idx, x + ux * delta, y + uy * delta)
+        self._touch()
+
+    def scale_bond_length(self, bond_idx: int, factor: float) -> None:
+        self.set_bond_length(bond_idx, self.bond_length(bond_idx) * factor)

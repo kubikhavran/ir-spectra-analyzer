@@ -131,6 +131,9 @@ def render_structure(
     png = svg_to_png_bytes(svg, width, height)
     if not png:
         return None
+    # RDKit pads the drawing and letterboxes very long chains; cut that off so
+    # the molecule fills whatever box the report or spreadsheet gives it.
+    png, width, height = _crop_transparent_border(png, relative_margin=0.006)
     return StructureImage(
         png=png,
         width_px=width,
@@ -177,6 +180,52 @@ def svg_to_png_bytes(svg_str: str, width: int, height: int) -> bytes | None:
         return bytes(buf.data())
     except Exception:  # noqa: BLE001
         return None
+
+
+def _crop_transparent_border(png: bytes, *, relative_margin: float) -> tuple[bytes, int, int]:
+    """Crop the fully transparent border of a PNG.
+
+    A margin of ``relative_margin`` × the drawing's longest side (at least
+    2 px) is kept so anti-aliased edges are not clipped.
+
+    Returns ``(png, width, height)``; the input is returned unchanged when Qt
+    or numpy is unavailable or the image is empty.
+    """
+    try:
+        import numpy as np
+        from PySide6.QtCore import QBuffer, QIODevice
+        from PySide6.QtGui import QImage
+
+        image = QImage.fromData(png)
+        if image.isNull():
+            raise ValueError("unreadable PNG")
+        image = image.convertToFormat(QImage.Format.Format_ARGB32)
+        w, h = image.width(), image.height()
+        raw = np.frombuffer(image.constBits(), dtype=np.uint8, count=image.sizeInBytes())
+        alpha = raw.reshape(h, image.bytesPerLine())[:, : w * 4].reshape(h, w, 4)[:, :, 3]
+        rows = np.flatnonzero(alpha.max(axis=1))
+        cols = np.flatnonzero(alpha.max(axis=0))
+        if rows.size == 0 or cols.size == 0:
+            return png, w, h
+        content = max(int(rows[-1] - rows[0]), int(cols[-1] - cols[0])) + 1
+        margin = max(2, round(relative_margin * content))
+        top = max(int(rows[0]) - margin, 0)
+        bottom = min(int(rows[-1]) + margin, h - 1)
+        left = max(int(cols[0]) - margin, 0)
+        right = min(int(cols[-1]) + margin, w - 1)
+        cropped = image.copy(left, top, right - left + 1, bottom - top + 1)
+        buf = QBuffer()
+        buf.open(QIODevice.OpenModeFlag.WriteOnly)
+        cropped.save(buf, "PNG")  # type: ignore[call-overload]
+        return bytes(buf.data().data()), cropped.width(), cropped.height()
+    except Exception:  # noqa: BLE001 - a border is cosmetic, a failed render is not
+        try:
+            from PySide6.QtGui import QImage
+
+            image = QImage.fromData(png)
+            return png, image.width(), image.height()
+        except Exception:  # noqa: BLE001
+            return png, 0, 0
 
 
 def _fit_rect(rect_cls: Any, default_size: Any, width: int, height: int) -> Any:
