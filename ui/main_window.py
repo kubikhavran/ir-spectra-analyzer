@@ -588,7 +588,9 @@ class MainWindow(QMainWindow):
         self._status_peaks.setVisible(has_spectrum)
         self._status_peaks.setText(self._peak_table.summary_text() if has_spectrum else "")
 
-        self._status_baseline.setVisible(bool(has_spectrum and spectrum.is_baseline_corrected))
+        self._status_baseline.setVisible(
+            bool(spectrum is not None and spectrum.is_baseline_corrected)
+        )
 
         self._status_unit.setVisible(has_spectrum)
         if spectrum is not None:

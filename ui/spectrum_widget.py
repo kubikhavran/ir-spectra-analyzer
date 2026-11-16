@@ -606,7 +606,7 @@ class SpectrumWidget(QWidget):
     def _readout_text(self, wavenumber: float, intensity: float) -> str:
         """Values under the crosshair, e.g. "1639.2 cm⁻¹   89.74 %T"."""
         unit = self._spectrum.display_y_unit if self._spectrum is not None else None
-        suffix = _UNIT_SUFFIX.get(unit, "")
+        suffix = _UNIT_SUFFIX.get(unit, "") if unit is not None else ""
         decimals = 2 if abs(intensity) >= 10.0 else 4
         value = f"{intensity:.{decimals}f}{(' ' + suffix) if suffix else ''}"
         return f"{wavenumber:.1f} cm\u207b\u00b9   {value}"
