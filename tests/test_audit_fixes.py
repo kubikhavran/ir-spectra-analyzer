@@ -439,7 +439,7 @@ def test_clicking_a_vibration_only_shows_its_range(qtbot) -> None:
         [VibrationPreset(name="ν(C=O)", typical_range_min=1700.0, typical_range_max=1750.0)]
     )
     panel.highlight_for_peak(peak.position)
-    item = panel._list.item(0)
+    item = panel.first_preset_item()  # the grouped view starts with a section header
 
     panel._list.setCurrentItem(item)
     panel._list.itemClicked.emit(item)
@@ -456,7 +456,7 @@ def test_clicking_a_vibration_only_shows_its_range(qtbot) -> None:
 
     window._undo_stack.undo()
     assert peak.vibration_labels == []
-    panel._list.itemDoubleClicked.emit(panel._list.item(0))
+    panel._list.itemDoubleClicked.emit(panel.first_preset_item())
     assert peak.vibration_labels == ["ν(C=O)"]
 
 

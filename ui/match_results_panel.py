@@ -13,7 +13,7 @@ from __future__ import annotations
 
 from collections.abc import Callable, Iterable
 
-from PySide6.QtCore import QEvent, QObject, QPoint, QSignalBlocker, Qt, Signal
+from PySide6.QtCore import QEvent, QObject, QPoint, QRect, QSignalBlocker, QSize, Qt, Signal
 from PySide6.QtGui import QColor, QCursor, QGuiApplication, QHideEvent, QPixmap
 from PySide6.QtWidgets import (
     QCheckBox,
@@ -23,11 +23,16 @@ from PySide6.QtWidgets import (
     QListWidget,
     QListWidgetItem,
     QPushButton,
+    QStyle,
+    QStyledItemDelegate,
+    QStyleOptionViewItem,
     QVBoxLayout,
     QWidget,
 )
 
-from matching.quality import match_quality_color, match_quality_label
+from matching.quality import match_quality_label
+from ui import theme
+from ui.i18n import tr
 
 SAVED_PROJECT_MARKER = "\U0001f4be"  # floppy disk — match has a saved .irproj
 SKELETON_MARKER = "▲"  # ▲ — skeleton agrees markedly better than the whole spectrum
@@ -36,6 +41,105 @@ SKELETON_LEAD_PP = 10.0
 
 # Hover preview size in logical pixels, and the device ratio its PNG is drawn at.
 PREVIEW_DISPLAY_PX = 220
+
+
+# Column geometry shared by the header row and the row painter.
+_SCORE_WIDTH = 118  # percentage + bar
+_FP_WIDTH = 64
+_ROW_PADDING = 6
+_QUALITY_COLORS = {
+    "Excellent": theme.QUALITY_EXCELLENT,
+    "Strong": theme.QUALITY_STRONG,
+    "Possible": theme.QUALITY_POSSIBLE,
+}
+
+
+def quality_color(score: float) -> str:
+    """Bar colour for a similarity score — the only place quality is colour-coded."""
+    return _QUALITY_COLORS.get(match_quality_label(score), theme.QUALITY_WEAK)
+
+
+class _MatchRowDelegate(QStyledItemDelegate):
+    """Draws a match as a table row: name · score with a bar · skeleton score.
+
+    Rows used to be one sentence coloured by quality; orange and light blue
+    text on white was hard to read and the numbers did not line up. Here the
+    text is always dark, the numbers sit in columns and the bar carries the
+    quality colour.
+    """
+
+    def sizeHint(self, option, index) -> QSize:  # noqa: N802
+        hint = super().sizeHint(option, index)
+        return QSize(0, max(hint.height(), 26))
+
+    def paint(self, painter, option, index) -> None:
+        result = index.data(256)
+        if result is None:
+            super().paint(painter, option, index)
+            return
+        view_option = QStyleOptionViewItem(option)
+        self.initStyleOption(view_option, index)
+        view_option.text = ""
+        if view_option.widget is not None:
+            view_option.widget.style().drawControl(
+                QStyle.ControlElement.CE_ItemViewItem, view_option, painter, view_option.widget
+            )
+        selected = bool(view_option.state & QStyle.StateFlag.State_Selected)
+        text_color = QColor("#FFFFFF") if selected else QColor(theme.TEXT)
+        muted = QColor("#DDE8F3") if selected else QColor(theme.TEXT_MUTED)
+        rect: QRect = view_option.rect
+        painter.save()
+        painter.setRenderHint(painter.RenderHint.Antialiasing, True)
+
+        fp_rect = QRect(
+            rect.right() - _FP_WIDTH - _ROW_PADDING, rect.top(), _FP_WIDTH, rect.height()
+        )
+        score_rect = QRect(fp_rect.left() - _SCORE_WIDTH, rect.top(), _SCORE_WIDTH, rect.height())
+        name_rect = QRect(
+            rect.left() + _ROW_PADDING,
+            rect.top(),
+            max(score_rect.left() - rect.left() - 2 * _ROW_PADDING, 10),
+            rect.height(),
+        )
+
+        score = float(getattr(result, "score", 0.0))
+        fingerprint = float(getattr(result, "fingerprint_score", 0.0))
+        name = str(index.data(_NAME_ROLE) or getattr(result, "name", ""))
+        metrics = painter.fontMetrics()
+        painter.setPen(text_color)
+        painter.drawText(
+            name_rect,
+            Qt.AlignmentFlag.AlignVCenter | Qt.AlignmentFlag.AlignLeft,
+            metrics.elidedText(name, Qt.TextElideMode.ElideRight, name_rect.width()),
+        )
+
+        # Score: number, then a bar whose length is the score.
+        number_rect = QRect(score_rect.left(), rect.top(), 50, rect.height())
+        painter.drawText(
+            number_rect,
+            Qt.AlignmentFlag.AlignVCenter | Qt.AlignmentFlag.AlignRight,
+            f"{score * 100:.1f}%",
+        )
+        track = QRect(number_rect.right() + 8, rect.center().y() - 3, 54, 7)
+        painter.setPen(Qt.PenStyle.NoPen)
+        painter.setBrush(QColor(255, 255, 255, 70) if selected else QColor(theme.HEADER))
+        painter.drawRoundedRect(track, 3, 3)
+        fill = QRect(track)
+        fill.setWidth(max(int(round(track.width() * max(0.0, min(score, 1.0)))), 2))
+        painter.setBrush(QColor("#FFFFFF") if selected else QColor(quality_color(score)))
+        painter.drawRoundedRect(fill, 3, 3)
+
+        leads = (fingerprint - score) * 100 >= SKELETON_LEAD_PP
+        painter.setPen(text_color if leads else muted)
+        painter.drawText(
+            fp_rect,
+            Qt.AlignmentFlag.AlignVCenter | Qt.AlignmentFlag.AlignRight,
+            f"{SKELETON_MARKER if leads else ''}{fingerprint * 100:.0f}%",
+        )
+        painter.restore()
+
+
+_NAME_ROLE = 258  # display name of a row, including the saved-project marker
 
 
 class MatchResultsPanel(QWidget):
@@ -107,16 +211,18 @@ class MatchResultsPanel(QWidget):
         layout.setSpacing(4)
 
         header = QHBoxLayout()
-        self._status_label = QLabel("No results")
+        self._status_label = QLabel(tr("No results"))
         self._status_label.setTextFormat(Qt.TextFormat.PlainText)
-        self._status_label.setStyleSheet("color: gray; font-size: 9pt;")
+        self._status_label.setStyleSheet(theme.CAPTION_STYLE)
         self._status_label.setToolTip(
-            "Similarity score is an internal spectral metric "
-            "(coarse cosine search + fine rerank). Not equivalent to OMNIC HQI."
+            tr(
+                "Similarity score is an internal spectral metric "
+                "(coarse cosine search + fine rerank). Not equivalent to OMNIC HQI."
+            )
         )
         header.addWidget(self._status_label)
         header.addStretch()
-        self._import_btn = QPushButton("Import Reference...")
+        self._import_btn = QPushButton(tr("Import Reference..."))
         self._import_btn.clicked.connect(self.import_reference)
         header.addWidget(self._import_btn)
         layout.addLayout(header)
@@ -125,9 +231,11 @@ class MatchResultsPanel(QWidget):
         # this text (e.g. a client prefix "NIT"), so a huge library is searched
         # as a small subset. Empty = search everything.
         filter_row = QHBoxLayout()
-        filter_row.addWidget(QLabel("Name filter:"))
+        filter_row.addWidget(QLabel(tr("Name filter:")))
         self._name_filter_edit = QLineEdit()
-        self._name_filter_edit.setPlaceholderText("e.g. NIT — limits Match Spectrum, empty = all")
+        self._name_filter_edit.setPlaceholderText(
+            tr("e.g. NIT — limits Match Spectrum, empty = all")
+        )
         self._name_filter_edit.setClearButtonEnabled(True)
         self._name_filter_edit.returnPressed.connect(self.match_requested)
         filter_row.addWidget(self._name_filter_edit)
@@ -136,15 +244,46 @@ class MatchResultsPanel(QWidget):
         # Assignments can only be copied from a match that also exists as a saved
         # .irproj, so allow hiding everything else instead of hunting through the
         # full ranked list.
-        self._saved_only_check = QCheckBox("Only matches with a saved project (.irproj)")
+        self._saved_only_check = QCheckBox(tr("Only matches with a saved project (.irproj)"))
         self._saved_only_check.setToolTip(
-            "Show only matches that have a saved .irproj in the annotated projects "
-            "folder — those are the ones you can apply assignments from"
+            tr(
+                "Show only matches that have a saved .irproj in the annotated projects "
+                "folder — those are the ones you can apply assignments from"
+            )
         )
         self._saved_only_check.toggled.connect(self._on_saved_only_toggled)
         layout.addWidget(self._saved_only_check)
 
+        # Column titles over the list — the rows are painted to the same grid.
+        columns = QHBoxLayout()
+        columns.setContentsMargins(_ROW_PADDING + 2, 2, _ROW_PADDING + 2, 0)
+        columns.setSpacing(0)
+        name_title = QLabel(tr("Reference"))
+        score_title = QLabel(tr("Match"))
+        score_title.setFixedWidth(_SCORE_WIDTH)
+        score_title.setAlignment(Qt.AlignmentFlag.AlignLeft | Qt.AlignmentFlag.AlignVCenter)
+        score_title.setIndent(20)
+        fp_title = QLabel(tr("Skeleton"))
+        fp_title.setFixedWidth(_FP_WIDTH)
+        fp_title.setAlignment(Qt.AlignmentFlag.AlignRight | Qt.AlignmentFlag.AlignVCenter)
+        fp_title.setToolTip(
+            tr(
+                "Similarity over the skeleton region 400–1600 cm⁻¹ only. "
+                "▲ marks a skeleton score at least 10 points above the overall one — "
+                "typically the same skeleton carrying a different substituent."
+            )
+        )
+        for title in (name_title, score_title, fp_title):
+            title.setStyleSheet(f"color: {theme.TEXT_MUTED}; font-size: 9pt; font-weight: 600;")
+        columns.addWidget(name_title, 1)
+        columns.addWidget(score_title)
+        columns.addWidget(fp_title)
+        layout.addLayout(columns)
+
         self._list = QListWidget()
+        self._list.setItemDelegate(_MatchRowDelegate(self._list))
+        self._list.setAlternatingRowColors(True)
+        self._list.setHorizontalScrollBarPolicy(Qt.ScrollBarPolicy.ScrollBarAlwaysOff)
         self._list.currentRowChanged.connect(self._on_row_changed)
         # Hovering a candidate shows the structure saved for it, so a long hit
         # list can be scanned for "is this actually the same molecule?" without
@@ -159,18 +298,21 @@ class MatchResultsPanel(QWidget):
         self._difference_label = QLabel("")
         self._difference_label.setTextFormat(Qt.TextFormat.PlainText)
         self._difference_label.setWordWrap(True)
-        self._difference_label.setStyleSheet("color: #444; font-size: 9pt;")
+        self._difference_label.setStyleSheet(theme.CAPTION_STYLE)
         self._difference_label.setToolTip(
-            "Bands with no counterpart within 8 cm⁻¹ in the other spectrum, strongest first"
+            tr("Bands with no counterpart within 8 cm⁻¹ in the other spectrum, strongest first")
         )
         layout.addWidget(self._difference_label)
 
         # Copy peak assignments + structure from the selected match's saved
         # .irproj (looked up by name in the annotated-projects folder).
-        self._apply_btn = QPushButton("Apply assignments from match")
+        self._apply_btn = QPushButton(tr("Apply assignments from match"))
+        self._apply_btn.setProperty("role", "primary")
         self._apply_btn.setToolTip(
-            "Copy vibration assignments and structure from the selected match's "
-            "saved project onto the current spectrum (nearest peaks, blanks only)"
+            tr(
+                "Copy vibration assignments and structure from the selected match's "
+                "saved project onto the current spectrum (nearest peaks, blanks only)"
+            )
         )
         self._apply_btn.setEnabled(False)
         self._apply_btn.clicked.connect(self._on_apply_clicked)
@@ -228,7 +370,7 @@ class MatchResultsPanel(QWidget):
                 f"{marker}{result.name}  —  {score_pct:.1f}%  ({quality}){skeleton}"
             )
             item.setData(256, result)  # store in UserRole
-            item.setForeground(QColor(match_quality_color(result.score)))
+            item.setData(_NAME_ROLE, f"{marker}{result.name}")
             tips = [
                 "fp = skeleton region 400–1600 cm⁻¹ only. "
                 f"{SKELETON_MARKER} marks a skeleton score at least "
@@ -258,17 +400,24 @@ class MatchResultsPanel(QWidget):
     def _update_status_label(self) -> None:
         """Describe how many candidates are shown and how many are applicable."""
         if not self._results:
-            self._status_label.setText("No results")
+            self._status_label.setText(tr("No results"))
             return
+        total = len(self._results)
         n_saved = sum(1 for result in self._results if self.has_saved_project(result))
         if not self._saved_only_check.isChecked():
-            self._status_label.setText(f"{len(self._results)} candidates ({n_saved} saved)")
+            self._status_label.setText(
+                tr("{total} candidates ({saved} saved)").format(total=total, saved=n_saved)
+            )
         elif n_saved:
-            self._status_label.setText(f"{n_saved} of {len(self._results)} candidates saved")
+            self._status_label.setText(
+                tr("{saved} of {total} candidates saved").format(total=total, saved=n_saved)
+            )
         elif self._saved_project_names:
-            self._status_label.setText(f"No saved project among {len(self._results)} candidates")
+            self._status_label.setText(
+                tr("No saved project among {total} candidates").format(total=total)
+            )
         else:
-            self._status_label.setText("No annotated projects folder set")
+            self._status_label.setText(tr("No annotated projects folder set"))
 
     def _on_saved_only_toggled(self, _checked: bool) -> None:
         self._rebuild_list()

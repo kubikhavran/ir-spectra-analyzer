@@ -138,7 +138,7 @@ def test_clicking_the_list_emits_the_range_request(qtbot, window):
     received: list = []
     panel.preset_range_requested.connect(received.append)
 
-    item = panel._list.item(0)
+    item = panel.first_preset_item()  # the grouped view starts with a section header
     panel._list.itemClicked.emit(item)
 
     assert len(received) == 1

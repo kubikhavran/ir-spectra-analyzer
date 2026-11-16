@@ -107,6 +107,10 @@ def main() -> None:
     app.setApplicationVersion(APP_VERSION)
     app.setOrganizationName(ORG_NAME)
 
+    from ui.theme import apply_theme  # noqa: PLC0415
+
+    apply_theme(app)
+
     app_icon = _load_app_icon()
     if not app_icon.isNull():
         app.setWindowIcon(app_icon)

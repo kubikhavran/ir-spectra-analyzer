@@ -14,6 +14,7 @@ from PySide6.QtGui import QKeySequence
 from PySide6.QtWidgets import (
     QApplication,
     QHBoxLayout,
+    QLabel,
     QPushButton,
     QTableWidget,
     QTableWidgetItem,
@@ -22,8 +23,22 @@ from PySide6.QtWidgets import (
 )
 
 from core.peak import Peak
+from core.peak_assignments import (
+    classify_peak_intensities,
+    peak_assignment_text,
+    peak_has_assignment,
+)
+from ui import theme
+from ui.i18n import tr
 
-_HEADERS = ["Position (cm⁻¹)", "Intensity", "Label", "Vibration"]
+# "Rel." is the relative band strength (w / m / s / vs) the report prints. It
+# replaced a "Label" column that only repeated the position.
+_HEADERS = ["Position (cm⁻¹)", "Intensity", "Rel.", "Vibration"]
+_COLUMN_TIPS = {
+    2: "Relative band strength: w = weak, m = medium, s = strong, vs = very strong",
+    3: "Double-click to edit the vibration text",
+}
+_NUMERIC_ALIGNMENT = Qt.AlignmentFlag.AlignRight | Qt.AlignmentFlag.AlignVCenter
 
 # How far a non-identical Peak may sit from a table row to still select it (cm⁻¹).
 _SELECT_MATCH_TOLERANCE = 1.0
@@ -56,7 +71,7 @@ class _CopyableTable(QTableWidget):
         selected_rows = sorted({idx.row() for idx in self.selectedIndexes()})
         if not selected_rows:
             return
-        lines = ["\t".join(_HEADERS)]
+        lines = ["\t".join(tr(header) for header in _HEADERS)]
         for row in selected_rows:
             cells = []
             for col in range(self.columnCount()):
@@ -76,6 +91,7 @@ class PeakTableWidget(QWidget):
     def __init__(self, parent=None) -> None:
         super().__init__(parent)
         self._peaks: list[Peak] = []
+        self._is_dip_spectrum = False
         self._setup_ui()
 
     def _setup_ui(self) -> None:
@@ -83,18 +99,34 @@ class PeakTableWidget(QWidget):
         layout.setContentsMargins(0, 0, 0, 0)
 
         toolbar = QHBoxLayout()
-        toolbar.setContentsMargins(0, 0, 0, 0)
-        self._copy_all_btn = QPushButton("Copy all")
-        self._copy_all_btn.setFixedHeight(22)
-        self._copy_all_btn.setToolTip("Copy entire peak table to clipboard (TSV)")
+        toolbar.setContentsMargins(6, 4, 6, 2)
+        # How far the assignment work has got, always in view above the rows.
+        self._summary_label = QLabel(tr("No peaks"))
+        self._summary_label.setStyleSheet(theme.CAPTION_STYLE)
+        toolbar.addWidget(self._summary_label)
+        self._copy_all_btn = QPushButton(tr("Copy all"))
+        self._copy_all_btn.setToolTip(tr("Copy entire peak table to clipboard (TSV)"))
         self._copy_all_btn.clicked.connect(self._copy_all_to_clipboard)
         toolbar.addStretch()
         toolbar.addWidget(self._copy_all_btn)
         layout.addLayout(toolbar)
 
         self._table = _CopyableTable(0, 4)
-        self._table.setHorizontalHeaderLabels(_HEADERS)
-        self._table.horizontalHeader().setStretchLastSection(True)
+        self._table.setHorizontalHeaderLabels([tr(header) for header in _HEADERS])
+        for column in (0, 1):
+            self._table.horizontalHeaderItem(column).setTextAlignment(_NUMERIC_ALIGNMENT)
+        self._table.horizontalHeaderItem(2).setTextAlignment(Qt.AlignmentFlag.AlignCenter)
+        for column, tip in _COLUMN_TIPS.items():
+            self._table.horizontalHeaderItem(column).setToolTip(tr(tip))
+        header = self._table.horizontalHeader()
+        header.setStretchLastSection(True)
+        header.setDefaultAlignment(Qt.AlignmentFlag.AlignLeft | Qt.AlignmentFlag.AlignVCenter)
+        self._table.setColumnWidth(0, 130)
+        self._table.setColumnWidth(1, 100)
+        self._table.setColumnWidth(2, 60)
+        self._table.setAlternatingRowColors(True)
+        self._table.setShowGrid(False)
+        self._table.verticalHeader().setDefaultSectionSize(24)
         self._table.setSelectionBehavior(self._table.SelectionBehavior.SelectRows)
         # Position/intensity/label edits were previously accepted visually but
         # never propagated to the Project model.  Keep the table honest and use
@@ -106,7 +138,7 @@ class PeakTableWidget(QWidget):
 
     def _copy_all_to_clipboard(self) -> None:
         """Copy all rows to clipboard as TSV."""
-        lines = ["\t".join(_HEADERS)]
+        lines = ["\t".join(tr(header) for header in _HEADERS)]
         for row in range(self._table.rowCount()):
             cells = []
             for col in range(self._table.columnCount()):
@@ -126,21 +158,46 @@ class PeakTableWidget(QWidget):
         if 0 <= row < len(self._peaks):
             self.vibration_edit_requested.emit(self._peaks[row])
 
-    def set_peaks(self, peaks: list[Peak]) -> None:
-        """Populate the table with peaks."""
+    def set_peaks(self, peaks: list[Peak], is_dip_spectrum: bool | None = None) -> None:
+        """Populate the table with peaks.
+
+        Args:
+            peaks: Peaks to list, in display order.
+            is_dip_spectrum: Whether bands point down (%T). Needed to rate the
+                relative strength; when omitted the last known value is kept.
+        """
         self._peaks = peaks
+        if is_dip_spectrum is not None:
+            self._is_dip_spectrum = bool(is_dip_spectrum)
+        strengths = classify_peak_intensities(peaks, is_dip_spectrum=self._is_dip_spectrum)
         self._table.blockSignals(True)
         self._table.setRowCount(len(peaks))
         scale = max((abs(peak.intensity) for peak in peaks), default=0.0)
         for row, peak in enumerate(peaks):
-            self._table.setItem(row, 0, QTableWidgetItem(str(int(round(peak.position)))))
-            self._table.setItem(row, 1, QTableWidgetItem(format_intensity(peak.intensity, scale)))
-            self._table.setItem(row, 2, QTableWidgetItem(peak.label))
-            assignment = peak.display_label if peak.vibration_labels else ""
+            position_item = QTableWidgetItem(str(int(round(peak.position))))
+            position_item.setTextAlignment(_NUMERIC_ALIGNMENT)
+            position_item.setToolTip(f"{peak.position:.2f} cm\u207b\u00b9")
+            self._table.setItem(row, 0, position_item)
+            intensity_item = QTableWidgetItem(format_intensity(peak.intensity, scale))
+            intensity_item.setTextAlignment(_NUMERIC_ALIGNMENT)
+            self._table.setItem(row, 1, intensity_item)
+            strength_item = QTableWidgetItem(strengths.get(id(peak), ""))
+            strength_item.setTextAlignment(Qt.AlignmentFlag.AlignCenter)
+            self._table.setItem(row, 2, strength_item)
+            assignment = peak_assignment_text(peak)
             vibration_item = QTableWidgetItem(assignment)
             vibration_item.setFlags(vibration_item.flags() & ~Qt.ItemFlag.ItemIsEditable)
             self._table.setItem(row, 3, vibration_item)
         self._table.blockSignals(False)
+        self._summary_label.setText(self.summary_text())
+
+    def summary_text(self) -> str:
+        """ "41 peaks · 3 assigned" — the progress line shown above the table."""
+        total = len(self._peaks)
+        if total == 0:
+            return tr("No peaks")
+        assigned = sum(1 for peak in self._peaks if peak_has_assignment(peak))
+        return tr("{total} peaks \u00b7 {assigned} assigned").format(total=total, assigned=assigned)
 
     def selected_peak(self) -> Peak | None:
         """Return the currently selected Peak, or None."""

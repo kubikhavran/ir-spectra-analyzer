@@ -17,7 +17,7 @@ from __future__ import annotations
 
 import numpy as np
 import pyqtgraph as pg
-from PySide6.QtCore import Qt, Signal
+from PySide6.QtCore import QEvent, QObject, Qt, QTimer, Signal
 from PySide6.QtGui import QColor, QFont
 from PySide6.QtWidgets import (
     QComboBox,
@@ -31,6 +31,8 @@ from PySide6.QtWidgets import (
 
 from core.peak import Peak
 from core.spectrum import SpectralUnit, Spectrum
+from ui import theme
+from ui.i18n import tr
 
 # Default visible X range (standard IR region)
 _X_DEFAULT_MIN = 400.0
@@ -99,26 +101,44 @@ QWidget#overlayBar QSlider::handle:horizontal {
 
 _PLOT_TOOLBAR_STYLE = """
 QWidget#plotToolbarBar {
-    background: #ECECEC;
-    border-bottom: 1px solid #B8B8B8;
+    background: #EEF1F4;
+    border-bottom: 1px solid #C9D1D9;
+}
+QWidget#plotToolbarBar QLabel {
+    color: #5E6B78;
+    background: transparent;
 }
 QWidget#plotToolbarBar QPushButton {
     background: #FFFFFF;
-    color: #1B1B1B;
-    border: 1px solid #A0A0A0;
+    color: #1B2733;
+    border: 1px solid #9AA7B4;
     border-radius: 3px;
     padding: 1px 10px;
+    min-height: 0px;
 }
 QWidget#plotToolbarBar QPushButton:hover {
     background: #F4F8FC;
     border-color: #14507A;
 }
 QWidget#plotToolbarBar QPushButton:checked {
-    background: #2980B9;
-    color: #FFFFFF;
-    border-color: #14507A;
+    background: #DCEAF6;
+    color: #17537F;
+    border-color: #1F6FB2;
 }
 """
+
+# Quick wavenumber windows offered above the plot: (button text, low, high).
+# None means "to the edge of the data".
+_RANGE_PRESETS: tuple[tuple[str, float | None, float | None], ...] = (
+    ("Full", None, None),
+    ("4000\u20132000", 2000.0, None),
+    ("2000\u2013400", None, 2000.0),
+)
+_UNIT_SUFFIX = {
+    SpectralUnit.ABSORBANCE: "A",
+    SpectralUnit.TRANSMITTANCE: "%T",
+    SpectralUnit.REFLECTANCE: "%R",
+}
 
 # Split-view constants
 _SPLIT_WN = 2000.0  # cm⁻¹ split boundary
@@ -266,8 +286,69 @@ class _DraggableLabel(pg.TextItem):
                 self._drag_finished_callback(self._peak)
 
 
+class _Crosshair:
+    """Reading aid that follows the pointer: a hairline, a dot on the curve and
+    the values under it.
+
+    The dot sits on the curve, not under the pointer — the question an analyst
+    asks while moving the mouse is "what is the spectrum here", and the
+    pointer is rarely exactly on the line.
+    """
+
+    def __init__(self, plot_widget: pg.PlotWidget) -> None:
+        pen = pg.mkPen(QColor(theme.TEXT_FAINT), width=1, style=Qt.PenStyle.DashLine)
+        self._line = pg.InfiniteLine(angle=90, movable=False, pen=pen)
+        self._dot = pg.ScatterPlotItem(
+            size=7, pen=pg.mkPen("w", width=1), brush=pg.mkBrush(QColor(theme.ACCENT))
+        )
+        self._text = pg.TextItem(
+            color=theme.TEXT, fill=pg.mkBrush(255, 255, 255, 235), border=pg.mkPen(theme.BORDER)
+        )
+        self._view_box = plot_widget.getPlotItem().vb
+        for item, z in ((self._line, 40), (self._dot, 41), (self._text, 42)):
+            item.setZValue(z)
+            item.setVisible(False)
+            plot_widget.addItem(item, ignoreBounds=True)
+
+    def show_at(self, wavenumber: float, intensity: float, text: str) -> None:
+        if not np.isfinite(intensity):
+            self.hide()
+            return
+        (x_lo, x_hi), (y_lo, y_hi) = self._view_box.viewRange()
+        self._line.setPos(wavenumber)
+        self._dot.setData([wavenumber], [intensity])
+        self._text.setText(text)
+        # The x axis is inverted: the "right" half of the screen is the low
+        # wavenumbers. Keep the readout on the side with room for it.
+        on_right_half = wavenumber < (x_lo + x_hi) / 2.0
+        self._text.setAnchor((1.05, 0.0) if on_right_half else (-0.05, 0.0))
+        self._text.setPos(wavenumber, max(y_lo, y_hi))
+        for item in (self._line, self._dot, self._text):
+            item.setVisible(True)
+
+    def hide(self) -> None:
+        for item in (self._line, self._dot, self._text):
+            item.setVisible(False)
+
+
+class _LeaveWatcher(QObject):
+    """Calls back when the pointer leaves the watched widget."""
+
+    def __init__(self, callback, parent=None) -> None:
+        super().__init__(parent)
+        self._callback = callback
+
+    def eventFilter(self, watched, event) -> bool:  # noqa: N802
+        if event.type() == QEvent.Type.Leave:
+            self._callback()
+        return False
+
+
 class SpectrumWidget(QWidget):
     """PyQtGraph-based interactive IR spectrum viewer."""
+
+    #: Emits how many peak labels are hidden because they would overlap.
+    hidden_labels_changed = Signal(int)
 
     peak_clicked = Signal(float, float, float)  # (wavenumber, intensity, click_y)
     cursor_moved = Signal(float, float)  # (wavenumber, intensity_at_cursor)
@@ -304,6 +385,15 @@ class SpectrumWidget(QWidget):
         self._overlay_curves_fp: list = []
         self._diagnostic_region_items_fp: list = []
         self._vibration_range_items_fp: list = []
+        # Reading aids
+        self._crosshair_enabled: bool = True
+        self._crosshairs: dict = {}  # plot widget -> _Crosshair
+        self._declutter_enabled: bool = True
+        self._hidden_label_count: int = 0
+        self._declutter_timer = QTimer(self)
+        self._declutter_timer.setSingleShot(True)
+        self._declutter_timer.setInterval(60)
+        self._declutter_timer.timeout.connect(self._declutter_labels)
         self._setup_ui()
 
     def _setup_ui(self) -> None:
@@ -323,20 +413,20 @@ class SpectrumWidget(QWidget):
         overlay_row.setContentsMargins(8, 4, 8, 4)
         overlay_row.setSpacing(8)
 
-        overlay_row.addWidget(QLabel("Reference overlay:"))
+        overlay_row.addWidget(QLabel(tr("Reference overlay:")))
 
         self._overlay_name_label = QLabel("")
         self._overlay_name_label.setObjectName("overlayName")
         self._overlay_name_label.setTextFormat(Qt.TextFormat.PlainText)
         overlay_row.addWidget(self._overlay_name_label)
 
-        overlay_row.addWidget(QLabel("Opacity:"))
+        overlay_row.addWidget(QLabel(tr("Opacity:")))
 
         self._opacity_slider = QSlider(Qt.Orientation.Horizontal)
         self._opacity_slider.setRange(5, 100)
         self._opacity_slider.setValue(self._overlay_alpha)
         self._opacity_slider.setFixedWidth(120)
-        self._opacity_slider.setToolTip("Reference spectrum opacity")
+        self._opacity_slider.setToolTip(tr("Reference spectrum opacity"))
         self._opacity_slider.valueChanged.connect(self._on_opacity_changed)
         overlay_row.addWidget(self._opacity_slider)
 
@@ -344,9 +434,9 @@ class SpectrumWidget(QWidget):
         self._opacity_label.setFixedWidth(36)
         overlay_row.addWidget(self._opacity_label)
 
-        clear_overlay_btn = QPushButton("Clear")
-        clear_overlay_btn.setFixedWidth(56)
-        clear_overlay_btn.setToolTip("Remove the reference overlay from the plot")
+        clear_overlay_btn = QPushButton(tr("Clear"))
+        clear_overlay_btn.setMinimumWidth(56)
+        clear_overlay_btn.setToolTip(tr("Remove the reference overlay from the plot"))
         clear_overlay_btn.clicked.connect(lambda: self.set_overlay_spectra([]))
         overlay_row.addWidget(clear_overlay_btn)
 
@@ -361,19 +451,40 @@ class SpectrumWidget(QWidget):
         toolbar_row = QHBoxLayout(self._toolbar_bar)
         toolbar_row.setContentsMargins(8, 2, 8, 2)
         toolbar_row.setSpacing(8)
-        self._split_btn = QPushButton("Split view")
+        # Quick wavenumber windows — one click instead of a zoom drag.
+        toolbar_row.addWidget(QLabel(tr("Range:")))
+        self._range_buttons: list[QPushButton] = []
+        for text, low, high in _RANGE_PRESETS:
+            button = QPushButton(tr(text))
+            button.setFixedHeight(22)
+            button.setToolTip(
+                tr("Show the whole spectrum")
+                if low is None and high is None
+                else tr("Show {window} cm\u207b\u00b9 with the intensity axis fitted to it").format(
+                    window=text
+                )
+            )
+            button.clicked.connect(lambda _=False, lo=low, hi=high: self.show_range(lo, hi))
+            toolbar_row.addWidget(button)
+            self._range_buttons.append(button)
+
+        self._split_btn = QPushButton(tr("Split view"))
         self._split_btn.setCheckable(True)
         self._split_btn.setFixedHeight(22)
-        self._split_btn.setToolTip("Show fingerprint region (400–2000 cm⁻¹) expanded")
+        self._split_btn.setToolTip(tr("Show fingerprint region (400–2000 cm⁻¹) expanded"))
         self._split_btn.toggled.connect(self._on_split_toggled)
         toolbar_row.addWidget(self._split_btn)
 
         # Y-axis unit selector — hidden until a spectrum with a convertible
         # unit is loaded, so it never offers a choice that does not exist.
-        self._unit_label = QLabel("Show as:")
+        self._unit_label = QLabel(tr("Show as:"))
         toolbar_row.addWidget(self._unit_label)
         self._unit_combo = QComboBox()
         self._unit_combo.setFixedHeight(22)
+        # Wide enough for "Transmittance (as loaded)" — a clipped unit name is
+        # exactly the thing this selector must not leave to guesswork.
+        self._unit_combo.setSizeAdjustPolicy(QComboBox.SizeAdjustPolicy.AdjustToContents)
+        self._unit_combo.setMinimumWidth(196)
         self._unit_combo.setToolTip(
             "Redraw the spectrum in another intensity unit.\n"
             "The loaded data is not changed; overlays follow the same unit."
@@ -384,7 +495,42 @@ class SpectrumWidget(QWidget):
         self._unit_combo.setVisible(False)
 
         toolbar_row.addStretch()
+
+        self._declutter_btn = QPushButton(tr("Tidy labels"))
+        self._declutter_btn.setObjectName("plotToggle")
+        self._declutter_btn.setCheckable(True)
+        self._declutter_btn.setChecked(True)
+        self._declutter_btn.setFixedHeight(22)
+        self._declutter_btn.setToolTip(
+            tr(
+                "Hide the labels of weaker peaks where labels would overlap.\n"
+                "They come back as you zoom in; selected and assigned peaks always stay."
+            )
+        )
+        self._declutter_btn.toggled.connect(self.set_declutter_enabled)
+        toolbar_row.addWidget(self._declutter_btn)
+
+        self._crosshair_btn = QPushButton(tr("Crosshair"))
+        self._crosshair_btn.setCheckable(True)
+        self._crosshair_btn.setChecked(True)
+        self._crosshair_btn.setFixedHeight(22)
+        self._crosshair_btn.setToolTip(
+            tr("Follow the pointer with a hairline and show the values of the curve under it")
+        )
+        self._crosshair_btn.toggled.connect(self.set_crosshair_enabled)
+        toolbar_row.addWidget(self._crosshair_btn)
         layout.addWidget(self._toolbar_bar)
+
+        # ── Legend — only shown while band markers are drawn in the plot ────
+        self._legend_label = QLabel("")
+        self._legend_label.setObjectName("plotLegend")
+        self._legend_label.setTextFormat(Qt.TextFormat.RichText)
+        self._legend_label.setStyleSheet(
+            f"QLabel#plotLegend {{ background: {theme.SURFACE}; color: {theme.TEXT_MUTED};"
+            f" border-bottom: 1px solid {theme.BORDER}; padding: 3px 10px; font-size: 9pt; }}"
+        )
+        self._legend_label.setVisible(False)
+        layout.addWidget(self._legend_label)
 
         # ── Plot widget ──────────────────────────────────────────────────────
         self._plot_widget = pg.PlotWidget()
@@ -395,8 +541,10 @@ class SpectrumWidget(QWidget):
 
         # Axis labels with black color
         label_style = {"color": "#000000", "font-size": "10pt"}
-        self._plot_widget.setLabel("bottom", "Wavenumber (cm⁻¹)", **label_style)
-        self._plot_widget.setLabel("left", "Absorbance", **label_style)
+        self._plot_widget.setLabel("bottom", tr("Wavenumber (cm⁻¹)"), **label_style)
+        self._plot_widget.setLabel("left", tr("Absorbance"), **label_style)
+        # Dropped files belong to the window, not to the graphics scene.
+        self._plot_widget.setAcceptDrops(False)
 
         # IR convention: high to low wavenumber; lock X to standard IR range
         self._plot_widget.invertX(True)
@@ -424,6 +572,7 @@ class SpectrumWidget(QWidget):
 
         # Mouse move for cursor position tracking
         self._plot_widget.scene().sigMouseMoved.connect(self._on_mouse_moved)
+        self._attach_reading_aids(self._plot_widget)
 
         # ── Plots container (holds main + optional fingerprint panel) ─────────
         self._plots_container = QWidget()
@@ -432,6 +581,115 @@ class SpectrumWidget(QWidget):
         self._plots_layout.setSpacing(0)
         self._plots_layout.addWidget(self._plot_widget, _SPLIT_HI_FRAC)
         layout.addWidget(self._plots_container)
+
+    # ── Reading aids: crosshair, range presets, label decluttering ───────────
+
+    def _attach_reading_aids(self, plot_widget: pg.PlotWidget) -> None:
+        """Give one panel its crosshair and keep its labels tidy as it zooms."""
+        self._crosshairs[plot_widget] = _Crosshair(plot_widget)
+        watcher = _LeaveWatcher(self._hide_crosshairs, plot_widget)
+        plot_widget.viewport().installEventFilter(watcher)
+        plot_widget.getPlotItem().vb.sigRangeChanged.connect(
+            lambda *_: self._declutter_timer.start()
+        )
+
+    def set_crosshair_enabled(self, enabled: bool) -> None:
+        """Turn the pointer-following crosshair and readout on or off."""
+        self._crosshair_enabled = bool(enabled)
+        if not enabled:
+            self._hide_crosshairs()
+
+    def _hide_crosshairs(self) -> None:
+        for crosshair in self._crosshairs.values():
+            crosshair.hide()
+
+    def _readout_text(self, wavenumber: float, intensity: float) -> str:
+        """Values under the crosshair, e.g. "1639.2 cm⁻¹   89.74 %T"."""
+        unit = self._spectrum.display_y_unit if self._spectrum is not None else None
+        suffix = _UNIT_SUFFIX.get(unit, "")
+        decimals = 2 if abs(intensity) >= 10.0 else 4
+        value = f"{intensity:.{decimals}f}{(' ' + suffix) if suffix else ''}"
+        return f"{wavenumber:.1f} cm\u207b\u00b9   {value}"
+
+    def show_range(self, low: float | None, high: float | None) -> None:
+        """Show one wavenumber window with the intensity axis fitted to it.
+
+        ``None`` for a bound means the edge of the data. Leaves split view,
+        which has its own fixed pair of windows.
+        """
+        if self._split_mode:
+            self._split_btn.setChecked(False)
+        x_lo, x_hi = self._default_x_range()
+        if low is None and high is None:
+            self.reset_view()
+            return
+        if low is not None:
+            x_lo = max(x_lo, float(low))
+        if high is not None:
+            x_hi = min(x_hi, float(high))
+        if x_hi <= x_lo:
+            return
+        self._plot_widget.setXRange(x_lo, x_hi, padding=0.0)
+        self._fit_y_range(x_lo, x_hi)
+
+    def set_declutter_enabled(self, enabled: bool) -> None:
+        """Hide overlapping labels of weaker peaks (True) or show every label."""
+        self._declutter_enabled = bool(enabled)
+        self._declutter_labels()
+
+    def hidden_label_count(self) -> int:
+        """How many peak labels are currently hidden to keep the rest readable."""
+        return self._hidden_label_count
+
+    def _label_priority(self, label: _DraggableLabel, reference: float) -> tuple[int, float]:
+        """Sort key: selected first, then assigned, then by band strength."""
+        from core.peak_assignments import peak_has_assignment  # noqa: PLC0415
+
+        peak = label._peak
+        if peak is self._selected_peak:
+            rank = 2
+        elif peak_has_assignment(peak):
+            rank = 1
+        else:
+            rank = 0
+        return rank, abs(label._peak_y - reference)
+
+    def _declutter_labels(self) -> None:
+        """Show the labels that fit and hide weaker ones that would overlap.
+
+        Runs after every redraw and zoom. Nothing is removed from the project
+        or from the peak table — only the text in the plot steps aside, and it
+        returns as soon as zooming in makes room. Selected and assigned peaks
+        are never hidden: those are the ones the analyst is working on.
+        """
+        hidden = 0
+        spectrum = self._spectrum
+        reference = 0.0
+        if spectrum is not None:
+            finite = spectrum.intensities[np.isfinite(spectrum.intensities)]
+            if finite.size:
+                reference = float(finite.max() if spectrum.is_dip_spectrum else finite.min())
+        for items in (self._peak_items, self._peak_items_fp):
+            labels = [item for item in items if isinstance(item, _DraggableLabel)]
+            kept: list = []
+            for label in sorted(
+                labels, key=lambda item: self._label_priority(item, reference), reverse=True
+            ):
+                show = True
+                if self._declutter_enabled:
+                    rank, _strength = self._label_priority(label, reference)
+                    rect = label.sceneBoundingRect().adjusted(1.0, 1.0, -1.0, -1.0)
+                    if rank == 0 and any(rect.intersects(other) for other in kept):
+                        show = False
+                    else:
+                        kept.append(rect)
+                label.setVisible(show)
+                if label._leader is not None:
+                    label._leader.setVisible(show)
+                hidden += 0 if show else 1
+        if hidden != self._hidden_label_count:
+            self._hidden_label_count = hidden
+            self.hidden_labels_changed.emit(hidden)
 
     # ── Split-view helpers ────────────────────────────────────────────────────
 
@@ -448,10 +706,12 @@ class SpectrumWidget(QWidget):
             ax.setPen(pg.mkPen(color="k", width=1))
             ax.setTextPen(pg.mkPen(color="k"))
         label_style = {"color": "#000000", "font-size": "10pt"}
-        fp.setLabel("bottom", "Wavenumber (cm⁻¹)", **label_style)
+        fp.setLabel("bottom", tr("Wavenumber (cm⁻¹)"), **label_style)
+        fp.setAcceptDrops(False)
         self._spectrum_curve_fp = fp.plot(pen=pg.mkPen("k", width=1))
         fp.scene().sigMouseClicked.connect(self._on_fp_mouse_clicked)
         fp.scene().sigMouseMoved.connect(self._on_fp_mouse_moved)
+        self._attach_reading_aids(fp)
         self._apply_tool_mode_to(fp)
         return fp
 
@@ -682,8 +942,8 @@ class SpectrumWidget(QWidget):
         try:
             self._unit_combo.clear()
             for unit in options:
-                suffix = " (as loaded)" if unit == native else ""
-                self._unit_combo.addItem(f"{unit.value}{suffix}", unit)
+                suffix = f" ({tr('as loaded')})" if unit == native else ""
+                self._unit_combo.addItem(f"{tr(unit.value)}{suffix}", unit)
             wanted = self._display_unit or native
             index = self._unit_combo.findData(wanted)
             self._unit_combo.setCurrentIndex(max(index, 0))
@@ -797,12 +1057,21 @@ class SpectrumWidget(QWidget):
         )
 
         label_style = {"color": "#000000", "font-size": "10pt"}
-        self._plot_widget.setLabel("left", spectrum.y_axis_label, **label_style)
+        self._plot_widget.setLabel("left", self._axis_title(spectrum), **label_style)
 
         if self._split_mode and self._spectrum_curve_fp is not None:
             self._spectrum_curve_fp.setData(
                 x=spectrum.wavenumbers, y=spectrum.intensities, connect="finite"
             )
+
+    @staticmethod
+    def _axis_title(spectrum: Spectrum) -> str:
+        """Y-axis title in the UI language."""
+        unit = spectrum.display_y_unit
+        title = tr(unit.value)
+        if spectrum.is_baseline_corrected and unit != SpectralUnit.BASELINE_CORRECTED:
+            return f"{title} ({tr('baseline corrected')})"
+        return title
 
     def _default_x_range(self) -> tuple[float, float]:
         """Return the full-view x range: the standard IR window widened to the data.
@@ -946,6 +1215,7 @@ class SpectrumWidget(QWidget):
         self._clear_fp_items()
 
         if not peaks:
+            self._declutter_labels()
             return
 
         # Determine peak direction: dip-like spectra (%T, reflectance, mislabeled
@@ -972,6 +1242,7 @@ class SpectrumWidget(QWidget):
             self._render_peaks_to(
                 peaks, self._plot_widget, self._peak_items, peaks_are_dips, y_span
             )
+        self._declutter_labels()
 
     def compute_auto_label_placements(self) -> list[tuple[Peak, float, float]]:
         """Compute vertical-only label offsets for the current peak set.
@@ -1145,6 +1416,7 @@ class SpectrumWidget(QWidget):
         self._redraw_vibration_range()
 
     def _redraw_vibration_range(self) -> None:
+        self._update_legend()
         for item in self._vibration_range_items:
             self._plot_widget.removeItem(item)
         self._vibration_range_items.clear()
@@ -1159,9 +1431,11 @@ class SpectrumWidget(QWidget):
         low, high = self._vibration_range
         # Deliberately fainter than the functional-group regions: this is a
         # reading aid pointing at where to look, not a scored result.
-        brush = QColor("#4A90D9")
-        brush.setAlpha(20)
-        pen = pg.mkPen(color=QColor(74, 144, 217, 110), width=1.0, style=Qt.PenStyle.DashLine)
+        brush = QColor(theme.REGION_VIBRATION)
+        brush.setAlpha(26)
+        border = QColor(theme.REGION_VIBRATION)
+        border.setAlpha(150)
+        pen = pg.mkPen(color=border, width=1.0, style=Qt.PenStyle.DotLine)
 
         item = pg.LinearRegionItem(
             values=(low, high), brush=brush, pen=pen, movable=False, swapMode="sort"
@@ -1221,6 +1495,7 @@ class SpectrumWidget(QWidget):
                 self._overlay_curves_fp.append(curve_fp)
 
     def _redraw_diagnostic_regions(self) -> None:
+        self._update_legend()
         for item in self._diagnostic_region_items:
             self._plot_widget.removeItem(item)
         self._diagnostic_region_items.clear()
@@ -1263,23 +1538,64 @@ class SpectrumWidget(QWidget):
                     self._diagnostic_region_items_fp.append(item_fp)
 
     def _diagnostic_region_style(self, region) -> tuple[QColor, object]:
+        """One visual language for every scored band.
+
+        Found bands are filled, bands that are only expected are an outline,
+        and a missing required band is a red outline. The meaning sits in fill
+        and line style, repeated in the legend — not in a different colour per
+        band, which nobody could decode.
+        """
         if getattr(region, "is_missing_required", False):
-            brush = QColor("#FDEDEC")
-            brush.setAlpha(28)
-            pen = pg.mkPen(color=QColor("#C0392B"), width=1.4, style=Qt.PenStyle.DashLine)
+            brush = QColor(theme.REGION_MISSING)
+            brush.setAlpha(14)
+            pen = pg.mkPen(
+                color=QColor(theme.REGION_MISSING), width=1.4, style=Qt.PenStyle.DashLine
+            )
             return brush, pen
 
         if getattr(region, "is_confirmed", False):
-            color = QColor(region.color)
+            color = QColor(theme.REGION_CONFIRMED)
             brush = QColor(color)
-            brush.setAlpha(56)
+            brush.setAlpha(46)
             pen = pg.mkPen(color=color, width=1.2)
             return brush, pen
 
-        brush = QColor("#FCF3CF")
-        brush.setAlpha(36)
-        pen = pg.mkPen(color=QColor("#AF6E00"), width=1.0, style=Qt.PenStyle.DashLine)
+        brush = QColor(theme.REGION_EXPECTED)
+        brush.setAlpha(14)
+        pen = pg.mkPen(color=QColor(theme.REGION_EXPECTED), width=1.0, style=Qt.PenStyle.DashLine)
         return brush, pen
+
+    def _update_legend(self) -> None:
+        """Explain the band markers that are on screen right now, and only those."""
+
+        def _swatch(color: str, filled: bool, text: str) -> str:
+            glyph = "\u25a0" if filled else "\u25a1"  # ■ found/filled, □ outline only
+            return f'<span style="color:{color}; font-size:11pt;">{glyph}</span>&nbsp;{text}'
+
+        entries: list[str] = []
+        if self._diagnostic_regions_visible and self._diagnostic_regions_cache:
+            regions = self._diagnostic_regions_cache
+            missing = [r for r in regions if getattr(r, "is_missing_required", False)]
+            confirmed = [
+                r
+                for r in regions
+                if getattr(r, "is_confirmed", False)
+                and not getattr(r, "is_missing_required", False)
+            ]
+            if confirmed:
+                entries.append(_swatch(theme.REGION_CONFIRMED, True, tr("band found")))
+            if len(regions) > len(missing) + len(confirmed):
+                entries.append(
+                    _swatch(theme.REGION_EXPECTED, False, tr("band expected, weak or absent"))
+                )
+            if missing:
+                entries.append(_swatch(theme.REGION_MISSING, False, tr("required band missing")))
+        if self._vibration_range is not None and self._vibration_range_visible:
+            entries.append(
+                _swatch(theme.REGION_VIBRATION, True, tr("range of the selected vibration"))
+            )
+        self._legend_label.setText("&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;".join(entries))
+        self._legend_label.setVisible(bool(entries))
 
     def _on_opacity_changed(self, value: int) -> None:
         """Update overlay opacity when slider changes."""
@@ -1439,14 +1755,35 @@ class SpectrumWidget(QWidget):
         """Emit cursor position for the panel that produced the event."""
         plot_item = plot_widget.getPlotItem()
         vb = plot_item.vb
+        crosshair = self._crosshairs.get(plot_widget)
 
         if not vb.sceneBoundingRect().contains(pos):
+            if crosshair is not None:
+                crosshair.hide()
             return
 
         mouse_point = vb.mapSceneToView(pos)
         wavenumber = mouse_point.x()
         intensity = self._intensity_at(wavenumber)
         self.cursor_moved.emit(wavenumber, intensity)
+
+        if crosshair is None:
+            return
+        spectrum = self._spectrum
+        inside = spectrum is not None and (
+            float(spectrum.wavenumbers.min()) <= wavenumber <= float(spectrum.wavenumbers.max())
+        )
+        if self._crosshair_enabled and inside:
+            for other_widget, other in self._crosshairs.items():
+                if other_widget is not plot_widget:
+                    other.hide()
+            crosshair.show_at(wavenumber, intensity, self._readout_text(wavenumber, intensity))
+        else:
+            crosshair.hide()
+
+    def cursor_readout(self, wavenumber: float, intensity: float) -> str:
+        """The text the crosshair shows for a position (also used by the status bar)."""
+        return self._readout_text(wavenumber, intensity)
 
     def _intensity_at(self, wavenumber: float) -> float:
         """Return interpolated intensity of the displayed curve at a wavenumber."""

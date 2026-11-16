@@ -34,6 +34,7 @@ from core.spectrum import Spectrum
 from matching.quality import match_quality_label
 from storage.database import Database
 from ui.dialogs.background_task_dialog import BackgroundTaskDialogMixin
+from ui.i18n import current_source_text, tr
 from ui.models.reference_library_table_model import (
     COL_CREATED_AT,
     COL_DESCRIPTION,
@@ -146,7 +147,7 @@ class ReferenceLibraryDialog(BackgroundTaskDialogMixin, QDialog):
         right_layout = QVBoxLayout(right_widget)
         right_layout.setContentsMargins(4, 4, 4, 4)
 
-        self._preview_label = QLabel("Select a row to preview")
+        self._preview_label = QLabel(tr("Select a row to preview"))
         self._preview_label.setAlignment(Qt.AlignmentFlag.AlignTop | Qt.AlignmentFlag.AlignLeft)
         self._preview_label.setWordWrap(True)
         self._preview_label.setTextFormat(Qt.TextFormat.PlainText)
@@ -219,16 +220,20 @@ class ReferenceLibraryDialog(BackgroundTaskDialogMixin, QDialog):
         )
         self._clear_library_btn.clicked.connect(self._on_clear_library)
 
-        row1.addWidget(self._choose_library_folder_btn)
-        row1.addWidget(self._sync_project_library_btn)
-        row1.addWidget(self._import_file_btn)
-        row1.addWidget(self._import_web_btn)
-        row1.addWidget(self._rename_btn)
-        row1.addWidget(self._delete_btn)
-        row1.addWidget(self._clear_library_btn)
-        row1.addStretch()
+        # Eleven buttons in two unlabeled rows read as a wall. They are grouped
+        # by what they act on, and the one destructive action that empties the
+        # whole library sits apart from everything else, marked as dangerous.
+        self._clear_library_btn.setProperty("role", "danger")
 
-        # Row 2: workflow actions
+        def _group(title: str, buttons: list[QPushButton]) -> QGroupBox:
+            box = QGroupBox(title)
+            box_row = QHBoxLayout(box)
+            box_row.setContentsMargins(8, 6, 8, 8)
+            box_row.setSpacing(6)
+            for button in buttons:
+                box_row.addWidget(button)
+            return box
+
         row2 = QHBoxLayout()
 
         self._find_similar_btn = QPushButton("Find Similar to Current")
@@ -260,12 +265,34 @@ class ReferenceLibraryDialog(BackgroundTaskDialogMixin, QDialog):
         close_btn = QPushButton("Close")
         close_btn.clicked.connect(self.accept)
 
-        row2.addWidget(self._find_similar_btn)
-        row2.addWidget(self._find_similar_selected_btn)
-        row2.addWidget(self._open_in_main_btn)
-        row2.addWidget(self._clear_search_btn)
+        row1.addWidget(
+            _group(
+                "Library",
+                [
+                    self._choose_library_folder_btn,
+                    self._sync_project_library_btn,
+                    self._import_file_btn,
+                    self._import_web_btn,
+                ],
+            )
+        )
+        row1.addWidget(
+            _group(
+                "Selected reference",
+                [self._open_in_main_btn, self._rename_btn, self._delete_btn],
+            )
+        )
+        row1.addStretch()
+
+        row2.addWidget(
+            _group(
+                "Similarity search",
+                [self._find_similar_btn, self._find_similar_selected_btn, self._clear_search_btn],
+            )
+        )
         row2.addStretch()
-        row2.addWidget(close_btn)
+        row2.addWidget(self._clear_library_btn, 0, Qt.AlignmentFlag.AlignBottom)
+        row2.addWidget(close_btn, 0, Qt.AlignmentFlag.AlignBottom)
 
         root_layout.addLayout(row1)
         root_layout.addLayout(row2)
@@ -339,7 +366,7 @@ class ReferenceLibraryDialog(BackgroundTaskDialogMixin, QDialog):
 
     def _on_date_preset_changed(self) -> None:
         """Show/hide custom date widgets and re-apply filters."""
-        is_custom = self._filter_date_preset.currentText() == "Custom range…"
+        is_custom = current_source_text(self._filter_date_preset) == "Custom range…"
         self._custom_date_widget.setVisible(is_custom)
         self._on_filter_changed()
 
@@ -348,20 +375,20 @@ class ReferenceLibraryDialog(BackgroundTaskDialogMixin, QDialog):
         date_from, date_to = self._current_filter_date_range()
         self._table_proxy.set_filters(
             name_query=self._filter_name.text(),
-            yunit_filter=self._filter_yunit.currentText(),
+            yunit_filter=current_source_text(self._filter_yunit),
             date_from=date_from,
             date_to=date_to,
         )
         self._refresh_visible_refs()
         self._table.clearSelection()
-        self._preview_label.setText("Select a row to preview")
+        self._preview_label.setText(tr("Select a row to preview"))
         self._show_empty_preview_plot()
         self._update_button_state()
         self._update_stats_label()
 
     def _current_filter_date_range(self) -> tuple[datetime | None, datetime | None]:
         """Return the active date-range filter as Python datetimes."""
-        date_preset = self._filter_date_preset.currentText()
+        date_preset = current_source_text(self._filter_date_preset)
         now = datetime.now()
         date_from: datetime | None = None
         date_to: datetime | None = None
@@ -513,7 +540,7 @@ class ReferenceLibraryDialog(BackgroundTaskDialogMixin, QDialog):
         self._update_button_state()
         refs = self._selected_refs()
         if not refs:
-            self._preview_label.setText("Select a row to preview")
+            self._preview_label.setText(tr("Select a row to preview"))
             self._show_empty_preview_plot()
             return
 
@@ -888,7 +915,7 @@ class ReferenceLibraryDialog(BackgroundTaskDialogMixin, QDialog):
         # refresh doesn't try to re-rank ghost ids.
         for ref in refs:
             self._similarity_by_ref_id.pop(ref["id"], None)
-        self._preview_label.setText("Select a row to preview")
+        self._preview_label.setText(tr("Select a row to preview"))
         self._load_data()
 
     def _on_clear_library(self) -> None:
@@ -913,7 +940,7 @@ class ReferenceLibraryDialog(BackgroundTaskDialogMixin, QDialog):
         removed = self._db.clear_reference_spectra()
         self._library_service.clear_search_cache()
         self._similarity_by_ref_id.clear()
-        self._preview_label.setText("Select a row to preview")
+        self._preview_label.setText(tr("Select a row to preview"))
         self._load_data()
         QMessageBox.information(self, "Clear Library", f"Removed {removed} reference spectra.")
 
@@ -1048,9 +1075,9 @@ class ReferenceLibraryDialog(BackgroundTaskDialogMixin, QDialog):
                     "Reference library folder: not selected\n"
                     "Showing imported references from all sources"
                 )
-            return "Reference library folder: not selected"
+            return tr("Reference library folder: not selected")
 
-        text = f"Reference library folder: {self._display_path(folder)}"
+        text = tr("Reference library folder: {path}").format(path=self._display_path(folder))
         if summary is not None:
             text += (
                 f"\nLast sync: Imported {summary.imported} | "
@@ -1079,17 +1106,17 @@ class ReferenceLibraryDialog(BackgroundTaskDialogMixin, QDialog):
         if self._project_library_folder is None:
             if self._refs_all:
                 if self._current_spectrum is None:
-                    return "Similarity search: load a spectrum to rank the library"
+                    return tr("Similarity search: load a spectrum to rank the library")
                 if match_count is None:
-                    return "Similarity search: not run yet"
+                    return tr("Similarity search: not run yet")
             else:
-                return "Similarity search: choose a reference folder first"
+                return tr("Similarity search: choose a reference folder first")
         if self._current_spectrum is None:
-            return "Similarity search: load a spectrum to rank the library"
+            return tr("Similarity search: load a spectrum to rank the library")
         if match_count is None:
-            return "Similarity search: not run yet"
+            return tr("Similarity search: not run yet")
 
-        text = f"Similarity search: ranked {match_count} library spectra"
+        text = tr("Similarity search: ranked {count} library spectra").format(count=match_count)
         if imported_summary is not None and imported_summary.imported > 0:
             text += f"\nFolder sync imported: {imported_summary.imported}"
         return text
@@ -1140,11 +1167,11 @@ class ReferenceLibraryDialog(BackgroundTaskDialogMixin, QDialog):
         self._preview_legend = self._preview_plot.addLegend(offset=(10, 10))
         self._current_spectrum_curve = self._preview_plot.plot(
             pen=pg.mkPen(color=(0, 100, 200, 160), width=1.5),
-            name="Current spectrum",
+            name=tr("Current spectrum"),
         )
         self._current_spectrum_curve.setVisible(False)
         self._preview_placeholder = pg.TextItem(
-            "Select a row to preview",
+            tr("Select a row to preview"),
             color="#666666",
             anchor=(0.5, 0.5),
         )
@@ -1287,7 +1314,7 @@ class ReferenceLibraryDialog(BackgroundTaskDialogMixin, QDialog):
         )
         self._reference_task_thread = thread
         self._reference_task_kind = "search"
-        self._set_reference_task_busy(True, "Similarity search: running…")
+        self._set_reference_task_busy(True, tr("Similarity search: running…"))
         thread.start()
 
     def _execute_similarity_search(
@@ -1336,7 +1363,7 @@ class ReferenceLibraryDialog(BackgroundTaskDialogMixin, QDialog):
         )
         self._reference_task_thread = thread
         self._reference_task_kind = "sync"
-        self._set_reference_task_busy(True, "Reference library folder: syncing…")
+        self._set_reference_task_busy(True, tr("Reference library folder: syncing…"))
         thread.start()
 
     def _on_similarity_search_completed(self, outcome: ReferenceSearchOutcome) -> None:

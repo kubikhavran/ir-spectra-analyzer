@@ -609,8 +609,14 @@ def test_spectrum_widget_styles_missing_required_region(qtbot):
     qtbot.addWidget(widget)
     brush, pen = widget._diagnostic_region_style(missing_band)
 
+    from PySide6.QtCore import Qt
+
+    from ui import theme
+
     assert brush.alpha() > 0
-    assert pen.color().name().lower() == "#c0392b"
+    # A missing required band is the dashed outline in the theme's alert colour.
+    assert pen.color().name().lower() == theme.REGION_MISSING.lower()
+    assert pen.style() == Qt.PenStyle.DashLine
 
 
 def test_spectrum_widget_can_hide_and_restore_diagnostic_regions(qtbot):
