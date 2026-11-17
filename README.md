@@ -93,6 +93,17 @@ molecule, and export a publication-quality PDF report — all in one native app.
   On 1,402 held-out public spectra the analysis now reports 4.8 groups per spectrum
   for 4.4 actually present, 71 % of them right, and finds 78 % of the groups present
   (the band windows alone reported 8.3 groups, 15 % right, finding 28 %).
+- **Vibrations of the drawn structure** — the structure from the editor is read
+  the way a chemist names its parts (~110 groups: esters by type, lactones,
+  lactams, primary/secondary/tertiary amides, carbamates incl. Boc/Cbz/Fmoc, ureas,
+  imides, carbonates, anhydrides, acetals, azides, nitrates, oximes, amidines,
+  tetrazoles, triazoles, imidazoles, pyridines, furans, thiophenes, sulfonamides,
+  boronates, silyl groups, CF₃, t-Bu, OMe, NMe, alkene geometry, benzene
+  substitution, …); an ether O on a C=O is an ester, not an ether plus a ketone.
+  *Vibrations → By the drawn structure* lists only the vibrations those groups can
+  show, one coloured section per group, with the ones that fit the selected peak on
+  top; the same colours mark each group's bands as lanes at the top of the spectrum
+  (*Show the structure's bands in spectrum*).
 - **Structure check** — when the project has a structure, the Functional Groups
   panel checks each of its groups against the spectrum (found / uncertain / not
   seen) and lists strong bands the structure does not explain, with the usual

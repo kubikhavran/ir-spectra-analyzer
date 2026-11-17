@@ -398,10 +398,22 @@ CZECH_TEXTS: dict[str, str] = {
     "Grouped by type": "Seskupeno podle typu",
     "Sorted by wavenumber": "Seřazeno podle vlnočtu",
     "How the list is arranged: in sections by vibration type, with the "
-    "vibrations that fit the selected peak on top, or as one list "
-    "ordered by wavenumber.": (
-        "Uspořádání seznamu: v sekcích podle typu vibrace, s vibracemi odpovídajícími "
-        "vybranému píku nahoře, nebo jako jeden seznam seřazený podle vlnočtu."
+    "vibrations that fit the selected peak on top; as one list ordered "
+    "by wavenumber; or only the vibrations of the groups in the drawn "
+    "structure, one section per group.": (
+        "Uspořádání seznamu: v sekcích podle typu vibrace s vibracemi odpovídajícími "
+        "vybranému píku nahoře; jako jeden seznam seřazený podle vlnočtu; nebo jen "
+        "vibrace skupin nakreslené struktury, každá skupina ve své sekci."
+    ),
+    "By the drawn structure": "Podle nakreslené struktury",
+    "Show the structure's bands in spectrum": "Zobrazit pásy struktury ve spektru",
+    "Mark where the groups of the drawn structure absorb: one coloured lane "
+    "per group at the top of the plot, in the colour of its section here.": (
+        "Vyznačí, kde absorbují skupiny nakreslené struktury: každá skupina má nahoře "
+        "v grafu svůj barevný pruh ve stejné barvě jako její sekce tady."
+    ),
+    "Draw a structure in the Structure panel to see only the vibrations of its groups here.": (
+        "Nakreslete strukturu v panelu Struktura a zde se zobrazí jen vibrace jejích skupin."
     ),
     "Click a vibration to see its range in the spectrum": (
         "Kliknutím na vibraci zobrazíte její rozsah ve spektru"

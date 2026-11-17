@@ -411,6 +411,12 @@ class SpectrumWidget(QWidget):
         self._vibration_range: tuple[float, float] | None = None
         self._vibration_range_visible: bool = True
         self._vibration_range_items: list = []
+        # Bands of the groups in the drawn structure: one coloured lane per
+        # group across the top of the plot (ui.structure_bands.StructureBand).
+        self._structure_bands: list = []
+        self._structure_bands_visible: bool = True
+        self._structure_band_items: list = []
+        self._structure_band_items_fp: list = []
         # Split-view state
         self._split_mode: bool = False
         self._fp_plot_widget: pg.PlotWidget | None = None
@@ -810,6 +816,7 @@ class SpectrumWidget(QWidget):
             self._redraw_overlays()
             self._redraw_diagnostic_regions()
             self._redraw_vibration_range()
+            self._redraw_structure_bands()
         else:
             if self._fp_plot_widget is not None:
                 self._fp_plot_widget.setVisible(False)
@@ -820,6 +827,7 @@ class SpectrumWidget(QWidget):
             self._redraw_overlays()
             self._redraw_diagnostic_regions()
             self._redraw_vibration_range()
+            self._redraw_structure_bands()
 
     def _clear_fp_items(self) -> None:
         """Remove peak annotations added to the fingerprint panel.
@@ -1494,6 +1502,69 @@ class SpectrumWidget(QWidget):
         """Show or hide the vibration window outline without forgetting it."""
         self._vibration_range_visible = bool(visible)
         self._redraw_vibration_range()
+
+    # Each lane of structure bands takes this share of the plot height, from
+    # the top down; lanes beyond the last one wrap around to the first.
+    _BAND_LANE_HEIGHT = 0.028
+    _MAX_BAND_LANES = 10
+
+    def set_structure_bands(self, bands: list) -> None:
+        """Mark where the groups of the drawn structure absorb (one lane per group)."""
+        self._structure_bands = list(bands)
+        self._redraw_structure_bands()
+
+    def structure_bands(self) -> list:
+        return list(self._structure_bands)
+
+    def set_structure_bands_visible(self, visible: bool) -> None:
+        self._structure_bands_visible = bool(visible)
+        self._redraw_structure_bands()
+
+    def structure_bands_visible(self) -> bool:
+        return self._structure_bands_visible
+
+    def _redraw_structure_bands(self) -> None:
+        for item in self._structure_band_items:
+            self._plot_widget.removeItem(item)
+        self._structure_band_items.clear()
+        for item in self._structure_band_items_fp:
+            if self._fp_plot_widget is not None:
+                self._fp_plot_widget.removeItem(item)
+        self._structure_band_items_fp.clear()
+        if not self._structure_bands_visible:
+            return
+        for band in self._structure_bands:
+            lane = int(band.lane) % self._MAX_BAND_LANES
+            top = 1.0 - lane * self._BAND_LANE_HEIGHT
+            span = (top - self._BAND_LANE_HEIGHT * 0.85, top)
+            color = QColor(band.color)
+            brush = QColor(color)
+            brush.setAlpha(115)
+            pen = pg.mkPen(color=color, width=1.0)
+            tooltip = f"{band.group}\n{band.vibration}  ({band.high:.0f}\u2013{band.low:.0f} cm\u207b\u00b9)"
+            targets = [(self._plot_widget, self._structure_band_items, band.low, band.high)]
+            if self._split_mode and self._fp_plot_widget is not None and band.low < _SPLIT_WN:
+                targets.append(
+                    (
+                        self._fp_plot_widget,
+                        self._structure_band_items_fp,
+                        band.low,
+                        min(band.high, _SPLIT_WN),
+                    )
+                )
+            for widget, items, low, high in targets:
+                item = pg.LinearRegionItem(
+                    values=(low, high),
+                    brush=brush,
+                    pen=pen,
+                    movable=False,
+                    swapMode="sort",
+                    span=span,
+                )
+                item.setZValue(-40)
+                item.setToolTip(tooltip)
+                widget.addItem(item, ignoreBounds=True)
+                items.append(item)
 
     def _redraw_vibration_range(self) -> None:
         self._update_legend()
