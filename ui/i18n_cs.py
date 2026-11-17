@@ -876,14 +876,6 @@ CZECH_TEXTS: dict[str, str] = {
     "{where}: unpaired electron (radical)": "{where}: nepárový elektron (radikál)",
     # ── Molecule editor: bonds, rings and sugars ────────────────────────────
     "1,4-Dioxane": "1,4-Dioxan",
-    "Bond: 1/2/3 order, W wedge, H hash, +/− length, Del removes": (
-        "Vazba: 1/2/3 násobnost, W klín, H šrafy, +/− délka, Del smaže"
-    ),
-    "Click or drag to draw bonds (Shift = longer); click a bond: "
-    "single → double → triple → wedge → reversed wedge": (
-        "Kreslete kliknutím nebo tažením (Shift = delší vazba); klik na vazbu: "
-        "jednoduchá → dvojná → trojná → klín → obrácený klín"
-    ),
     "Cyclohexane chair": "Cyklohexan – židličková konformace",
     "Longer bond": "Delší vazba",
     "Morpholine": "Morfolin",
@@ -903,5 +895,20 @@ CZECH_TEXTS: dict[str, str] = {
     ),
     "β-D-Ribofuranose (click an OH or atom to make a glycoside)": (
         "β-D-ribofuranosa (klik na OH nebo atom vytvoří glykosid)"
+    ),
+    # ── Molecule editor: bold bonds and free drawing ───────────────────────
+    "Bold Bond": "Tučná vazba",
+    "Bold bond": "Tučná vazba",
+    "Bold bond (front edge of a chair or perspective drawing); "
+    "click a bond to make it bold or thin": (
+        "Tučná vazba (přední hrana židličky nebo perspektivy); klik na vazbu ji zesílí nebo zúží"
+    ),
+    "Bond: 1/2/3 order, W wedge, H hash, B bold, +/− length, Del removes": (
+        "Vazba: 1/2/3 násobnost, W klín, H šrafy, B tučná, +/− délka, Del smaže"
+    ),
+    "Click or drag to draw bonds (Shift = longer, Alt = any angle); "
+    "click a bond: single → double → triple → wedge → reversed wedge": (
+        "Kreslete kliknutím nebo tažením (Shift = delší, Alt = libovolný úhel); "
+        "klik na vazbu: jednoduchá → dvojná → trojná → klín → obrácený klín"
     ),
 }

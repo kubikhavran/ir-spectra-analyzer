@@ -83,6 +83,7 @@ _TOOL_BUTTONS: tuple[tuple[str, str, str], ...] = (
     ("bond_triple", "Triple Bond", "3"),
     ("bond_wedge", "Wedge Up", "W"),
     ("bond_hash", "Hash Down", "H"),
+    ("bond_bold", "Bold Bond", "B"),
     ("chain", "Carbon Chain", "C"),
 )
 _RING_BUTTONS: tuple[tuple[str, str], ...] = (
@@ -204,6 +205,12 @@ def _tool_icon(tool: str) -> QIcon:
         offsets = (-2.2, 2.2) if tool == "bond_double" else (-3.4, 0.0, 3.4)
         for o in offsets:
             painter.drawLine(a + QPointF(o, o), b + QPointF(o, o))
+    elif tool == "bond_bold":
+        thick = QPen(QColor(theme.TEXT))
+        thick.setWidthF(4.2)
+        thick.setCapStyle(Qt.PenCapStyle.RoundCap)
+        painter.setPen(thick)
+        painter.drawLine(a, b)
     elif tool == "bond_wedge":
         painter.setBrush(QColor(theme.TEXT))
         painter.drawPolygon(QPolygonF([a, QPointF(16.5, 3.5), QPointF(20.5, 7.5)]))

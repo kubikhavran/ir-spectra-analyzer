@@ -72,6 +72,22 @@ _IMPLICIT_H_ELEMENTS = frozenset(
     {"B", "C", "N", "O", "P", "S", "F", "Cl", "Br", "I", "Si", "Se", "As", "Ge", "Te"}
 )
 
+# Bond / atom properties kept on the RWMol (they survive undo copies).
+_BOLD = "_bold"
+_AUTO_CHARGE = "_auto_charge"
+_MANUAL_CHARGE = "_manual_charge"
+# The MOL file's comment line (line 3) carries what V2000 cannot: bold bonds.
+_MOLFILE_TAG = "IRSA"
+
+# Formal charge an atom gets automatically from its bond count, as ChemDraw
+# and JSME do: a four-bonded N is N⁺, a three-bonded O is O⁺, a four-bonded
+# B is B⁻.  (symbol, bonds incl. H) → charge.
+_AUTO_CHARGES: dict[tuple[str, int], int] = {
+    ("N", 4): 1,
+    ("O", 3): 1,
+    ("B", 4): -1,
+}
+
 _SUBSCRIPTS = str.maketrans("0123456789", "₀₁₂₃₄₅₆₇₈₉")
 _SUPERSCRIPTS = str.maketrans("0123456789+-", "⁰¹²³⁴⁵⁶⁷⁸⁹⁺⁻")
 
@@ -91,10 +107,16 @@ class _RingTemplate:
     coords: tuple[tuple[float, float], ...] | None = None
     # Whole building blocks (sugars) are attached through an atom, never fused.
     fusable: bool = True
+    # Template bonds drawn bold (the front edge of a chair).
+    bold_bonds: tuple[tuple[int, int], ...] = ()
 
 
 # Chair conformation as chemists draw it: three pairs of parallel bonds.
-_CHAIR = ((0.0, 0.0), (1.2, -0.6), (2.7, -0.35), (3.45, 0.4), (2.25, 1.0), (0.75, 0.75))
+# Chair as in textbooks (4C1): left tip up, right tip down, ring O (for the
+# pyranose) at the back right.  Atom order: left tip, front left, front right,
+# right tip, back right, back left.  The three front bonds are drawn bold.
+_CHAIR = ((0.0, 0.0), (0.55, -0.9), (1.6, -0.65), (2.65, -0.95), (2.1, -0.05), (1.05, -0.3))
+_CHAIR_FRONT = ((0, 1), (1, 2), (2, 3))
 
 
 RING_TEMPLATES: dict[str, _RingTemplate] = {
@@ -121,8 +143,8 @@ RING_TEMPLATES: dict[str, _RingTemplate] = {
     "piperazine": _RingTemplate("N1CCNCC1", 0, (1, 2), False),
     # Chair conformations; the oxane chair has O at the back, next to the
     # right-hand tip (C1 of a pyranose).
-    "chair": _RingTemplate("C1CCCCC1", 3, (0, 1), False, _CHAIR),
-    "oxane_chair": _RingTemplate("C1CCCOC1", 3, (0, 1), False, _CHAIR),
+    "chair": _RingTemplate("C1CCCCC1", 3, (0, 1), False, _CHAIR, bold_bonds=_CHAIR_FRONT),
+    "oxane_chair": _RingTemplate("C1CCCOC1", 3, (0, 1), False, _CHAIR, bold_bonds=_CHAIR_FRONT),
     # Sugars with wedges; they attach through the anomeric OH oxygen
     # (a glycosidic bond) and are never fused.
     "beta_glucopyranose": _RingTemplate(
@@ -325,6 +347,7 @@ class MolEditorModel:
         if record_undo:
             self._push_undo()
         self._set_mol(Chem.RWMol(parsed))
+        self._mark_loaded_charges()
         return True
 
     def load_mol_block(self, mol_block: str, *, record_undo: bool = True) -> bool:
@@ -352,9 +375,11 @@ class MolEditorModel:
         mol = Chem.RWMol(parsed)
         if mol.GetNumConformers() == 0:
             mol.AddConformer(Chem.Conformer(mol.GetNumAtoms()), assignId=True)
+        self._read_molfile_tags(mol, mol_block)
         if record_undo:
             self._push_undo()
         self._set_mol(mol)
+        self._mark_loaded_charges()
         coords = [self.atom_position(i) for i in range(self.atom_count)]
         if len(coords) > 1 and all(abs(x) < 1e-6 and abs(y) < 1e-6 for x, y in coords):
             self._compute_layout()
@@ -377,7 +402,25 @@ class MolEditorModel:
             mol.UpdatePropertyCache(strict=False)
             Chem.FastFindRings(mol)
             Chem.AssignChiralTypesFromBondDirs(mol)
-            return Chem.MolToMolBlock(mol, kekulize=False)
+            block = Chem.MolToMolBlock(mol, kekulize=False)
+        bold = [b.GetIdx() + 1 for b in self._mol.GetBonds() if b.HasProp(_BOLD)]
+        if bold:
+            lines = block.split("\n")
+            lines[2] = f"{_MOLFILE_TAG} bold=" + ",".join(str(i) for i in bold)
+            block = "\n".join(lines)
+        return block
+
+    @staticmethod
+    def _read_molfile_tags(mol: Chem.RWMol, mol_block: str) -> None:
+        lines = mol_block.split("\n")
+        if len(lines) < 3:
+            return
+        match = re.search(rf"{_MOLFILE_TAG} bold=([\d,]+)", lines[2])
+        if match is None:
+            return
+        for token in match.group(1).split(","):
+            if token.isdigit() and 0 < int(token) <= mol.GetNumBonds():
+                mol.GetBondWithIdx(int(token) - 1).SetBoolProp(_BOLD, True)
 
     def _export_mol(self) -> Chem.Mol:
         mol = Chem.Mol(self._mol)
@@ -659,9 +702,58 @@ class MolEditorModel:
         self._touch()
 
     def _touch(self) -> None:
+        self._apply_auto_charges()
         with _quiet_rdkit():
             self._mol.UpdatePropertyCache(strict=False)
         self._revision += 1
+
+    @staticmethod
+    def _bond_valence(atom: Chem.Atom) -> int:
+        """Bonds to heavy atoms plus hydrogens fixed on the atom."""
+        total = sum(int(round(b.GetBondTypeAsDouble())) for b in atom.GetBonds())
+        if atom.GetNoImplicit():
+            total += atom.GetNumExplicitHs()
+        return total
+
+    def _auto_charge_for(self, atom: Chem.Atom) -> int:
+        return _AUTO_CHARGES.get((atom.GetSymbol(), self._bond_valence(atom)), 0)
+
+    def _apply_auto_charges(self) -> None:
+        """Give N⁺/O⁺/B⁻ their charge as bonds are added, and take it back."""
+        for atom in self._mol.GetAtoms():
+            if atom.HasProp(_MANUAL_CHARGE) or atom.GetNumRadicalElectrons():
+                continue
+            wanted = self._auto_charge_for(atom)
+            current = atom.GetFormalCharge()
+            is_auto = atom.HasProp(_AUTO_CHARGE)
+            if current == wanted:
+                if wanted and not is_auto:
+                    atom.SetBoolProp(_AUTO_CHARGE, True)
+                continue
+            if current != 0 and not is_auto:
+                continue  # a charge the user (or the file) chose stays
+            atom.SetFormalCharge(wanted)
+            if wanted:
+                atom.SetBoolProp(_AUTO_CHARGE, True)
+            elif is_auto:
+                atom.ClearProp(_AUTO_CHARGE)
+            if atom.GetSymbol() in _IMPLICIT_H_ELEMENTS and not atom.GetNoImplicit():
+                atom.SetNumExplicitHs(0)
+
+    def _mark_loaded_charges(self) -> None:
+        """Charges read from SMILES/MOL count as automatic when the rules agree."""
+        for atom in self._mol.GetAtoms():
+            if atom.GetFormalCharge() == 0:
+                continue
+            if self._auto_charge_for(atom) == atom.GetFormalCharge():
+                atom.SetBoolProp(_AUTO_CHARGE, True)
+            else:
+                atom.SetBoolProp(_MANUAL_CHARGE, True)
+
+    def _mark_manual_charge(self, atom: Chem.Atom) -> None:
+        if atom.HasProp(_AUTO_CHARGE):
+            atom.ClearProp(_AUTO_CHARGE)
+        atom.SetBoolProp(_MANUAL_CHARGE, True)
 
     # ------------------------------------------------------------------
     # Low-level helpers (no undo)
@@ -703,6 +795,9 @@ class MolEditorModel:
         nbrs = self.atom_neighbors(atom_idx)
         if not nbrs:
             return math.radians(30.0)
+        chair = self._chair_sprout(atom_idx)
+        if chair is not None:
+            return chair
         angles = []
         for n in nbrs:
             nx, ny = self.atom_position(n)
@@ -834,6 +929,7 @@ class MolEditorModel:
             return
         self._push_undo()
         atom.SetFormalCharge(value)
+        self._mark_manual_charge(atom)
         atom.SetNumExplicitHs(0)
         atom.SetNoImplicit(atom.GetSymbol() not in _IMPLICIT_H_ELEMENTS)
         self._touch()
@@ -1130,6 +1226,9 @@ class MolEditorModel:
             new_bonds.append(self._add_bond(a, b, order))
             if t_bond.GetBondDir() != Chem.BondDir.NONE:
                 self._mol.GetBondWithIdx(new_bonds[-1]).SetBondDir(t_bond.GetBondDir())
+            pair = (t_bond.GetBeginAtomIdx(), t_bond.GetEndAtomIdx())
+            if pair in spec.bold_bonds or pair[::-1] in spec.bold_bonds:
+                self._mol.GetBondWithIdx(new_bonds[-1]).SetBoolProp(_BOLD, True)
         if target_atom_idx is not None and target_atom_idx not in index_map.values():
             self._add_bond(target_atom_idx, index_map[spec.attach_atom], 1)
         self._touch()
@@ -1477,6 +1576,7 @@ class MolEditorModel:
             atom.SetIsAromatic(False)
         if charge is not None:
             atom.SetFormalCharge(max(-8, min(8, int(charge))))
+            self._mark_manual_charge(atom)
         if isotope is not None:
             atom.SetIsotope(max(0, int(isotope)))
         if radicals is not None:
@@ -2076,3 +2176,101 @@ class MolEditorModel:
 
     def scale_bond_length(self, bond_idx: int, factor: float) -> None:
         self.set_bond_length(bond_idx, self.bond_length(bond_idx) * factor)
+
+    # ------------------------------------------------------------------
+    # Bold bonds and chair conformations
+    # ------------------------------------------------------------------
+
+    def bond_bold(self, bond_idx: int) -> bool:
+        return bool(self._mol.GetBondWithIdx(bond_idx).HasProp(_BOLD))
+
+    def set_bond_bold(self, bond_idx: int, bold: bool = True) -> None:  # noqa: FBT001, FBT002
+        """Draw a bond thick (the front edge of a chair or a perspective drawing)."""
+        bond = self._mol.GetBondWithIdx(bond_idx)
+        if bool(bond.HasProp(_BOLD)) == bool(bold):
+            return
+        self._push_undo()
+        if bold:
+            bond.SetBoolProp(_BOLD, True)
+            bond.SetBondDir(Chem.BondDir.NONE)
+        else:
+            bond.ClearProp(_BOLD)
+        self._touch()
+
+    def chair_directions(self, atom_idx: int) -> tuple[float, float] | None:
+        """``(equatorial, axial)`` angles (radians) for an atom of a drawn chair.
+
+        A six-membered ring counts as a chair when it is drawn non-convex
+        with its opposite bonds parallel, as in every textbook chair.  Axial
+        bonds are vertical (up on the "up" atoms, down on the others);
+        equatorial bonds run parallel to the ring bonds one position away.
+        """
+        ring = self._chair_ring(atom_idx)
+        if ring is None:
+            return None
+        k = ring.index(atom_idx)
+        prev_atom, next_atom = ring[k - 1], ring[(k + 1) % 6]
+        far = ring[(k + 2) % 6]
+        pos = {i: complex(*self.atom_position(i)) for i in ring}
+        here = pos[atom_idx]
+        centroid = sum(pos.values()) / 6
+        axial_up = here.imag > (pos[prev_atom].imag + pos[next_atom].imag) / 2
+        axial = math.pi / 2 if axial_up else -math.pi / 2
+        parallel = pos[far] - pos[next_atom]
+        if (parallel.real * (here - centroid).real + parallel.imag * (here - centroid).imag) < 0:
+            parallel = -parallel
+        equatorial = math.atan2(parallel.imag, parallel.real)
+        return equatorial, axial
+
+    def _chair_ring(self, atom_idx: int) -> list[int] | None:
+        for ring_atoms, _ring_bonds in self._bond_rings():
+            if len(ring_atoms) != 6 or atom_idx not in ring_atoms:
+                continue
+            ordered = self._ring_order(list(ring_atoms))
+            if ordered is not None and self._looks_like_chair(ordered):
+                return ordered
+        return None
+
+    def _ring_order(self, atoms: list[int]) -> list[int] | None:
+        members = set(atoms)
+        ordered = [atoms[0]]
+        while len(ordered) < len(atoms):
+            options = [
+                n for n in self.atom_neighbors(ordered[-1]) if n in members and n not in ordered
+            ]
+            if not options:
+                return None
+            ordered.append(options[0])
+        return ordered
+
+    def _looks_like_chair(self, ring: list[int]) -> bool:
+        pts = [complex(*self.atom_position(i)) for i in ring]
+        edges = [pts[(k + 1) % 6] - pts[k] for k in range(6)]
+        turns = [(edges[k].conjugate() * edges[(k + 1) % 6]).imag for k in range(6)]
+        convex = all(t > 0 for t in turns) or all(t < 0 for t in turns)
+        if convex:
+            return False
+        for k in range(3):
+            a, b = edges[k], edges[k + 3]
+            if abs(a) < 1e-6 or abs(b) < 1e-6:
+                return False
+            if abs((a.conjugate() * b).imag) / (abs(a) * abs(b)) > 0.12:
+                return False
+        return True
+
+    def _chair_sprout(self, atom_idx: int) -> float | None:
+        """Equatorial first, then axial, for an atom of a chair."""
+        directions = self.chair_directions(atom_idx)
+        if directions is None:
+            return None
+        ring = self._chair_ring(atom_idx) or []
+        ax, ay = self.atom_position(atom_idx)
+        used = [
+            math.atan2(self.atom_position(n)[1] - ay, self.atom_position(n)[0] - ax)
+            for n in self.atom_neighbors(atom_idx)
+            if n not in ring
+        ]
+        for angle in directions:
+            if all(abs(_normalize(angle - u)) > math.radians(20) for u in used):
+                return angle
+        return None

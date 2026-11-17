@@ -935,3 +935,116 @@ def test_mirrored_paste_keeps_stereo():
         atoms, _bonds = model.stereo_labels()
         results.update(atoms.values())
     assert results == {"S"}
+
+
+# ---------------------------------------------------------------------------
+# Automatic charges, chairs and bold bonds
+# ---------------------------------------------------------------------------
+
+
+@pytest.mark.parametrize(
+    ("smiles", "atom", "expected"),
+    [
+        ("CN(C)C", 1, "C[N+](C)(C)C"),  # 4th bond on N → ammonium
+        ("COC", 1, "C[O+](C)C"),  # 3rd bond on O → oxonium
+        ("c1ccncc1", 3, "C[n+]1ccccc1"),  # N-alkyl pyridinium
+        ("CB(C)C", 1, "C[B-](C)(C)C"),  # 4th bond on B → borate
+        ("CN", 1, "CNC"),  # normal valence: no charge
+    ],
+)
+def test_charges_follow_the_number_of_bonds(smiles, atom, expected):
+    model = MolEditorModel.from_smiles(smiles)
+    new = model.sprout_atom(atom)
+    assert model.to_smiles() == _canon(expected)
+    assert not model.invalid_atom_indices()
+    # Removing the bond takes the charge away again.
+    model.delete_bond(_bond(model, atom, new))
+    assert model.atom_charge(atom) == 0
+
+
+def test_automatic_charge_drops_hydrogens_and_survives_undo():
+    model = MolEditorModel.from_smiles("CNC")
+    assert model.implicit_hydrogens(1) == 1
+    model.sprout_atom(1)
+    model.sprout_atom(1)
+    assert model.atom_charge(1) == 1
+    assert model.implicit_hydrogens(1) == 0
+    model.undo()
+    assert model.to_smiles() == "CN(C)C"  # back to three bonds: neutral again
+    assert model.atom_charge(1) == 0
+    model.undo()
+    assert model.to_smiles() == "CNC"
+    assert model.implicit_hydrogens(1) == 1
+
+
+def test_manual_and_loaded_charges_are_kept():
+    nitro = MolEditorModel.from_smiles("C[N+](=O)[O-]")
+    assert nitro.to_smiles() == "C[N+](=O)[O-]"
+    alkoxide = MolEditorModel.from_smiles("C[O-]")
+    alkoxide.sprout_atom(0)
+    assert alkoxide.atom_charge(1) == -1
+    amine = MolEditorModel.from_smiles("CN")
+    amine.set_atom_charge(1, 1)  # protonated amine chosen by hand
+    assert amine.to_smiles() == "C[NH3+]"
+    quat = MolEditorModel.from_mol_block(MolEditorModel.from_smiles("C[N+](C)(C)C").to_mol_block())
+    quat.delete_atom(4)
+    assert quat.to_smiles() == "CN(C)C"  # a loaded N⁺ that the rules explain is automatic
+
+
+def test_chair_atoms_grow_equatorial_then_axial():
+    model = MolEditorModel()
+    ring = model.add_ring_template("chair", center=(0.0, 0.0))
+    assert [model.bond_bold(b) for b in range(model.bond_count)].count(True) == 3
+    for atom in ring:
+        directions = model.chair_directions(atom)
+        assert directions is not None
+        equatorial, axial = directions
+        first = model.sprout_atom(atom)
+        second = model.sprout_atom(atom)
+        ax, ay = model.atom_position(atom)
+
+        def angle(other: int, ax: float = ax, ay: float = ay) -> float:
+            ox, oy = model.atom_position(other)
+            return math.atan2(oy - ay, ox - ax)
+
+        assert angle(first) == pytest.approx(equatorial, abs=1e-6)
+        assert angle(second) == pytest.approx(axial, abs=1e-6)
+        assert abs(math.sin(axial)) == pytest.approx(1.0)  # axial bonds are vertical
+    # Alternate up/down axial positions round the ring.
+    signs = [math.copysign(1, model.chair_directions(a)[1]) for a in ring]  # type: ignore[index]
+    assert all(signs[k] != signs[(k + 1) % 6] for k in range(6))
+    assert model.to_smiles() == "CC1(C)C(C)(C)C(C)(C)C(C)(C)C(C)(C)C1(C)C"
+
+
+def test_equatorial_bonds_are_parallel_to_ring_bonds():
+    model = MolEditorModel()
+    ring = model.add_ring_template("chair", center=(0.0, 0.0))
+    equatorial, _axial = model.chair_directions(ring[0])  # type: ignore[misc]
+    (bx, by), (cx, cy) = model.atom_position(ring[1]), model.atom_position(ring[2])
+    ring_angle = math.atan2(cy - by, cx - bx)
+    assert math.sin(equatorial - ring_angle) == pytest.approx(0.0, abs=1e-6)
+
+
+def test_flat_rings_are_not_chairs():
+    model = MolEditorModel.from_smiles("C1CCCCC1")
+    assert model.chair_directions(0) is None
+    model.sprout_atom(0)  # ordinary outer-bisector rule
+    assert not model.invalid_atom_indices()
+
+
+def test_bold_bonds_survive_mol_block_round_trip():
+    model = MolEditorModel()
+    model.add_ring_template("oxane_chair", center=(0.0, 0.0))
+    block = model.to_mol_block()
+    assert "IRSA bold=" in block.splitlines()[2]
+    reloaded = MolEditorModel.from_mol_block(block)
+    assert [reloaded.bond_bold(b) for b in range(reloaded.bond_count)] == [
+        model.bond_bold(b) for b in range(model.bond_count)
+    ]
+    from rdkit import Chem
+
+    assert Chem.MolFromMolBlock(block) is not None  # still a valid MOL file
+    model.set_bond_bold(0, False)
+    assert not model.bond_bold(0)
+    assert model.undo()
+    assert model.bond_bold(0)

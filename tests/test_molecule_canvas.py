@@ -696,3 +696,74 @@ def test_bond_context_menu_length_actions(canvas):
     menu = canvas.build_context_menu(QPointF(_bond_mid(canvas, bond)))
     {a.text(): a for a in menu.actions()}["Standard length"].trigger()
     assert canvas.model().bond_length(bond) == pytest.approx(BOND_LENGTH)
+
+
+# ---------------------------------------------------------------------------
+# Bold bonds, free angles and chair drawing
+# ---------------------------------------------------------------------------
+
+
+def test_bold_bond_tool_and_hover_key(canvas):
+    canvas.load_smiles("CC")
+    canvas.set_tool("bond_bold")
+    QTest.mouseClick(canvas, Qt.MouseButton.LeftButton, pos=_pt(canvas, 1))
+    model = canvas.model()
+    assert model.bond_bold(model.find_bond(1, 2))
+    QTest.mouseClick(canvas, Qt.MouseButton.LeftButton, pos=_bond_mid(canvas, 0))
+    assert model.bond_bold(0)
+    QTest.mouseClick(canvas, Qt.MouseButton.LeftButton, pos=_bond_mid(canvas, 0))
+    assert not model.bond_bold(0)
+    _hover(canvas, _bond_mid(canvas, 0))
+    QTest.keyClick(canvas, Qt.Key.Key_B)
+    assert model.bond_bold(0)
+    canvas.grab()  # bold bonds paint over a white gap
+
+
+def test_b_key_selects_bold_tool_and_over_atom_sets_boron(canvas):
+    canvas._cursor = None
+    QTest.keyClick(canvas, Qt.Key.Key_B)
+    assert canvas.tool() == "bond_bold"
+    canvas.load_smiles("CC")
+    _hover(canvas, _pt(canvas, 1))
+    QTest.keyClick(canvas, Qt.Key.Key_B)
+    assert canvas.to_smiles() == "BC"
+
+
+def test_alt_drag_draws_at_any_angle(canvas):
+    canvas.load_smiles("C")
+    start = _pt(canvas, 0)
+    end = QPoint(start.x() + 80, start.y() - 17)  # ~12°, between snap steps
+    QTest.mousePress(canvas, Qt.MouseButton.LeftButton, Qt.KeyboardModifier.NoModifier, start)
+    QTest.mouseMove(canvas, QPoint(start.x() + 20, start.y()))
+    QTest.mouseMove(canvas, end)
+    QTest.mouseRelease(canvas, Qt.MouseButton.LeftButton, Qt.KeyboardModifier.AltModifier, end)
+    model = canvas.model()
+    (x0, y0), (x1, y1) = model.atom_position(0), model.atom_position(1)
+    angle = math.degrees(math.atan2(y1 - y0, x1 - x0))
+    assert 8 < angle < 16
+    # Without Alt the same drag snaps to 0°.
+    canvas.load_smiles("C")
+    _drag(canvas, start, end)
+    (x0, y0), (x1, y1) = canvas.model().atom_position(0), canvas.model().atom_position(1)
+    assert math.degrees(math.atan2(y1 - y0, x1 - x0)) == pytest.approx(0.0, abs=1e-6)
+
+
+def test_drag_from_chair_atom_snaps_to_axial_and_equatorial(canvas):
+    from chemistry.mol_editor_model import MolEditorModel
+
+    model = MolEditorModel()
+    ring = model.add_ring_template("chair", center=(0.0, 0.0))
+    canvas.set_model(model)
+    atom = ring[0]
+    equatorial, axial = model.chair_directions(atom)  # type: ignore[misc]
+    start = canvas._atom_screen(atom)
+    for target_angle in (equatorial, axial):
+        # Aim 5° off the chair direction: the bond snaps onto it.
+        aim = target_angle + math.radians(5)
+        end = QPoint(int(start.x() + 60 * math.cos(aim)), int(start.y() - 60 * math.sin(aim)))
+        before = model.atom_count
+        _drag(canvas, start.toPoint(), end)
+        new = model.atom_count - 1
+        assert model.atom_count == before + 1
+        (ax, ay), (nx, ny) = model.atom_position(atom), model.atom_position(new)
+        assert math.atan2(ny - ay, nx - ax) == pytest.approx(target_angle, abs=1e-6)

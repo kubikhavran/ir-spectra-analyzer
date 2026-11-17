@@ -390,6 +390,7 @@ def test_draw_tab_layout(native_dialog):
         "bond_triple",
         "bond_wedge",
         "bond_hash",
+        "bond_bold",
         "chain",
     }
     assert {"cyclopropane", "benzene", "naphthalene", "pyridine", "furan", "thiophene"} <= set(

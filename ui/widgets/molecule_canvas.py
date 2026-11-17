@@ -118,6 +118,7 @@ TOOLS: tuple[str, ...] = (
     "bond_triple",
     "bond_wedge",
     "bond_hash",
+    "bond_bold",
     "chain",
     "atom",
     "ring",
@@ -129,6 +130,7 @@ _BOND_TOOLS: dict[str, tuple[int, str]] = {
     "bond_triple": (3, STEREO_NONE),
     "bond_wedge": (1, STEREO_WEDGE),
     "bond_hash": (1, STEREO_HASH),
+    "bond_bold": (1, STEREO_NONE),  # drawn thick: front edge of a chair / perspective
 }
 # Keys that switch tools when the pointer is not over an atom or bond.
 _TOOL_KEYS: dict[int, str] = {
@@ -138,6 +140,7 @@ _TOOL_KEYS: dict[int, str] = {
     Qt.Key.Key_3: "bond_triple",
     Qt.Key.Key_W: "bond_wedge",
     Qt.Key.Key_H: "bond_hash",
+    Qt.Key.Key_B: "bond_bold",
     Qt.Key.Key_C: "chain",
 }
 _HOVER_ELEMENT_KEYS: dict[str, str] = {
@@ -222,6 +225,7 @@ class _Drag:
     last: QPointF = field(default_factory=QPointF)
     move_atoms: list[int] = field(default_factory=list)
     free_length: bool = False  # Shift held: the bond follows the cursor distance
+    free_angle: bool = False  # Alt held: no angle snapping
 
 
 class MoleculeCanvas(QWidget):
@@ -884,10 +888,45 @@ class MoleculeCanvas(QWidget):
                 best, best_d = idx, d
         return best
 
-    def _snapped_angle(self, start: tuple[float, float], point: QPointF) -> float:
+    def _snapped_angle(
+        self,
+        start: tuple[float, float],
+        point: QPointF,
+        atom: int | None = None,
+        *,
+        free: bool = False,
+    ) -> float:
+        """Drawing angle (degrees): 30° steps, or parallel to a nearby bond /
+        the axial–equatorial directions of a chair; Alt draws at any angle."""
         wx, wy = self._to_world(point)
         angle = math.degrees(math.atan2(wy - start[1], wx - start[0]))
-        return round(angle / 30.0) * 30.0
+        if free:
+            return angle
+        best = round(angle / 30.0) * 30.0
+        best_gap = abs(angle - best)
+        for candidate in self._snap_directions(atom):
+            gap = abs((angle - candidate + 180.0) % 360.0 - 180.0)
+            if gap < 9.0 and gap < best_gap:
+                best, best_gap = angle - ((angle - candidate + 180.0) % 360.0 - 180.0), gap
+        return best
+
+    def _snap_directions(self, atom: int | None) -> list[float]:
+        """Directions of bonds in the same molecule (both ways) and chair axes."""
+        if atom is None or not 0 <= atom < self._model.atom_count:
+            return []
+        model = self._model
+        directions: list[float] = []
+        chair = model.chair_directions(atom)
+        if chair is not None:
+            directions += [math.degrees(a) for a in chair]
+        fragment = set(model.fragment_atoms(atom))
+        for bond in range(model.bond_count):
+            a, b = model.bond_atoms(bond)
+            if a in fragment:
+                (ax, ay), (bx, by) = model.atom_position(a), model.atom_position(b)
+                d = math.degrees(math.atan2(by - ay, bx - ax))
+                directions += [d, d + 180.0]
+        return directions
 
     # ------------------------------------------------------------------
     # Model bookkeeping
@@ -1044,9 +1083,20 @@ class MoleculeCanvas(QWidget):
         pen.setCapStyle(Qt.PenCapStyle.RoundCap)
         pen.setJoinStyle(Qt.PenJoinStyle.RoundJoin)
         label_radius = 0.62 * font_px
-        for bond in range(model.bond_count):
+        bold = [b for b in range(model.bond_count) if model.bond_bold(b)]
+        # Thin bonds first; bold (front) bonds last, each over a white band
+        # that cuts the thin bonds passing behind it — the usual depth cue of
+        # chair and perspective drawings.
+        for bond in [b for b in range(model.bond_count) if b not in set(bold)] + bold:
             a, b = model.bond_atoms(bond)
             p1, p2 = positions[a], positions[b]
+            if bond in bold:
+                gap = QPen(QColor(theme.SURFACE) if interactive else QColor("white"))
+                gap.setWidthF(max(3.0, 0.1 * bond_px) + max(4.0, 0.12 * bond_px))
+                gap.setCapStyle(Qt.PenCapStyle.FlatCap)
+                painter.setPen(gap)
+                inner = 0.22 * bond_px
+                painter.drawLine(*_shorten(p1, p2, inner, inner))
             r1 = label_radius if a in self._labels else 0.0
             r2 = label_radius if b in self._labels else 0.0
             q1, q2 = _shorten(p1, p2, r1, r2)
@@ -1168,6 +1218,11 @@ class MoleculeCanvas(QWidget):
 
         offset = 0.18 * bond_px
         if order == 1:
+            if model.bond_bold(bond):
+                thick = QPen(pen)
+                thick.setWidthF(max(3.0, 0.1 * bond_px))
+                thick.setCapStyle(Qt.PenCapStyle.RoundCap)
+                painter.setPen(thick)
             painter.drawLine(p1, p2)
             return
         if order == 3:
@@ -1562,7 +1617,7 @@ class MoleculeCanvas(QWidget):
         target = self._snap_atom(cursor, exclude=drag.atom)
         if target is not None:
             return start, self._model.atom_position(target), target
-        angle = math.radians(self._snapped_angle(start, cursor))
+        angle = math.radians(self._snapped_angle(start, cursor, drag.atom, free=drag.free_angle))
         length = self._drag_length(drag, start, cursor)
         end = (start[0] + length * math.cos(angle), start[1] + length * math.sin(angle))
         return start, end, None
@@ -1583,7 +1638,7 @@ class MoleculeCanvas(QWidget):
             else self._to_world(drag.start)
         )
         ex, ey = self._to_world(cursor)
-        angle = math.radians(self._snapped_angle((sx, sy), cursor))
+        angle = math.radians(self._snapped_angle((sx, sy), cursor, drag.atom, free=drag.free_angle))
         dist = math.hypot(ex - sx, ey - sy)
         ex, ey = sx + dist * math.cos(angle), sy + dist * math.sin(angle)
         return self._model.chain_coordinates(sx, sy, ex, ey, drag.atom)
@@ -1622,19 +1677,23 @@ class MoleculeCanvas(QWidget):
                 "Enter = label or group; Del removes"
             )
         elif self._hover_bond is not None:
-            hint = tr("Bond: 1/2/3 order, W wedge, H hash, +/− length, Del removes")
+            hint = tr("Bond: 1/2/3 order, W wedge, H hash, B bold, +/− length, Del removes")
         else:
             hints = {
                 "select": tr("Drag atoms to move them, drag empty space to select"),
                 "erase": tr("Click an atom or bond to delete it"),
                 "bond_single": tr(
-                    "Click or drag to draw bonds (Shift = longer); click a bond: "
-                    "single → double → triple → wedge → reversed wedge"
+                    "Click or drag to draw bonds (Shift = longer, Alt = any angle); "
+                    "click a bond: single → double → triple → wedge → reversed wedge"
                 ),
                 "bond_double": tr("Click or drag to draw double bonds"),
                 "bond_triple": tr("Click or drag to draw triple bonds"),
                 "bond_wedge": tr("Wedge bond (towards viewer); click again to flip"),
                 "bond_hash": tr("Hashed bond (away from viewer); click again to flip"),
+                "bond_bold": tr(
+                    "Bold bond (front edge of a chair or perspective drawing); "
+                    "click a bond to make it bold or thin"
+                ),
                 "chain": tr("Drag to draw a carbon chain"),
                 "atom": tr("Click to place {symbol} or replace an atom").format(
                     symbol=self._atom_symbol
@@ -1698,6 +1757,7 @@ class MoleculeCanvas(QWidget):
             self.update()
             return
         drag.free_length = bool(event.modifiers() & Qt.KeyboardModifier.ShiftModifier)
+        drag.free_angle = bool(event.modifiers() & Qt.KeyboardModifier.AltModifier)
         if not drag.moved:
             delta = point - drag.start
             if math.hypot(delta.x(), delta.y()) < DRAG_THRESHOLD_PX:
@@ -1725,6 +1785,7 @@ class MoleculeCanvas(QWidget):
         self._cursor = point
         if drag.kind == "draw":
             drag.free_length = bool(event.modifiers() & Qt.KeyboardModifier.ShiftModifier)
+            drag.free_angle = bool(event.modifiers() & Qt.KeyboardModifier.AltModifier)
         if drag.kind == "place":
             atom = self._atom_at(point)
             if atom is not None:
@@ -1817,6 +1878,16 @@ class MoleculeCanvas(QWidget):
                 model.delete_bond(bond)
             else:
                 return
+        elif tool == "bond_bold":
+            if bond is not None:
+                model.set_bond_bold(bond, not model.bond_bold(bond))
+            else:
+                with model.compound():
+                    start = atom if atom is not None else model.add_free_atom(*world)
+                    self._last_atom = model.sprout_atom(start)
+                    new_bond = model.find_bond(start, self._last_atom)
+                    if new_bond is not None:
+                        model.set_bond_bold(new_bond, True)
         elif tool in _BOND_TOOLS:
             order, stereo = _BOND_TOOLS[tool]
             if atom is not None:
@@ -1894,6 +1965,10 @@ class MoleculeCanvas(QWidget):
                         preferred_angle=angle,
                         length=length if drag.free_length else None,
                     )
+                if tool == "bond_bold" and self._last_atom is not None:
+                    new_bond = model.find_bond(origin_atom, self._last_atom)
+                    if new_bond is not None:
+                        model.set_bond_bold(new_bond, True)
             self._after_edit()
             return
         # Other tools treat a drag like a click where the press happened.
@@ -1988,6 +2063,8 @@ class MoleculeCanvas(QWidget):
                 model.set_bond_stereo(bond, STEREO_WEDGE)
             elif key == Qt.Key.Key_H:
                 model.set_bond_stereo(bond, STEREO_HASH)
+            elif key == Qt.Key.Key_B:
+                model.set_bond_bold(bond, not model.bond_bold(bond))
             elif text in ("+", "="):
                 model.scale_bond_length(bond, 1.25)
             elif text in ("-", "_"):
@@ -2295,6 +2372,12 @@ def _build_context_menu(canvas: MoleculeCanvas, point: QPointF) -> QMenu:
         )
         _add_action(
             menu, tr("Hash Down"), after(lambda: model.set_bond_stereo(bond, STEREO_HASH)), "H"
+        )
+        _add_action(
+            menu,
+            tr("Bold bond"),
+            after(lambda: model.set_bond_bold(bond, not model.bond_bold(bond))),
+            "B",
         )
         _add_action(
             menu, tr("Longer bond"), after(lambda: model.scale_bond_length(bond, 1.25)), "+"
