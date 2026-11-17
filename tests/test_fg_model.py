@@ -28,7 +28,7 @@ def _found(spectrum: Spectrum) -> set[str]:
 def test_shipped_model_loads_and_covers_the_common_groups() -> None:
     model = fg_model.load_model()
     assert model is not None
-    assert len(model.thresholds) >= 30
+    assert len(model.thresholds) >= 45
     for group in ("ester", "alcohol", "aromatic_ring", "amide", "nitrile", "carboxylic_acid"):
         assert model.is_modelled(group)
     assert model.info["features"]["n"] == N_FEATURES

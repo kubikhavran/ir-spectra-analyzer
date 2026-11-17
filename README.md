@@ -85,7 +85,7 @@ molecule, and export a publication-quality PDF report — all in one native app.
   project that carry it; functional-group suggestions still find renamed entries.
 - **Functional-group analysis** — ranked groups and structural motifs (carbonyls,
   amides, alcohols, amines, aromatic substitution, alkene subtypes, alkyl chains, …).
-  The score of 41 common groups comes from a small model trained on public
+  The score of 50 common groups comes from a small model trained on public
   condensed-phase reference spectra with known structures (NIST / Coblentz Society;
   KBr, film, neat liquid); 55 % means "found". The remaining, rarer groups are judged
   by their band windows only and are shown as *possible* at most. The diagnostic
