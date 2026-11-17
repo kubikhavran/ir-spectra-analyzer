@@ -58,9 +58,15 @@ molecule, and export a publication-quality PDF report — all in one native app.
   whether the baseline is corrected, and how many labels are hidden.
 - **Layout is remembered** between sessions; *View → Reset Layout* restores the
   default arrangement.
-- **Language** — English or Czech (*View → Language*). The default follows the
-  operating system; the change applies the next time the application starts.
-  Chemical names (vibrations, functional groups) are data and stay as they are.
+- **Language** — English or Czech: the **CZ | EN** buttons in the bottom-right
+  corner of the status bar, or *View → Language*. The switch is immediate — the
+  windows are rebuilt in the new language and keep the open spectrum, peaks,
+  structure and unsaved edits (only the undo history starts afresh). The default
+  follows the operating system. Chemical names (vibrations, functional groups)
+  are data and stay as they are.
+- **Dark mode** — *View → Appearance*: Dark (default), Light or Follow system,
+  applied at once. Exported reports, spreadsheets and structure images stay
+  light.
 
 ### Peak picking & interpretation
 - **Automatic peak detection** (SciPy `find_peaks`) with a **Sensitivity** slider

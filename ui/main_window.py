@@ -34,6 +34,7 @@ from PySide6.QtWidgets import (
     QPlainTextEdit,
     QTabWidget,
     QTextEdit,
+    QWidget,
 )
 
 from app.report_presets import ReportPresetManager
@@ -73,6 +74,11 @@ class MainWindow(QMainWindow):
     #: Asks the controller to open one more dropped file — it decides whether
     #: that needs another window.
     open_path_requested = Signal(str)
+    #: The user picked another language / appearance. When the controller
+    #: listens (``enable_live_switching``) it rebuilds the windows at once;
+    #: a window on its own falls back to "applies on the next start".
+    language_change_requested = Signal()
+    appearance_change_requested = Signal()
 
     #: File types the window opens when dropped on it or picked from "recent".
     _OPENABLE_SUFFIXES = (".spa", ".jdx", ".dx", ".irproj")
@@ -113,6 +119,8 @@ class MainWindow(QMainWindow):
         self._vibration_presets_cache: list = []
         self._molecule_widget: MoleculeWidget
         self._report_preset_manager = ReportPresetManager(settings)
+        self._live_switching = False
+        self._closing_for_rebuild = False
         self._setup_ui()
 
     def _setup_ui(self) -> None:
@@ -285,7 +293,7 @@ class MainWindow(QMainWindow):
             return
 
     def _setup_language_menu(self) -> None:
-        """View → Language: system / English / Čeština (applies after a restart)."""
+        """View → Language: system / English / Čeština."""
         from PySide6.QtGui import QActionGroup  # noqa: PLC0415
 
         stored = self._settings.get("language")
@@ -300,8 +308,14 @@ class MainWindow(QMainWindow):
             action.triggered.connect(lambda _checked=False, c=code: self._on_language_chosen(c))
 
     def _on_language_chosen(self, code: str) -> None:
-        """Remember the language; the texts switch the next time the app starts."""
-        self._settings.set("language", None if code == i18n.SYSTEM else code)
+        """Remember the language and switch to it (at once when the controller can)."""
+        stored = None if code == i18n.SYSTEM else code
+        unchanged = self._settings.get("language") == stored
+        self._settings.set("language", stored)
+        if self._live_switching:
+            if not unchanged or i18n.resolve_language(stored) != i18n.language():
+                self.language_change_requested.emit()
+            return
         QMessageBox.information(
             self,
             "Language / Jazyk",
@@ -309,8 +323,79 @@ class MainWindow(QMainWindow):
             "Jazyk se změní při příštím spuštění aplikace.",
         )
 
+    def _build_language_switch(self) -> QWidget:
+        """CZ | EN buttons in the corner of the status bar — one click switches."""
+        from PySide6.QtWidgets import QButtonGroup, QHBoxLayout, QToolButton  # noqa: PLC0415
+
+        box = QWidget(self)
+        box.setObjectName("languageSwitch")
+        layout = QHBoxLayout(box)
+        layout.setContentsMargins(6, 0, 2, 0)
+        layout.setSpacing(0)
+        group = QButtonGroup(box)
+        group.setExclusive(True)
+        self._language_buttons: dict[str, QToolButton] = {}
+        for code, text, tip in (
+            (i18n.CZECH, "CZ", "Čeština"),
+            (i18n.ENGLISH, "EN", "English"),
+        ):
+            button = QToolButton(box)
+            button.setObjectName("languageSwitchButton")
+            button.setText(text)
+            button.setToolTip(f"{tip} — Jazyk / Language")
+            button.setCheckable(True)
+            button.setChecked(i18n.language() == code)
+            button.setAutoRaise(True)
+            button.clicked.connect(lambda _checked=False, c=code: self._on_language_chosen(c))
+            group.addButton(button)
+            layout.addWidget(button)
+            self._language_buttons[code] = button
+        box.setStyleSheet(
+            f"QToolButton#languageSwitchButton {{ padding: 1px 7px; font-weight: 600;"
+            f" color: {theme.TEXT_MUTED}; border: 1px solid {theme.BORDER}; }}"
+            f"QToolButton#languageSwitchButton:checked {{ color: {theme.ON_ACCENT};"
+            f" background: {theme.ACCENT}; border-color: {theme.ACCENT}; }}"
+        )
+        return box
+
+    def enable_live_switching(self) -> None:
+        """Called by the controller: language/appearance changes rebuild the windows."""
+        self._live_switching = True
+
+    def is_busy(self) -> bool:
+        """Whether a background search would be cut off by rebuilding the window."""
+        return self._reference_search_thread is not None
+
+    def adopt_from(self, old: MainWindow) -> None:
+        """Take over another window's place and analysis (language/theme rebuild).
+
+        The project object itself moves over, so peaks, assignments, the
+        structure and unsaved edits stay; only the undo history starts afresh.
+        """
+        self.restoreGeometry(old.saveGeometry())
+        if not old.isMaximized():
+            self.resize(old.size())
+            self.move(old.pos())
+        self.restoreState(old.saveState())
+        project = old._project
+        if project is None:
+            return
+        dirty = old._has_unsaved_changes()
+        revision = old._project_revision
+        project_path = old._current_project_path
+        self._apply_project_to_ui(project)
+        self._current_project_path = project_path
+        self._non_undo_dirty = dirty
+        self._project_revision = revision
+        self._update_window_title()
+
+    def close_for_rebuild(self) -> None:
+        """Close without the unsaved-work prompt: the work lives on in the new window."""
+        self._closing_for_rebuild = True
+        self.close()
+
     def _setup_appearance_menu(self) -> None:
-        """View → Appearance: dark / light / follow the system (applies after a restart)."""
+        """View → Appearance: dark / light / follow the system."""
         from PySide6.QtGui import QActionGroup  # noqa: PLC0415
 
         stored = self._settings.get("appearance")
@@ -326,10 +411,13 @@ class MainWindow(QMainWindow):
             action.triggered.connect(lambda _checked=False, c=code: self._on_appearance_chosen(c))
 
     def _on_appearance_chosen(self, code: str) -> None:
-        """Remember the appearance; the colours switch the next time the app starts."""
+        """Remember the appearance and switch to it (at once when the controller can)."""
         if self._settings.get("appearance") == code:
             return
         self._settings.set("appearance", code)
+        if self._live_switching:
+            self.appearance_change_requested.emit()
+            return
         QMessageBox.information(
             self,
             tr("Appearance"),
@@ -602,6 +690,7 @@ class MainWindow(QMainWindow):
             self._status_cursor,
         ):
             self.statusBar().addPermanentWidget(widget)
+        self.statusBar().addPermanentWidget(self._build_language_switch())
 
         self._spectrum_widget.cursor_moved.connect(
             lambda wn, intensity: self._status_cursor.setText(
@@ -2621,6 +2710,9 @@ class MainWindow(QMainWindow):
 
     def closeEvent(self, event) -> None:  # noqa: N802
         """Prevent data loss and avoid destroying a running search thread."""
+        if self._closing_for_rebuild:
+            event.accept()
+            return
         # A headless/offscreen session has no user who could answer a modal
         # prompt. Interactive hidden windows still go through the data-loss guard.
         if not self.isVisible() and QApplication.platformName().casefold() == "offscreen":

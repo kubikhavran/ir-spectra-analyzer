@@ -64,7 +64,7 @@ class MainToolbar(QToolBar):
         tip: str,
         *,
         checkable: bool = False,
-        icon_color: str = theme.TEXT,
+        icon_color: str | None = None,
     ) -> QAction:
         action = QAction(icons.icon(icon_name, color=icon_color), tr(text), self)
         action.setCheckable(checkable)

@@ -28,6 +28,11 @@ CZECH_TEXTS: dict[str, str] = {
     "The new appearance is used the next time the application starts.": (
         "Nový vzhled se použije při příštím spuštění aplikace."
     ),
+    "Reference matching is still running. The change is saved and is "
+    "used the next time the application starts.": (
+        "Porovnávání s knihovnou ještě běží. Změna je uložená a použije se "
+        "při příštím spuštění aplikace."
+    ),
     "New &Window": "Nové &okno",
     "&Open Spectrum...": "&Otevřít spektrum...",
     "Open &Project...": "Otevřít &projekt...",
