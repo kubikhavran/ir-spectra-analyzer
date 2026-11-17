@@ -315,6 +315,44 @@ def _ring_icon(ring_type: str, size: int = 34) -> QIcon:
     return QIcon(pixmap)
 
 
+class _ElidedLabel(QLabel):
+    """A one-line label that shortens its text with "…" when it does not fit."""
+
+    def __init__(
+        self,
+        mode: Qt.TextElideMode,
+        *,
+        tooltip_from_text: bool = False,
+        parent: QWidget | None = None,
+    ) -> None:
+        super().__init__(parent)
+        self._mode = mode
+        self._tooltip_from_text = tooltip_from_text
+        self.setSizePolicy(QSizePolicy.Policy.Ignored, QSizePolicy.Policy.Preferred)
+        self.setMinimumWidth(40)
+
+    def setText(self, text: str) -> None:  # noqa: N802
+        super().setText(text)
+        if self._tooltip_from_text:
+            self.setToolTip(text)
+
+    def paintEvent(self, event) -> None:  # noqa: N802, ANN001
+        del event
+        painter = QPainter(self)
+        rect = self.contentsRect()
+        shown = self.fontMetrics().elidedText(self.text(), self._mode, rect.width())
+        self.style().drawItemText(
+            painter,
+            rect,
+            int(self.alignment().value),
+            self.palette(),
+            self.isEnabled(),
+            shown,
+            self.foregroundRole(),
+        )
+        painter.end()
+
+
 def _palette_button(text: str = "", *, tooltip: str = "", checkable: bool = True) -> QToolButton:
     button = QToolButton()
     button.setObjectName("molPaletteButton")
@@ -523,19 +561,14 @@ class MoleculeEditorDialog(QDialog):
         self._formula_label.setObjectName("molecule_formula_label")
         self._mw_label = QLabel()
         self._mw_label.setObjectName("molecule_mw_label")
-        self._live_smiles_label = QLabel()
+        # Long SMILES and hints are cut with "…" (full text in the tooltip)
+        # instead of running into each other.
+        self._live_smiles_label = _ElidedLabel(Qt.TextElideMode.ElideMiddle)
         self._live_smiles_label.setObjectName("molecule_live_smiles_label")
-        self._live_smiles_label.setTextInteractionFlags(
-            Qt.TextInteractionFlag.TextSelectableByMouse
-        )
-        self._live_smiles_label.setSizePolicy(
-            QSizePolicy.Policy.Ignored, QSizePolicy.Policy.Preferred
-        )
-        self._hint_label = QLabel()
+        self._hint_label = _ElidedLabel(Qt.TextElideMode.ElideRight, tooltip_from_text=True)
         self._hint_label.setObjectName("molecule_hint_label")
         self._hint_label.setStyleSheet(theme.CAPTION_STYLE)
         self._hint_label.setAlignment(Qt.AlignmentFlag.AlignRight | Qt.AlignmentFlag.AlignVCenter)
-        self._hint_label.setSizePolicy(QSizePolicy.Policy.Ignored, QSizePolicy.Policy.Preferred)
         self._exact_mass_label = QLabel()
         self._exact_mass_label.setObjectName("molecule_exact_mass_label")
         self._charge_label = QLabel()
