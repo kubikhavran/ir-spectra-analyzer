@@ -476,6 +476,11 @@ git push origin v0.31.0
 A few minutes later `IR-Spectra-Analyzer-Setup-0.31.0.exe` appears on the
 [Releases page](https://github.com/kubikhavran/ir-spectra-analyzer/releases).
 
+Without pushing a tag, run the workflow by hand instead (**Actions → Build
+release installers → Run workflow** on `main`, tick **publish**). It builds the
+version in `pyproject.toml` and creates the `v<version>` tag and release on
+that commit.
+
 To build locally on a **macOS** machine:
 
 ```bash
