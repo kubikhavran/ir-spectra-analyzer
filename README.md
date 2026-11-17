@@ -83,9 +83,23 @@ molecule, and export a publication-quality PDF report — all in one native app.
   *Reset built-in vibrations to defaults…* restores the shipped library without
   touching custom entries. Renaming a vibration renames it on the peaks of the open
   project that carry it; functional-group suggestions still find renamed entries.
-- **Functional-group scoring** — ranked diagnostic groups and structural motifs
-  (carbonyls, amides, alcohols, aromatics, alkene subtypes, alkyl-chain motifs, …)
-  with confidence, explainability, highlighted regions, and click-to-assign suggestions.
+- **Functional-group analysis** — ranked groups and structural motifs (carbonyls,
+  amides, alcohols, amines, aromatic substitution, alkene subtypes, alkyl chains, …).
+  The score of 50 common groups comes from a small model trained on public
+  condensed-phase reference spectra with known structures (NIST / Coblentz Society;
+  KBr, film, neat liquid); 55 % means "found". The remaining, rarer groups are judged
+  by their band windows only and are shown as *possible* at most. The diagnostic
+  band list, highlighted regions and click-to-assign suggestions are unchanged.
+  On 1,402 held-out public spectra the analysis now reports 4.8 groups per spectrum
+  for 4.4 actually present, 71 % of them right, and finds 78 % of the groups present
+  (the band windows alone reported 8.3 groups, 15 % right, finding 28 %).
+- **Structure check** — when the project has a structure, the Functional Groups
+  panel checks each of its groups against the spectrum (found / uncertain / not
+  seen) and lists strong bands the structure does not explain, with the usual
+  suspects: residual chloroform or methanol from a cast film, water in a KBr pellet,
+  atmospheric CO₂, an unexpected carbonyl or O–H.
+  `tools/fg_benchmark.py` measures both on any folder of spectra with structures;
+  `tools/train_fg_model.py` documents and reproduces the model.
 - **Consensus interpretation panel** — combines library matches, functional groups,
   and assigned peaks into one read-only summary: strongest evidence, conflicts, and
   next checks.

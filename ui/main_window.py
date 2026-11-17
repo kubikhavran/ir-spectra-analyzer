@@ -2504,7 +2504,22 @@ class MainWindow(QMainWindow):
         self._functional_group_panel.set_results(list(analysis.results))
         self._restore_functional_group_selection(preferred_group_id)
         self._set_functional_group_active_peak(self._peak_table.selected_peak())
+        self._refresh_structure_check(analysis)
         self._refresh_consensus_analysis()
+
+    def _refresh_structure_check(self, analysis=None) -> None:
+        """Compare the project's drawn structure with the spectrum's analysis."""
+        project = self._project
+        if analysis is None or project is None or project.spectrum is None or not project.smiles:
+            self._functional_group_panel.set_structure_check(None)
+            return
+        from processing.structure_check import check_structure  # noqa: PLC0415
+
+        try:
+            check = check_structure(project.smiles, analysis, project.spectrum)
+        except Exception:  # noqa: BLE001 — a reading aid must never break the panel
+            check = None
+        self._functional_group_panel.set_structure_check(check)
 
     def _current_functional_group_id(self) -> str | None:
         """Return the currently selected functional-group ID, if any."""

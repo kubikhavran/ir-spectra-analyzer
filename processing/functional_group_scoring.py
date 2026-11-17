@@ -77,13 +77,26 @@ class _BandMetrics:
     observed_intensity_class: str
 
 
+# A group the learned model does not cover is judged by its band windows alone.
+# On real spectra of complex molecules those found almost anything (15 % of
+# what they reported was right on the public benchmark), so such a group is
+# shown at half its window score: at most "possible", never "found".
+RULE_ONLY_FACTOR = 0.5
+
+
 def score_functional_groups(
     raw_spectrum: Spectrum,
     corrected_spectrum: Spectrum | None = None,
     *,
     repository: FunctionalGroupRepository | None = None,
+    use_model: bool = True,
 ) -> FunctionalGroupAnalysis:
-    """Score common functional groups from the current spectrum."""
+    """Score common functional groups from the current spectrum.
+
+    The band windows of the knowledge base always run: they say *which* bands
+    support a group and feed the band list and the plot overlays. Where the
+    learned group model covers a group, its verdict sets the score.
+    """
     repo = repository or FunctionalGroupRepository()
     knowledge_base = repo.load()
 
@@ -121,6 +134,13 @@ def score_functional_groups(
         _apply_exclusion_discount(result, exclusions, claims)
         for result, exclusions, _group_claims in scored
     ]
+
+    if use_model:
+        from processing.fg_model import predict_groups  # noqa: PLC0415
+
+        predictions = predict_groups(raw_spectrum)
+        if predictions is not None:
+            results = [_apply_model(result, predictions.get(result.group_id)) for result in results]
 
     results.sort(key=lambda result: result.score, reverse=True)
     return FunctionalGroupAnalysis(
@@ -570,6 +590,24 @@ def _apply_exclusion_discount(
         return result
     discount = min(_MAX_EXCLUSION_DISCOUNT, pressure / 2.0)
     return replace(result, score=round(result.score * (1.0 - discount), 1))
+
+
+def _apply_model(result: FunctionalGroupScore, prediction) -> FunctionalGroupScore:
+    """Let the learned model set the score of the groups it covers."""
+    if prediction is None:
+        return replace(
+            result,
+            score=round(result.score * RULE_ONLY_FACTOR, 1),
+            evidence_source="rules",
+            rule_score=result.score,
+        )
+    return replace(
+        result,
+        score=prediction.score,
+        evidence_source="model",
+        model_probability=round(prediction.probability, 4),
+        rule_score=result.score,
+    )
 
 
 def _supports_coherence(metric: _BandMetrics | None, threshold: float) -> bool:

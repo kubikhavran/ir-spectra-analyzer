@@ -10,6 +10,20 @@ import numpy as np
 import pytest
 
 
+@pytest.fixture(autouse=True)
+def _band_windows_only(monkeypatch):
+    """These tests characterise the band-window rules on synthetic patterns.
+
+    The learned group model, which sets the displayed score of the groups it
+    covers, is judged on real spectra instead (tests/test_fg_model.py and
+    tools/fg_benchmark.py): synthetic single-group patterns are exactly what
+    misled earlier tuning. The rules still decide which bands support a group.
+    """
+    from processing import fg_model
+
+    monkeypatch.setattr(fg_model, "load_model", lambda path=None: None)
+
+
 def _gaussian(wn: np.ndarray, center: float, width: float, height: float) -> np.ndarray:
     return height * np.exp(-0.5 * ((wn - center) / width) ** 2)
 
