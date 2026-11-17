@@ -108,6 +108,44 @@ DEFAULT_ELEMENT_COLOR = "#334155"
 STEREO_LABEL_COLOR = QColor("#7C3AED")
 ATOM_NUMBER_COLOR = QColor("#64748B")
 
+# Ink for the on-screen canvas in the dark theme. Exports (PNG for reports,
+# clipboard images) are always drawn with the light ink on white paper.
+DARK_BOND_COLOR = QColor("#E2E8F0")
+DARK_ELEMENT_COLORS: dict[str, str] = {
+    "C": "#E2E8F0",
+    "O": "#F87171",
+    "N": "#60A5FA",
+    "S": "#FBBF24",
+    "F": "#4ADE80",
+    "Cl": "#4ADE80",
+    "Br": "#FB923C",
+    "I": "#C4B5FD",
+    "P": "#FB923C",
+}
+DARK_DEFAULT_ELEMENT_COLOR = "#CBD5E1"
+DARK_STEREO_LABEL_COLOR = QColor("#C4B5FD")
+DARK_ATOM_NUMBER_COLOR = QColor("#94A3B8")
+DARK_INVALID_FILL = QColor("#4C1D1D")
+DARK_INVALID_STROKE = QColor("#F87171")
+
+#: True while the structure is painted on screen in the dark theme.
+_dark_ink = False
+
+
+def _use_dark_ink(on_screen: bool) -> None:
+    global _dark_ink
+    _dark_ink = on_screen and theme.is_dark()
+
+
+def _ink(light: QColor, dark: QColor) -> QColor:
+    return dark if _dark_ink else light
+
+
+def _paper() -> QColor:
+    """Background the structure sits on: the canvas on screen, white in exports."""
+    return QColor(theme.SURFACE) if _dark_ink else QColor("white")
+
+
 #: Clipboard format carrying a copied part of a structure with its attachment point.
 FRAGMENT_MIME = "application/x-ir-spectra-fragment+json"
 MOLFILE_MIME = "chemical/x-mdl-molfile"
@@ -167,7 +205,21 @@ _SUPERSCRIPT_DIGITS = str.maketrans("0123456789", "⁰¹²³⁴⁵⁶⁷⁸⁹")
 
 
 def element_color(symbol: str) -> QColor:
+    if _dark_ink:
+        return QColor(DARK_ELEMENT_COLORS.get(symbol, DARK_DEFAULT_ELEMENT_COLOR))
     return QColor(ELEMENT_COLORS.get(symbol, DEFAULT_ELEMENT_COLOR))
+
+
+def screen_element_color(symbol: str) -> QColor:
+    """Element colour for widgets on screen (palette buttons, template icons)."""
+    if theme.is_dark():
+        return QColor(DARK_ELEMENT_COLORS.get(symbol, DARK_DEFAULT_ELEMENT_COLOR))
+    return QColor(ELEMENT_COLORS.get(symbol, DEFAULT_ELEMENT_COLOR))
+
+
+def screen_bond_color() -> QColor:
+    """Bond colour for widgets on screen in the active theme."""
+    return QColor(DARK_BOND_COLOR if theme.is_dark() else BOND_COLOR)
 
 
 def _charge_text(charge: int) -> str:
@@ -1079,6 +1131,7 @@ class MoleculeCanvas(QWidget):
         self, painter: QPainter, zoom: float, origin: QPointF, *, interactive: bool
     ) -> None:
         self._refresh_cache()
+        _use_dark_ink(interactive)
         model = self._model
         if model.is_empty():
             return
@@ -1092,17 +1145,17 @@ class MoleculeCanvas(QWidget):
 
         # Invalid valence markers sit underneath bonds and labels.
         if self._invalid:
-            pen = QPen(INVALID_STROKE)
+            pen = QPen(_ink(INVALID_STROKE, DARK_INVALID_STROKE))
             pen.setWidthF(1.3)
             painter.setPen(pen)
-            painter.setBrush(INVALID_FILL)
+            painter.setBrush(_ink(INVALID_FILL, DARK_INVALID_FILL))
             radius = 0.55 * font_px + 3
             for idx in self._invalid:
                 if idx < len(positions):
                     painter.drawEllipse(positions[idx], radius, radius)
 
         width = max(1.1, min(3.2, 0.035 * bond_px))
-        pen = QPen(BOND_COLOR)
+        pen = QPen(_ink(BOND_COLOR, DARK_BOND_COLOR))
         pen.setWidthF(width)
         pen.setCapStyle(Qt.PenCapStyle.RoundCap)
         pen.setJoinStyle(Qt.PenJoinStyle.RoundJoin)
@@ -1115,7 +1168,7 @@ class MoleculeCanvas(QWidget):
             a, b = model.bond_atoms(bond)
             p1, p2 = positions[a], positions[b]
             if bond in bold:
-                gap = QPen(QColor(theme.SURFACE) if interactive else QColor("white"))
+                gap = QPen(_paper())
                 gap.setWidthF(max(3.0, 0.1 * bond_px) + max(4.0, 0.12 * bond_px))
                 gap.setCapStyle(Qt.PenCapStyle.FlatCap)
                 painter.setPen(gap)
@@ -1140,7 +1193,7 @@ class MoleculeCanvas(QWidget):
             font = QFont(small)
             font.setWeight(QFont.Weight.Normal)
             painter.setFont(font)
-            painter.setPen(ATOM_NUMBER_COLOR)
+            painter.setPen(_ink(ATOM_NUMBER_COLOR, DARK_ATOM_NUMBER_COLOR))
             metrics = QFontMetricsF(font)
             for idx, pos in enumerate(positions):
                 text = str(idx + 1)
@@ -1157,7 +1210,7 @@ class MoleculeCanvas(QWidget):
             font.setItalic(True)
             font.setWeight(QFont.Weight.Bold)
             painter.setFont(font)
-            painter.setPen(STEREO_LABEL_COLOR)
+            painter.setPen(_ink(STEREO_LABEL_COLOR, DARK_STEREO_LABEL_COLOR))
             for idx, code in self._stereo_atoms.items():
                 if idx < len(positions):
                     pos = positions[idx]
@@ -1218,7 +1271,7 @@ class MoleculeCanvas(QWidget):
                     QPointF(p2.x() - nx * half, p2.y() - ny * half),
                 ]
             )
-            painter.setBrush(QBrush(BOND_COLOR))
+            painter.setBrush(QBrush(_ink(BOND_COLOR, DARK_BOND_COLOR)))
             thin = QPen(pen)
             thin.setWidthF(0.6)
             painter.setPen(thin)
@@ -1478,7 +1531,7 @@ class MoleculeCanvas(QWidget):
 
         # A soft halo keeps crossing lines away from the glyphs.
         painter.setPen(Qt.PenStyle.NoPen)
-        painter.setBrush(QColor(theme.SURFACE))
+        painter.setBrush(_paper())
         for box in layout.boxes:
             painter.drawRoundedRect(box.adjusted(-1.5, -1.5, 1.5, 1.5), 2.5, 2.5)
 

@@ -20,6 +20,14 @@ CZECH_TEXTS: dict[str, str] = {
     "&Help": "&Nápověda",
     "&Language": "&Jazyk",
     "System": "Podle systému",
+    "&Appearance": "&Vzhled",
+    "Appearance": "Vzhled",
+    "Follow system": "Podle systému",
+    "Light": "Světlý",
+    "Dark": "Tmavý",
+    "The new appearance is used the next time the application starts.": (
+        "Nový vzhled se použije při příštím spuštění aplikace."
+    ),
     "New &Window": "Nové &okno",
     "&Open Spectrum...": "&Otevřít spektrum...",
     "Open &Project...": "Otevřít &projekt...",

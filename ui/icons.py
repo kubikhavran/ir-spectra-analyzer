@@ -78,8 +78,9 @@ def _svg(name: str, color: str) -> bytes:
     ).encode()
 
 
-def pixmap(name: str, size: int = 24, color: str = theme.TEXT, scale: float = 2.0) -> QPixmap:
+def pixmap(name: str, size: int = 24, color: str | None = None, scale: float = 2.0) -> QPixmap:
     """Render one icon to a pixmap; ``scale`` is the device pixel ratio drawn for."""
+    color = color or theme.TEXT
     renderer = QSvgRenderer(QByteArray(_svg(name, color)))
     pixels = int(round(size * scale))
     image = QPixmap(QSize(pixels, pixels))
@@ -92,14 +93,18 @@ def pixmap(name: str, size: int = 24, color: str = theme.TEXT, scale: float = 2.
     return image
 
 
-@lru_cache(maxsize=64)
-def icon(name: str, color: str = theme.TEXT) -> QIcon:
+def icon(name: str, color: str | None = None) -> QIcon:
     """Icon with normal, active (accent) and disabled (faint) states."""
+    return _icon(name, color or theme.TEXT, theme.ACCENT_DARK, theme.TEXT_FAINT)
+
+
+@lru_cache(maxsize=128)
+def _icon(name: str, color: str, active: str, disabled: str) -> QIcon:
     result = QIcon()
     result.addPixmap(pixmap(name, color=color), QIcon.Mode.Normal, QIcon.State.Off)
-    result.addPixmap(pixmap(name, color=theme.ACCENT_DARK), QIcon.Mode.Normal, QIcon.State.On)
-    result.addPixmap(pixmap(name, color=theme.ACCENT_DARK), QIcon.Mode.Active, QIcon.State.Off)
-    result.addPixmap(pixmap(name, color=theme.TEXT_FAINT), QIcon.Mode.Disabled, QIcon.State.Off)
+    result.addPixmap(pixmap(name, color=active), QIcon.Mode.Normal, QIcon.State.On)
+    result.addPixmap(pixmap(name, color=active), QIcon.Mode.Active, QIcon.State.Off)
+    result.addPixmap(pixmap(name, color=disabled), QIcon.Mode.Disabled, QIcon.State.Off)
     return result
 
 

@@ -274,7 +274,7 @@ class ConsensusPanel(QWidget):
 
     def _score_color(self, score: float) -> QColor:
         if score >= 70.0:
-            return QColor("#1E8449")
+            return QColor(theme.SUCCESS)
         if score >= 45.0:
-            return QColor("#AF6E00")
-        return QColor("#566573")
+            return QColor(theme.WARNING)
+        return QColor(theme.TEXT_MUTED)

@@ -23,7 +23,7 @@ class Settings:
         "recent_files": [],
         "window_width": 1400,
         "window_height": 900,
-        "theme": "dark",
+        "appearance": "dark",  # "dark", "light" or "system"
         "auto_detect_peaks": True,
         "peak_prominence": 0.01,
         "report_presets": [],
