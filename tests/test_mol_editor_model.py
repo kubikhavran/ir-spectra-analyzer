@@ -1048,3 +1048,139 @@ def test_bold_bonds_survive_mol_block_round_trip():
     assert not model.bond_bold(0)
     assert model.undo()
     assert model.bond_bold(0)
+
+
+def test_pentavalent_nitrogen_normalizes_to_zwitterion():
+    nitro = MolEditorModel.from_smiles("CN")
+    nitro.sprout_atom(1, "O", bond_order=2)
+    nitro.sprout_atom(1, "O", bond_order=2)
+    assert nitro.to_smiles() == _canon("C[N+](=O)[O-]")
+    assert nitro.atom_charge(1) == 1
+    assert sum(1 for i in range(nitro.atom_count) if nitro.atom_charge(i) == -1) == 1
+    assert not nitro.invalid_atom_indices()
+    # Deleting the other =O returns N to neutral nitroso and clears O-.
+    double_o = next(b for b in nitro.atom_bonds(1) if nitro.bond_order(b) == 2)
+    nitro.delete_bond(double_o)
+    assert nitro.atom_charge(1) == 0
+    assert all(nitro.atom_charge(i) == 0 for i in range(nitro.atom_count))
+
+    pyr = MolEditorModel.from_smiles("c1ccncc1")
+    n_idx = next(i for i in range(pyr.atom_count) if pyr.atom_symbol(i) == "N")
+    pyr.sprout_atom(n_idx, "O", bond_order=2)
+    assert pyr.to_smiles() == _canon("[O-][n+]1ccccc1")
+    assert pyr.atom_charge(n_idx) == 1
+    assert not pyr.invalid_atom_indices()
+
+    # NMe5 cannot normalize via =O and must stay flagged as invalid valence.
+    nme5 = MolEditorModel.from_smiles("CN(C)C")
+    nme5.sprout_atom(1)
+    nme5.sprout_atom(1)
+    assert 1 in nme5.invalid_atom_indices()
+
+
+def test_single_bonded_onium_charges_and_neutral_double_bonded_species():
+    sulfonium = MolEditorModel.from_smiles("CSC")
+    new_c = sulfonium.sprout_atom(1)
+    assert sulfonium.to_smiles() == _canon("C[S+](C)C")
+    assert not sulfonium.invalid_atom_indices()
+    sulfonium.delete_bond(_bond(sulfonium, 1, new_c))
+    assert sulfonium.atom_charge(1) == 0
+
+    phosphonium = MolEditorModel.from_smiles("CP(C)C")
+    phosphonium.sprout_atom(1)
+    assert phosphonium.to_smiles() == _canon("C[P+](C)(C)C")
+    assert not phosphonium.invalid_atom_indices()
+
+    chloronium = MolEditorModel.from_smiles("CCl")
+    chloronium.sprout_atom(1)
+    assert chloronium.to_smiles() == _canon("C[Cl+]C")
+
+    # H-phosphonate / DMSO have a P=O or S=O double bond: must stay neutral.
+    h_phosphonate = MolEditorModel.from_smiles("COP(=O)OC")
+    p_idx = next(i for i in range(h_phosphonate.atom_count) if h_phosphonate.atom_symbol(i) == "P")
+    assert h_phosphonate.atom_charge(p_idx) == 0
+    dmso = MolEditorModel.from_smiles("CS(=O)C")
+    s_idx = next(i for i in range(dmso.atom_count) if dmso.atom_symbol(i) == "S")
+    assert dmso.atom_charge(s_idx) == 0
+
+
+def test_alkylating_anion_neutralizes_and_element_change_clears_charge_lock():
+    carboxylate = MolEditorModel.from_smiles("CC(=O)[O-]")
+    o_minus = next(i for i in range(carboxylate.atom_count) if carboxylate.atom_charge(i) == -1)
+    carboxylate.sprout_atom(o_minus)
+    assert carboxylate.to_smiles() == _canon("CC(=O)OC")
+    assert carboxylate.atom_charge(o_minus) == 0
+    assert not carboxylate.invalid_atom_indices()
+
+    alkoxide = MolEditorModel.from_smiles("C[O-]")
+    alkoxide.set_atom_symbol(1, "N")
+    for _ in range(3):
+        alkoxide.sprout_atom(1)
+    assert alkoxide.to_smiles() == _canon("C[N+](C)(C)C")
+    assert alkoxide.atom_charge(1) == 1
+    assert not alkoxide.invalid_atom_indices()
+
+
+def test_azide_diazo_isocyanide_zwitterions_and_iminium():
+    azide = MolEditorModel.from_smiles("CN")
+    n2 = azide.sprout_atom(1, "N", bond_order=2)
+    azide.sprout_atom(n2, "N", bond_order=2)
+    assert azide.to_smiles() == _canon("CN=[N+]=[N-]")
+    assert azide.net_charge() == 0
+    assert not azide.invalid_atom_indices()
+
+    diazo = MolEditorModel.from_smiles("C=N")
+    diazo.sprout_atom(1, "N", bond_order=2)
+    assert diazo.to_smiles() == _canon("C=[N+]=[N-]")
+    assert diazo.net_charge() == 0
+
+    isocyanide = MolEditorModel.from_smiles("CN")
+    isocyanide.sprout_atom(1, "C", bond_order=3)
+    assert isocyanide.to_smiles() == _canon("[C-]#[N+]C")
+    assert isocyanide.net_charge() == 0
+
+    # Iminium C=[N+](C)C keeps =CH2 neutral (+1 total).
+    iminium = MolEditorModel.from_smiles("C=N")
+    iminium.sprout_atom(1)
+    iminium.sprout_atom(1)
+    assert iminium.to_smiles() == _canon("C=[N+](C)C")
+    assert iminium.net_charge() == 1
+
+
+def test_wavy_bond_mol_round_trip_and_clean_2d():
+    from chemistry.mol_editor_model import STEREO_WAVY
+
+    model = MolEditorModel.from_smiles("CC(O)Cl")
+    bond = model.find_bond(1, 2)
+    assert bond is not None
+    model.set_bond_stereo(bond, STEREO_WAVY)
+    assert model.bond_stereo(bond) == STEREO_WAVY
+
+    block = model.to_mol_block()
+    reloaded = MolEditorModel.from_mol_block(block)
+    reloaded_bond = reloaded.find_bond(1, 2)
+    assert reloaded_bond is not None
+    assert reloaded.bond_stereo(reloaded_bond) == STEREO_WAVY
+
+    model.clean_2d()
+    cleaned_bond = model.find_bond(1, 2)
+    assert cleaned_bond is not None
+    assert model.bond_stereo(cleaned_bond) == STEREO_WAVY
+
+
+def test_new_heteroaromatic_templates_and_fusion():
+    expected = {
+        "pyrimidine": "c1cncnc1",
+        "imidazole": "c1c[nH]cn1",
+        "indole": "c1ccc2[nH]ccc2c1",
+        "quinoline": "c1ccc2ncccc2c1",
+    }
+    for name, smi in expected.items():
+        m = MolEditorModel()
+        m.add_ring_template(name, center=(0.0, 0.0))
+        assert m.to_smiles() == _canon(smi)
+        assert not m.invalid_atom_indices()
+
+    fused = MolEditorModel.from_smiles("c1ccccc1")
+    fused.add_ring_template("imidazole", target_bond_idx=0)
+    assert fused.to_smiles() == _canon("c1ccc2[nH]cnc2c1")

@@ -180,3 +180,27 @@ def test_hash_bond_stays_on_the_bond_it_was_drawn_on():
     assert svg is not None
     # 0-based: the C–N bond the mol block hashes, not the C–CH3 bond next to it.
     assert _hashed_bond_atoms(svg) == {1, 2}
+
+
+def test_bold_bonds_from_editor_render_thicker_in_svg_and_png(qapp):
+    import re
+
+    from chemistry.mol_editor_model import MolEditorModel
+    from chemistry.structure_renderer import render_structure, render_to_svg
+
+    model = MolEditorModel()
+    model.add_ring_template("oxane_chair", center=(0.0, 0.0))
+    block = model.to_mol_block()
+    svg = render_to_svg(mol_block=block)
+    assert svg is not None
+    widths = {
+        int(m.group(1)): float(m.group(2))
+        for m in re.finditer(
+            r"class=['\"][^'\"]*\bbond-(\d+)\b[^'\"]*['\"][^>]*stroke-width:\s*([\d.]+)px",
+            svg,
+        )
+    }
+    assert widths[0] > widths[3] * 2.0
+    rendered = render_structure(mol_block=block)
+    assert rendered is not None
+    assert rendered.png.startswith(b"\x89PNG")

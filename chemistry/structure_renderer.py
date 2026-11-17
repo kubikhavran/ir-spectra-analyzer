@@ -101,7 +101,8 @@ def render_to_svg(
     if mol is None:
         return None
     natural = _natural_size(mol)
-    return _draw_svg(mol, _canvas_size(natural, size), natural[0])
+    svg = _draw_svg(mol, _canvas_size(natural, size), natural[0])
+    return _embolden_svg_bonds(svg, _bold_bond_indices(mol_block)) if svg else None
 
 
 def render_structure(
@@ -128,6 +129,7 @@ def render_structure(
     svg = _draw_svg(mol, (width, height), natural_w)
     if not svg:
         return None
+    svg = _embolden_svg_bonds(svg, _bold_bond_indices(mol_block))
     png = svg_to_png_bytes(svg, width, height)
     if not png:
         return None
@@ -333,6 +335,41 @@ def _draw_svg(mol: Any, canvas: tuple[int, int], natural_width: float) -> str | 
         return cast(str, drawer.GetDrawingText())
     except Exception:  # noqa: BLE001
         return None
+
+
+_BOLD_TAG_RE = re.compile(r"IRSA bold=([\d,]+)")
+_SVG_BOND_PATH_RE = re.compile(r"<path\b[^>]*\bclass=['\"][^'\"]*\bbond-(\d+)\b[^'\"]*['\"][^>]*>")
+_SVG_STROKE_WIDTH_RE = re.compile(r"stroke-width:\s*([\d.]+)px")
+
+
+def _bold_bond_indices(mol_block: str) -> set[int]:
+    """Read 0-based bold bond indices encoded on line 3 by MolEditorModel."""
+    if not mol_block:
+        return set()
+    lines = mol_block.split("\n")
+    if len(lines) < 3:
+        return set()
+    match = _BOLD_TAG_RE.search(lines[2])
+    if match is None:
+        return set()
+    return {int(tok) - 1 for tok in match.group(1).split(",") if tok.isdigit() and int(tok) > 0}
+
+
+def _embolden_svg_bonds(svg: str, bold_bonds: set[int]) -> str:
+    """Make bold bonds (chair front edges, perspective bonds) thick in RDKit SVG."""
+    if not bold_bonds or not svg:
+        return svg
+
+    def _thicken(match: re.Match[str]) -> str:
+        if int(match.group(1)) not in bold_bonds:
+            return match.group(0)
+        tag = _SVG_STROKE_WIDTH_RE.sub(
+            lambda m: f"stroke-width:{float(m.group(1)) * 2.6:.1f}px",
+            match.group(0),
+        )
+        return tag.replace("stroke-linecap:butt", "stroke-linecap:round")
+
+    return _SVG_BOND_PATH_RE.sub(_thicken, svg)
 
 
 def _natural_size(mol: Any) -> tuple[float, float]:

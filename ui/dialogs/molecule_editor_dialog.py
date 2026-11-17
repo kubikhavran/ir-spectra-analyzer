@@ -19,6 +19,7 @@ MOL/InChI export and a structure check.
 
 from __future__ import annotations
 
+import math
 from pathlib import Path
 
 from PySide6.QtCore import QPointF, QRectF, QSize, Qt
@@ -29,6 +30,7 @@ from PySide6.QtGui import (
     QIcon,
     QImage,
     QPainter,
+    QPainterPath,
     QPen,
     QPixmap,
     QPolygonF,
@@ -83,6 +85,7 @@ _TOOL_BUTTONS: tuple[tuple[str, str, str], ...] = (
     ("bond_triple", "Triple Bond", "3"),
     ("bond_wedge", "Wedge Up", "W"),
     ("bond_hash", "Hash Down", "H"),
+    ("bond_wavy", "Wavy Bond", "U"),
     ("bond_bold", "Bold Bond", "B"),
     ("chain", "Carbon Chain", "C"),
 )
@@ -95,9 +98,13 @@ _RING_BUTTONS: tuple[tuple[str, str], ...] = (
     ("benzene", "Benzene"),
     ("naphthalene", "Naphthalene"),
     ("pyridine", "Pyridine"),
+    ("pyrimidine", "Pyrimidine"),
     ("furan", "Furan"),
     ("thiophene", "Thiophene"),
     ("pyrrole", "Pyrrole"),
+    ("imidazole", "Imidazole"),
+    ("indole", "Indole"),
+    ("quinoline", "Quinoline"),
 )
 # Saturated O/N rings, chairs and sugars (the building blocks of carbohydrates).
 _HETEROCYCLE_BUTTONS: tuple[tuple[str, str], ...] = (
@@ -220,6 +227,16 @@ def _tool_icon(tool: str) -> QIcon:
             cx, cy = 5 + 14 * t, 19 - 14 * t
             h = 0.6 + 2.8 * t
             painter.drawLine(QPointF(cx - h, cy - h), QPointF(cx + h, cy + h))
+    elif tool == "bond_wavy":
+        path = QPainterPath(a)
+        dx, dy = b.x() - a.x(), b.y() - a.y()
+        nx, ny = -dy / math.hypot(dx, dy), dx / math.hypot(dx, dy)
+        steps = 24
+        for k in range(1, steps + 1):
+            t = k / steps
+            wave = 2.2 * math.sin(2.0 * math.pi * 3.0 * t)
+            path.lineTo(a.x() + dx * t + nx * wave, a.y() + dy * t + ny * wave)
+        painter.drawPath(path)
     elif tool in ("rotate_left", "rotate_right"):
         painter.drawArc(
             QRectF(5, 5, 14, 14), 30 * 16 if tool == "rotate_left" else 150 * 16, 270 * 16

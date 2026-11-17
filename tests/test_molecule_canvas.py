@@ -767,3 +767,33 @@ def test_drag_from_chair_atom_snaps_to_axial_and_equatorial(canvas):
         assert model.atom_count == before + 1
         (ax, ay), (nx, ny) = model.atom_position(atom), model.atom_position(new)
         assert math.atan2(ny - ay, nx - ax) == pytest.approx(target_angle, abs=1e-6)
+
+
+def test_wavy_bond_tool_shortcut_and_paint(canvas):
+    from chemistry.mol_editor_model import STEREO_WAVY
+
+    canvas._cursor = None
+    QTest.keyClick(canvas, Qt.Key.Key_U)
+    assert canvas.tool() == "bond_wavy"
+    canvas.load_smiles("CC")
+    _hover(canvas, _bond_mid(canvas, 0))
+    QTest.keyClick(canvas, Qt.Key.Key_U)
+    assert canvas.model().bond_stereo(0) == STEREO_WAVY
+    canvas.grab()
+
+
+def test_open_atom_properties_preserves_auto_charge_when_charge_untouched(canvas, monkeypatch):
+    from ui.widgets import molecule_canvas
+
+    canvas.load_smiles("C[N+](C)(C)C")
+
+    def fake_exec(dialog):
+        dialog.isotope_spin.setValue(15)
+        return molecule_canvas.QDialog.DialogCode.Accepted
+
+    monkeypatch.setattr(molecule_canvas.AtomPropertiesDialog, "exec", fake_exec)
+    assert canvas.open_atom_properties(1)
+    assert canvas.to_smiles() == "C[15N+](C)(C)C"
+    # Automatic charge still reverts when a methyl is removed.
+    canvas.model().delete_atom(4)
+    assert canvas.model().atom_charge(1) == 0

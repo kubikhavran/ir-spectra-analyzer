@@ -39,10 +39,12 @@ UNDO_LIMIT = 100
 STEREO_NONE = "none"
 STEREO_WEDGE = "wedge"
 STEREO_HASH = "hash"
+STEREO_WAVY = "wavy"
 _STEREO_TO_DIR = {
     STEREO_NONE: Chem.BondDir.NONE,
     STEREO_WEDGE: Chem.BondDir.BEGINWEDGE,
     STEREO_HASH: Chem.BondDir.BEGINDASH,
+    STEREO_WAVY: Chem.BondDir.UNKNOWN,
 }
 _ORDER_TO_TYPE = {
     1: Chem.BondType.SINGLE,
@@ -72,20 +74,52 @@ _IMPLICIT_H_ELEMENTS = frozenset(
     {"B", "C", "N", "O", "P", "S", "F", "Cl", "Br", "I", "Si", "Se", "As", "Ge", "Te"}
 )
 
+# Maximum covalent bond order an anion (formal charge < 0) can carry before a
+# newly added bond neutralizes the negative charge (e.g. R-COO⁻ + Me → R-COOMe).
+_MAX_ANION_BONDS: dict[str, int] = {
+    "C": 3,
+    "N": 2,
+    "O": 1,
+    "S": 1,
+    "Se": 1,
+    "F": 0,
+    "Cl": 0,
+    "Br": 0,
+    "I": 0,
+}
+
 # Bond / atom properties kept on the RWMol (they survive undo copies).
 _BOLD = "_bold"
 _AUTO_CHARGE = "_auto_charge"
 _MANUAL_CHARGE = "_manual_charge"
+_AUTO_ZWITTER = "_auto_zwitter"
 # The MOL file's comment line (line 3) carries what V2000 cannot: bold bonds.
 _MOLFILE_TAG = "IRSA"
 
 # Formal charge an atom gets automatically from its bond count, as ChemDraw
-# and JSME do: a four-bonded N is N⁺, a three-bonded O is O⁺, a four-bonded
-# B is B⁻.  (symbol, bonds incl. H) → charge.
+# and Marvin do: a four-bonded N is N⁺, a three-bonded O is O⁺, a four-bonded
+# B/Al/Ga is M⁻, six-bonded P/Sb is M⁻.  (symbol, bonds incl. H) → charge.
 _AUTO_CHARGES: dict[tuple[str, int], int] = {
     ("N", 4): 1,
     ("O", 3): 1,
     ("B", 4): -1,
+    ("Al", 4): -1,
+    ("Ga", 4): -1,
+    ("P", 6): -1,
+    ("Sb", 6): -1,
+}
+
+# Onium ions formed only when every bond to the atom is a single bond, so
+# double-bonded species like sulfoxides, H-phosphonates (R2P(=O)H) or PhI=O
+# stay neutral.
+_AUTO_CHARGES_ALL_SINGLE: dict[tuple[str, int], int] = {
+    ("S", 3): 1,
+    ("Se", 3): 1,
+    ("P", 4): 1,
+    ("As", 4): 1,
+    ("Cl", 2): 1,
+    ("Br", 2): 1,
+    ("I", 2): 1,
 }
 
 _SUBSCRIPTS = str.maketrans("0123456789", "₀₁₂₃₄₅₆₇₈₉")
@@ -126,14 +160,18 @@ RING_TEMPLATES: dict[str, _RingTemplate] = {
     "cyclohexane": _RingTemplate("C1CCCCC1", 0, (0, 1), False),
     "cycloheptane": _RingTemplate("C1CCCCCC1", 0, (0, 1), False),
     "benzene": _RingTemplate("c1ccccc1", 0, (0, 1), True),
-    # 4-pyridyl when attached, N para to the attachment point.
+    # 4-pyridyl / 4-pyrimidinyl when attached.
     "pyridine": _RingTemplate("c1ccncc1", 0, (0, 1), True),
-    # 2-furyl / 2-thienyl / 2-pyrrolyl; fusion gives benzofuran-type rings.
+    "pyrimidine": _RingTemplate("c1ncncc1", 4, (4, 5), True),
+    # 2-furyl / 2-thienyl / 2-pyrrolyl / 2-imidazolyl; fusion gives benzo-rings.
     "furan": _RingTemplate("c1ccco1", 0, (0, 1), True),
     "thiophene": _RingTemplate("c1cccs1", 0, (0, 1), True),
     "pyrrole": _RingTemplate("c1ccc[nH]1", 0, (0, 1), True),
-    # 1-naphthyl when attached.
+    "imidazole": _RingTemplate("c1cnc[nH]1", 3, (0, 1), True),
+    # 1-naphthyl / 3-indolyl / 2-quinolyl when attached.
     "naphthalene": _RingTemplate("c1ccc2ccccc2c1", 9, (0, 1), True),
+    "indole": _RingTemplate("c1ccc2[nH]ccc2c1", 6, (0, 1), True),
+    "quinoline": _RingTemplate("c1ccc2ncccc2c1", 5, (0, 1), True),
     # Saturated heterocycles: the ether rings sugars are built on, and amines.
     "oxane": _RingTemplate("C1CCOCC1", 0, (0, 1), False),
     "oxolane": _RingTemplate("C1CCOC1", 0, (0, 1), False),
@@ -412,6 +450,15 @@ class MolEditorModel:
 
     @staticmethod
     def _read_molfile_tags(mol: Chem.RWMol, mol_block: str) -> None:
+        for bond in mol.GetBonds():
+            if bond.GetBondDir() == Chem.BondDir.NONE and (
+                (bond.HasProp("_UnknownStereo") and bond.GetIntProp("_UnknownStereo") == 1)
+                or (
+                    bond.HasProp("_MolFileBondStereo")
+                    and bond.GetIntProp("_MolFileBondStereo") == 4
+                )
+            ):
+                bond.SetBondDir(Chem.BondDir.UNKNOWN)
         lines = mol_block.split("\n")
         if len(lines) < 3:
             return
@@ -538,6 +585,8 @@ class MolEditorModel:
             return STEREO_WEDGE
         if direction == Chem.BondDir.BEGINDASH:
             return STEREO_HASH
+        if direction == Chem.BondDir.UNKNOWN:
+            return STEREO_WAVY
         return STEREO_NONE
 
     def find_bond(self, atom_a: int, atom_b: int) -> int | None:
@@ -702,6 +751,7 @@ class MolEditorModel:
         self._touch()
 
     def _touch(self) -> None:
+        self._normalize_hypervalent_nitrogen()
         self._apply_auto_charges()
         with _quiet_rdkit():
             self._mol.UpdatePropertyCache(strict=False)
@@ -716,12 +766,105 @@ class MolEditorModel:
         return total
 
     def _auto_charge_for(self, atom: Chem.Atom) -> int:
-        return _AUTO_CHARGES.get((atom.GetSymbol(), self._bond_valence(atom)), 0)
+        key = (atom.GetSymbol(), self._bond_valence(atom))
+        if key in _AUTO_CHARGES:
+            return _AUTO_CHARGES[key]
+        if key in _AUTO_CHARGES_ALL_SINGLE and all(
+            b.GetBondType() == Chem.BondType.SINGLE for b in atom.GetBonds()
+        ):
+            return _AUTO_CHARGES_ALL_SINGLE[key]
+        return 0
+
+    @staticmethod
+    def _clear_charge_marks(atom: Chem.Atom) -> None:
+        for prop in (_AUTO_CHARGE, _MANUAL_CHARGE, _AUTO_ZWITTER):
+            if atom.HasProp(prop):
+                atom.ClearProp(prop)
+
+    def _normalize_hypervalent_nitrogen(self) -> None:
+        """Convert pentavalent neutral N(=O)=O, R3N=O, pyN=O or R2C=N(R)=O to N⁺–O⁻."""
+        for atom in self._mol.GetAtoms():
+            if (
+                atom.GetSymbol() != "N"
+                or atom.GetFormalCharge() != 0
+                or atom.HasProp(_MANUAL_CHARGE)
+                or atom.GetNumRadicalElectrons()
+                or self._bond_valence(atom) != 5
+            ):
+                continue
+            candidates = [
+                b
+                for b in atom.GetBonds()
+                if b.GetBondType() == Chem.BondType.DOUBLE
+                for other in [b.GetOtherAtom(atom)]
+                if (
+                    other.GetSymbol() in ("O", "S")
+                    and other.GetDegree() == 1
+                    and other.GetFormalCharge() == 0
+                    and not other.HasProp(_MANUAL_CHARGE)
+                    and not other.GetNumRadicalElectrons()
+                    and not (other.GetNoImplicit() and other.GetNumExplicitHs())
+                )
+            ]
+            if not candidates:
+                continue
+            candidates.sort(key=lambda b: (b.GetOtherAtom(atom).GetSymbol() != "O", -b.GetIdx()))
+            bond = candidates[0]
+            other = bond.GetOtherAtom(atom)
+            bond.SetBondType(Chem.BondType.SINGLE)
+            bond.SetStereo(Chem.BondStereo.STEREONONE)
+            other.SetFormalCharge(-1)
+            other.SetBoolProp(_AUTO_ZWITTER, True)
+            if other.GetSymbol() in _IMPLICIT_H_ELEMENTS and not other.GetNoImplicit():
+                other.SetNumExplicitHs(0)
+
+    @staticmethod
+    def _is_zwitter_partner(atom: Chem.Atom) -> bool:
+        """True when an automatic -1 partner is still paired with its auto N⁺/O⁺."""
+        if (
+            atom.GetFormalCharge() != -1
+            or not atom.HasProp(_AUTO_ZWITTER)
+            or atom.GetDegree() != 1
+            or atom.GetNumRadicalElectrons()
+            or (atom.GetNoImplicit() and atom.GetNumExplicitHs())
+        ):
+            return False
+        bond = atom.GetBonds()[0]
+        nbr = bond.GetOtherAtom(atom)
+        if nbr.GetFormalCharge() != 1 or not nbr.HasProp(_AUTO_CHARGE):
+            return False
+        order = int(round(bond.GetBondTypeAsDouble()))
+        sym = atom.GetSymbol()
+        if sym in ("O", "S") and order == 1 and nbr.GetSymbol() == "N":
+            return True
+        if sym == "N" and order == 2 and nbr.GetSymbol() == "N":
+            return True
+        return sym == "C" and order == 3 and nbr.GetSymbol() in ("N", "O")
 
     def _apply_auto_charges(self) -> None:
-        """Give N⁺/O⁺/B⁻ their charge as bonds are added, and take it back."""
+        """Maintain automatic formal charges from bond counts and valence rules."""
         for atom in self._mol.GetAtoms():
-            if atom.HasProp(_MANUAL_CHARGE) or atom.GetNumRadicalElectrons():
+            charge = atom.GetFormalCharge()
+            # Alkylating/bonding onto an anion past its octet neutralizes it
+            # (e.g. R-COO⁻ + Me → R-COOMe, Cl⁻ + C → R-Cl).
+            if charge < 0 and not atom.GetNumRadicalElectrons():
+                max_anion = _MAX_ANION_BONDS.get(atom.GetSymbol())
+                if max_anion is not None:
+                    valence = self._bond_valence(atom)
+                    if valence > max_anion:
+                        new_charge = min(0, charge + (valence - max_anion))
+                        if new_charge != charge:
+                            atom.SetFormalCharge(new_charge)
+                            if new_charge == 0:
+                                self._clear_charge_marks(atom)
+                            if (
+                                atom.GetSymbol() in _IMPLICIT_H_ELEMENTS
+                                and not atom.GetNoImplicit()
+                            ):
+                                atom.SetNumExplicitHs(0)
+            if atom.HasProp(_MANUAL_CHARGE) or atom.HasProp(_AUTO_ZWITTER):
+                continue
+            if atom.GetNumRadicalElectrons():
                 continue
             wanted = self._auto_charge_for(atom)
             current = atom.GetFormalCharge()
@@ -740,6 +883,58 @@ class MolEditorModel:
             if atom.GetSymbol() in _IMPLICIT_H_ELEMENTS and not atom.GetNoImplicit():
                 atom.SetNumExplicitHs(0)
 
+        # Revert stale zwitterionic negative charges, then pair new ones
+        # (azides R-N=[N+]=[N-], diazo R2C=[N+]=[N-], isocyanides R-[N+]#[C-]).
+        for atom in self._mol.GetAtoms():
+            if atom.HasProp(_AUTO_ZWITTER) and not self._is_zwitter_partner(atom):
+                atom.ClearProp(_AUTO_ZWITTER)
+                if atom.GetFormalCharge() == -1:
+                    atom.SetFormalCharge(0)
+                    if atom.GetSymbol() in _IMPLICIT_H_ELEMENTS and not atom.GetNoImplicit():
+                        atom.SetNumExplicitHs(0)
+
+        for center in self._mol.GetAtoms():
+            if (
+                center.GetFormalCharge() != 1
+                or not center.HasProp(_AUTO_CHARGE)
+                or center.HasProp(_MANUAL_CHARGE)
+                or any(n.GetFormalCharge() < 0 for n in center.GetNeighbors())
+            ):
+                continue
+            candidates = [
+                b
+                for b in center.GetBonds()
+                for other in [b.GetOtherAtom(center)]
+                if (
+                    other.GetDegree() == 1
+                    and other.GetFormalCharge() == 0
+                    and not other.HasProp(_MANUAL_CHARGE)
+                    and not other.HasProp(_AUTO_CHARGE)
+                    and not other.GetNumRadicalElectrons()
+                    and not (other.GetNoImplicit() and other.GetNumExplicitHs())
+                    and (
+                        (
+                            center.GetSymbol() == "N"
+                            and other.GetSymbol() == "N"
+                            and b.GetBondType() == Chem.BondType.DOUBLE
+                        )
+                        or (
+                            center.GetSymbol() in ("N", "O")
+                            and other.GetSymbol() == "C"
+                            and b.GetBondType() == Chem.BondType.TRIPLE
+                        )
+                    )
+                )
+            ]
+            if not candidates:
+                continue
+            candidates.sort(key=lambda b: -b.GetIdx())
+            other = candidates[0].GetOtherAtom(center)
+            other.SetFormalCharge(-1)
+            other.SetBoolProp(_AUTO_ZWITTER, True)
+            if other.GetSymbol() in _IMPLICIT_H_ELEMENTS and not other.GetNoImplicit():
+                other.SetNumExplicitHs(0)
+
     def _mark_loaded_charges(self) -> None:
         """Charges read from SMILES/MOL count as automatic when the rules agree."""
         for atom in self._mol.GetAtoms():
@@ -751,8 +946,9 @@ class MolEditorModel:
                 atom.SetBoolProp(_MANUAL_CHARGE, True)
 
     def _mark_manual_charge(self, atom: Chem.Atom) -> None:
-        if atom.HasProp(_AUTO_CHARGE):
-            atom.ClearProp(_AUTO_CHARGE)
+        for prop in (_AUTO_CHARGE, _AUTO_ZWITTER):
+            if atom.HasProp(prop):
+                atom.ClearProp(prop)
         atom.SetBoolProp(_MANUAL_CHARGE, True)
 
     # ------------------------------------------------------------------
@@ -909,6 +1105,7 @@ class MolEditorModel:
         self._push_undo()
         atom.SetAtomicNum(template.GetAtomicNum())
         atom.SetFormalCharge(0)
+        self._clear_charge_marks(atom)
         atom.SetIsotope(0)
         atom.SetNumExplicitHs(0)
         atom.SetNoImplicit(template.GetNoImplicit())
@@ -1030,8 +1227,18 @@ class MolEditorModel:
             begin = bond.GetBeginAtomIdx()
             if current_stereo == stereo_dir and begin == atom_a:
                 atom_a, atom_b = atom_b, atom_a  # flip the wedge
+            if atom_a == begin:
+                bond.SetBondType(Chem.BondType.SINGLE)
+                bond.SetBondDir(_STEREO_TO_DIR.get(stereo_dir, Chem.BondDir.NONE))
+                bond.SetIsAromatic(False)
+                bond.SetStereo(Chem.BondStereo.STEREONONE)
+                self._touch()
+                return int(bond.GetIdx())
+            bold = bond.HasProp(_BOLD)
             self._mol.RemoveBond(begin, bond.GetEndAtomIdx())
             idx = self._add_bond(atom_a, atom_b, 1, stereo_dir)
+            if bold:
+                self._mol.GetBondWithIdx(idx).SetBoolProp(_BOLD, True)
             self._touch()
             return idx
         if cycle_on_existing and order == current and current_stereo == STEREO_NONE:
@@ -1509,17 +1716,27 @@ class MolEditorModel:
         ny = sum(y for _, y in new) / len(new)
         for i, (x, y) in enumerate(new):
             self._set_position(i, x - nx + cx, y - ny + cy)
+        wavy = {
+            frozenset((b.GetBeginAtomIdx(), b.GetEndAtomIdx()))
+            for b in self._mol.GetBonds()
+            if b.GetBondDir() == Chem.BondDir.UNKNOWN
+        }
         directions = [
             (b.GetBeginAtomIdx(), b.GetEndAtomIdx(), b.GetBondDir()) for b in work.GetBonds()
         ]
         for begin, end, direction in directions:
             target = self._mol.GetBondBetweenAtoms(begin, end)
+            if frozenset((begin, end)) in wavy and direction == Chem.BondDir.NONE:
+                continue  # keep the wavy "unknown stereo" bond the user drew
             if target.GetBeginAtomIdx() != begin and direction != Chem.BondDir.NONE:
                 # WedgeMolBonds may need the wedge to start at the other atom.
                 bond_type = target.GetBondType()
+                bold = target.HasProp(_BOLD)
                 self._mol.RemoveBond(end, begin)
                 self._mol.AddBond(begin, end, bond_type)
                 target = self._mol.GetBondBetweenAtoms(begin, end)
+                if bold:
+                    target.SetBoolProp(_BOLD, True)
             target.SetBondDir(direction)
         self._touch()
 
@@ -1568,15 +1785,23 @@ class MolEditorModel:
             self._make_atom(symbol)  # validates
         self._push_undo()
         atom = self._mol.GetAtomWithIdx(atom_idx)
-        if symbol is not None and symbol != atom.GetSymbol():
-            template = self._make_atom(symbol)
+        symbol_changed = symbol is not None and symbol != atom.GetSymbol()
+        if symbol_changed:
+            template = self._make_atom(symbol)  # type: ignore[arg-type]
             atom.SetAtomicNum(template.GetAtomicNum())
             atom.SetNoImplicit(template.GetNoImplicit())
             atom.SetNumExplicitHs(0)
             atom.SetIsAromatic(False)
+            self._clear_charge_marks(atom)
+            if charge is None:
+                atom.SetFormalCharge(0)
         if charge is not None:
-            atom.SetFormalCharge(max(-8, min(8, int(charge))))
-            self._mark_manual_charge(atom)
+            new_charge = max(-8, min(8, int(charge)))
+            atom.SetFormalCharge(new_charge)
+            if new_charge == self._auto_charge_for(atom):
+                self._clear_charge_marks(atom)
+            else:
+                self._mark_manual_charge(atom)
         if isotope is not None:
             atom.SetIsotope(max(0, int(isotope)))
         if radicals is not None:

@@ -390,12 +390,22 @@ def test_draw_tab_layout(native_dialog):
         "bond_triple",
         "bond_wedge",
         "bond_hash",
+        "bond_wavy",
         "bond_bold",
         "chain",
     }
-    assert {"cyclopropane", "benzene", "naphthalene", "pyridine", "furan", "thiophene"} <= set(
-        dlg._ring_buttons
-    )
+    assert {
+        "cyclopropane",
+        "benzene",
+        "naphthalene",
+        "pyridine",
+        "pyrimidine",
+        "furan",
+        "thiophene",
+        "imidazole",
+        "indole",
+        "quinoline",
+    } <= set(dlg._ring_buttons)
     assert {"-OH", "-NH2", "-COOH", "-NO2", "-TMS", "-Boc"} <= set(dlg._group_buttons)
     assert list(dlg._element_buttons)[:4] == ["C", "H", "O", "N"]
     assert dlg._tool_buttons["bond_single"].isChecked()

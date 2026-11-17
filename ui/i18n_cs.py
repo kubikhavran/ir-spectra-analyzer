@@ -903,12 +903,21 @@ CZECH_TEXTS: dict[str, str] = {
     "click a bond to make it bold or thin": (
         "Tučná vazba (přední hrana židličky nebo perspektivy); klik na vazbu ji zesílí nebo zúží"
     ),
-    "Bond: 1/2/3 order, W wedge, H hash, B bold, +/− length, Del removes": (
-        "Vazba: 1/2/3 násobnost, W klín, H šrafy, B tučná, +/− délka, Del smaže"
+    "Bond: 1/2/3 order, W wedge, H hash, U wavy, B bold, +/− length, Del removes": (
+        "Vazba: 1/2/3 násobnost, W klín, H šrafy, U vlnitá, B tučná, +/− délka, Del smaže"
     ),
     "Click or drag to draw bonds (Shift = longer, Alt = any angle); "
     "click a bond: single → double → triple → wedge → reversed wedge": (
         "Kreslete kliknutím nebo tažením (Shift = delší, Alt = libovolný úhel); "
         "klik na vazbu: jednoduchá → dvojná → trojná → klín → obrácený klín"
+    ),
+    "Pyrimidine": "Pyrimidin",
+    "Imidazole": "Imidazol",
+    "Indole": "Indol",
+    "Quinoline": "Chinolin",
+    "Wavy Bond": "Vlnitá vazba",
+    "Wavy bond (unknown stereo)": "Vlnitá vazba (neurčená stereochemie)",
+    "Wavy bond (unspecified or racemic stereochemistry)": (
+        "Vlnitá vazba (neurčená nebo racemická stereochemie)"
     ),
 }

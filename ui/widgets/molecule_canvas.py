@@ -43,6 +43,7 @@ from PySide6.QtGui import (
     QKeyEvent,
     QMouseEvent,
     QPainter,
+    QPainterPath,
     QPaintEvent,
     QPen,
     QPolygonF,
@@ -70,6 +71,7 @@ from chemistry.mol_editor_model import (
     ELEMENT_SYMBOLS,
     STEREO_HASH,
     STEREO_NONE,
+    STEREO_WAVY,
     STEREO_WEDGE,
     MolEditorModel,
     is_element_symbol,
@@ -118,6 +120,7 @@ TOOLS: tuple[str, ...] = (
     "bond_triple",
     "bond_wedge",
     "bond_hash",
+    "bond_wavy",
     "bond_bold",
     "chain",
     "atom",
@@ -130,6 +133,7 @@ _BOND_TOOLS: dict[str, tuple[int, str]] = {
     "bond_triple": (3, STEREO_NONE),
     "bond_wedge": (1, STEREO_WEDGE),
     "bond_hash": (1, STEREO_HASH),
+    "bond_wavy": (1, STEREO_WAVY),
     "bond_bold": (1, STEREO_NONE),  # drawn thick: front edge of a chair / perspective
 }
 # Keys that switch tools when the pointer is not over an atom or bond.
@@ -140,6 +144,7 @@ _TOOL_KEYS: dict[int, str] = {
     Qt.Key.Key_3: "bond_triple",
     Qt.Key.Key_W: "bond_wedge",
     Qt.Key.Key_H: "bond_hash",
+    Qt.Key.Key_U: "bond_wavy",
     Qt.Key.Key_B: "bond_bold",
     Qt.Key.Key_C: "chain",
 }
@@ -662,6 +667,8 @@ class MoleculeCanvas(QWidget):
         values = dialog.values()
         if not is_element_symbol(str(values["symbol"])):
             return False
+        if values.get("charge") == dialog.initial_charge:
+            values["charge"] = None
         self._model.set_atom_properties(atom, **values)  # type: ignore[arg-type]
         self._last_atom = atom
         self._after_edit()
@@ -1215,6 +1222,23 @@ class MoleculeCanvas(QWidget):
                     QPointF(cx + nx * h, cy + ny * h), QPointF(cx - nx * h, cy - ny * h)
                 )
             return
+        if stereo == STEREO_WAVY:
+            cycles = max(3, int(round(length / max(6.0, 0.25 * bond_px))))
+            amp = min(3.8, max(2.0, 0.08 * bond_px))
+            steps = cycles * 8
+            path = QPainterPath(p1)
+            for k in range(1, steps + 1):
+                t = k / steps
+                wave = amp * math.sin(2.0 * math.pi * cycles * t)
+                path.lineTo(
+                    p1.x() + dx * t + nx * wave,
+                    p1.y() + dy * t + ny * wave,
+                )
+            thin = QPen(pen)
+            thin.setWidthF(max(1.0, pen.widthF() * 0.9))
+            painter.setPen(thin)
+            painter.drawPath(path)
+            return
 
         offset = 0.18 * bond_px
         if order == 1:
@@ -1677,7 +1701,7 @@ class MoleculeCanvas(QWidget):
                 "Enter = label or group; Del removes"
             )
         elif self._hover_bond is not None:
-            hint = tr("Bond: 1/2/3 order, W wedge, H hash, B bold, +/− length, Del removes")
+            hint = tr("Bond: 1/2/3 order, W wedge, H hash, U wavy, B bold, +/− length, Del removes")
         else:
             hints = {
                 "select": tr("Drag atoms to move them, drag empty space to select"),
@@ -1690,6 +1714,7 @@ class MoleculeCanvas(QWidget):
                 "bond_triple": tr("Click or drag to draw triple bonds"),
                 "bond_wedge": tr("Wedge bond (towards viewer); click again to flip"),
                 "bond_hash": tr("Hashed bond (away from viewer); click again to flip"),
+                "bond_wavy": tr("Wavy bond (unspecified or racemic stereochemistry)"),
                 "bond_bold": tr(
                     "Bold bond (front edge of a chair or perspective drawing); "
                     "click a bond to make it bold or thin"
@@ -2063,6 +2088,8 @@ class MoleculeCanvas(QWidget):
                 model.set_bond_stereo(bond, STEREO_WEDGE)
             elif key == Qt.Key.Key_H:
                 model.set_bond_stereo(bond, STEREO_HASH)
+            elif key == Qt.Key.Key_U:
+                model.set_bond_stereo(bond, STEREO_WAVY)
             elif key == Qt.Key.Key_B:
                 model.set_bond_bold(bond, not model.bond_bold(bond))
             elif text in ("+", "="):
@@ -2375,6 +2402,12 @@ def _build_context_menu(canvas: MoleculeCanvas, point: QPointF) -> QMenu:
         )
         _add_action(
             menu,
+            tr("Wavy bond (unknown stereo)"),
+            after(lambda: model.set_bond_stereo(bond, STEREO_WAVY)),
+            "U",
+        )
+        _add_action(
+            menu,
             tr("Bold bond"),
             after(lambda: model.set_bond_bold(bond, not model.bond_bold(bond))),
             "B",
@@ -2438,9 +2471,10 @@ class AtomPropertiesDialog(QDialog):
         form = QFormLayout(self)
         self.symbol_edit = QLineEdit(model.atom_symbol(atom))
         self.symbol_edit.setMaxLength(3)
+        self.initial_charge = model.atom_charge(atom)
         self.charge_spin = QSpinBox()
         self.charge_spin.setRange(-8, 8)
-        self.charge_spin.setValue(model.atom_charge(atom))
+        self.charge_spin.setValue(self.initial_charge)
         self.isotope_spin = QSpinBox()
         self.isotope_spin.setRange(0, 300)
         self.isotope_spin.setSpecialValueText(tr("natural"))
