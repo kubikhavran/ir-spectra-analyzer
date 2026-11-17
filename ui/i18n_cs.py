@@ -20,6 +20,14 @@ CZECH_TEXTS: dict[str, str] = {
     "&Help": "&Nápověda",
     "&Language": "&Jazyk",
     "System": "Podle systému",
+    "&Appearance": "&Vzhled",
+    "Appearance": "Vzhled",
+    "Follow system": "Podle systému",
+    "Light": "Světlý",
+    "Dark": "Tmavý",
+    "The new appearance is used the next time the application starts.": (
+        "Nový vzhled se použije při příštím spuštění aplikace."
+    ),
     "New &Window": "Nové &okno",
     "&Open Spectrum...": "&Otevřít spektrum...",
     "Open &Project...": "Otevřít &projekt...",
@@ -778,7 +786,6 @@ CZECH_TEXTS: dict[str, str] = {
     "Click empty space, an atom or a bond to add the ring": (
         "Kruh přidáte kliknutím do prázdna, na atom nebo na vazbu"
     ),
-    "Click an atom to attach {group}": "Kliknutím na atom připojíte {group}",
     # ── Molecule editor: professional features ──────────────────────────────
     "Atom: type C, O, N, S, P, F, I, H, B, L (Cl), R (Br); +/− charge; "
     "Enter = label or group; Del removes": (
@@ -794,9 +801,6 @@ CZECH_TEXTS: dict[str, str] = {
     "Attach to the atom you click next": "Připojí se k atomu, na který kliknete",
     "Bond": "Vazba",
     "Charge: {charge}": "Náboj: {charge}",
-    "Click an atom to attach {name}, or empty space to place it; Esc cancels": (
-        "Kliknutím na atom připojíte {name}, do prázdna jej umístíte samostatně; Esc zruší"
-    ),
     "Click to place {name}; Esc cancels": "Kliknutím umístíte {name}; Esc zruší",
     "Click, then click in the drawing to add a counter-ion or solvent.": (
         "Klikněte a pak klikněte do kresby — přidá se protiion nebo rozpouštědlo."
@@ -919,5 +923,13 @@ CZECH_TEXTS: dict[str, str] = {
     "Wavy bond (unknown stereo)": "Vlnitá vazba (neurčená stereochemie)",
     "Wavy bond (unspecified or racemic stereochemistry)": (
         "Vlnitá vazba (neurčená nebo racemická stereochemie)"
+    ),
+    "Click an atom to attach {group}; drag from it to choose the direction": (
+        "Kliknutím na atom připojíte {group}; tažením z atomu určíte směr vazby"
+    ),
+    "Click an atom to attach {name} (drag from it to choose the direction), "
+    "or empty space to place it; Esc ends": (
+        "Kliknutím na atom připojíte {name} (tažením z atomu určíte směr vazby), "
+        "kliknutím do prázdna ji umístíte samostatně; Esc ukončí"
     ),
 }

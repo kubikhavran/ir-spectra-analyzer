@@ -12,7 +12,7 @@ from storage.settings import Settings
 def test_settings_failed_save_preserves_existing_file(tmp_path, monkeypatch) -> None:
     path = tmp_path / "settings.json"
     settings = Settings(path)
-    settings.set("theme", "light")
+    settings.set("appearance", "light")
     original = path.read_bytes()
 
     def _failing_dump(_payload, fp, **_kwargs) -> None:
@@ -35,7 +35,7 @@ def test_settings_ignores_non_object_json(tmp_path) -> None:
     settings = Settings(path)
     settings.load()
 
-    assert settings.get("theme") == "dark"
+    assert settings.get("appearance") == "dark"
 
 
 def test_settings_instances_do_not_share_mutable_defaults(tmp_path) -> None:

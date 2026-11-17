@@ -70,10 +70,10 @@ from chemistry.mol_fragments import (
 from ui import icons, theme
 from ui.i18n import tr
 from ui.widgets.molecule_canvas import (
-    BOND_COLOR,
     MoleculeCanvas,
     PeriodicTableDialog,
-    element_color,
+    screen_bond_color,
+    screen_element_color,
 )
 
 # (tool, label, shortcut shown in the tooltip)
@@ -155,7 +155,10 @@ _ELEMENT_BUTTONS: tuple[str, ...] = (
     "Li",
 )
 
-_PALETTE_STYLE = f"""
+
+def _palette_style() -> str:
+    """Stylesheet of the editor's side palette, in the active theme colours."""
+    return f"""
 QToolButton#molPaletteButton {{
     background: {theme.SURFACE}; color: {theme.TEXT};
     border: 1px solid {theme.BORDER}; border-radius: 5px; padding: 2px;
@@ -281,7 +284,7 @@ def _ring_icon(ring_type: str, size: int = 34) -> QIcon:
 
     points = [to_icon(x, y) for x, y in coords]
     pixmap, painter = _new_pixmap(size)
-    pen = QPen(BOND_COLOR)
+    pen = QPen(screen_bond_color())
     pen.setWidthF(1.4)
     pen.setCapStyle(Qt.PenCapStyle.RoundCap)
     painter.setPen(pen)
@@ -307,7 +310,7 @@ def _ring_icon(ring_type: str, size: int = 34) -> QIcon:
         painter.setPen(Qt.PenStyle.NoPen)
         painter.setBrush(QColor(theme.SURFACE))
         painter.drawEllipse(point, 4.6, 4.6)
-        painter.setPen(element_color(symbol))
+        painter.setPen(screen_element_color(symbol))
         painter.drawText(
             QRectF(point.x() - 6, point.y() - 6, 12, 12), Qt.AlignmentFlag.AlignCenter, symbol
         )
@@ -451,7 +454,7 @@ class MoleculeEditorDialog(QDialog):
     def _build_draw_tab(self) -> QWidget:
         container = QWidget()
         container.setObjectName("molecule_draw_tab")
-        container.setStyleSheet(_PALETTE_STYLE)
+        container.setStyleSheet(_palette_style())
         vbox = QVBoxLayout(container)
         vbox.setContentsMargins(6, 6, 6, 6)
         vbox.setSpacing(6)
@@ -792,7 +795,7 @@ class MoleculeEditorDialog(QDialog):
                 symbol, tooltip=tr("Draw {element} atoms").format(element=symbol)
             )
             button.setFixedSize(42, 28)
-            color = element_color(symbol).name()
+            color = screen_element_color(symbol).name()
             button.setStyleSheet(
                 f"QToolButton#molPaletteButton {{ color: {color}; font-weight: 700; }}"
             )
@@ -964,7 +967,7 @@ class MoleculeEditorDialog(QDialog):
         if fragment is None:
             return
         fragment.attach = None  # always a separate molecule / ion
-        self._canvas.begin_placement(fragment, label)
+        self._canvas.begin_placement(fragment, label, sticky=True)
         self._canvas.setFocus(Qt.FocusReason.OtherFocusReason)
 
     def _custom_groups(self) -> dict[str, str]:
@@ -1000,7 +1003,7 @@ class MoleculeEditorDialog(QDialog):
         fragment = self._parse_group_input()
         if fragment is None:
             return
-        self._canvas.begin_placement(fragment, self._group_input.text().strip())
+        self._canvas.begin_placement(fragment, self._group_input.text().strip(), sticky=True)
         self._canvas.setFocus(Qt.FocusReason.OtherFocusReason)
 
     def _ask_group_name(self, default: str) -> str:
@@ -1038,7 +1041,7 @@ class MoleculeEditorDialog(QDialog):
         fragment = fragment_from_smiles(str(item.data(Qt.ItemDataRole.UserRole)), label=item.text())
         if fragment is None:
             return
-        self._canvas.begin_placement(fragment, item.text())
+        self._canvas.begin_placement(fragment, item.text(), sticky=True)
         self._canvas.setFocus(Qt.FocusReason.OtherFocusReason)
 
     def _on_custom_remove(self) -> None:

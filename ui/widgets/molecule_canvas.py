@@ -108,6 +108,44 @@ DEFAULT_ELEMENT_COLOR = "#334155"
 STEREO_LABEL_COLOR = QColor("#7C3AED")
 ATOM_NUMBER_COLOR = QColor("#64748B")
 
+# Ink for the on-screen canvas in the dark theme. Exports (PNG for reports,
+# clipboard images) are always drawn with the light ink on white paper.
+DARK_BOND_COLOR = QColor("#E2E8F0")
+DARK_ELEMENT_COLORS: dict[str, str] = {
+    "C": "#E2E8F0",
+    "O": "#F87171",
+    "N": "#60A5FA",
+    "S": "#FBBF24",
+    "F": "#4ADE80",
+    "Cl": "#4ADE80",
+    "Br": "#FB923C",
+    "I": "#C4B5FD",
+    "P": "#FB923C",
+}
+DARK_DEFAULT_ELEMENT_COLOR = "#CBD5E1"
+DARK_STEREO_LABEL_COLOR = QColor("#C4B5FD")
+DARK_ATOM_NUMBER_COLOR = QColor("#94A3B8")
+DARK_INVALID_FILL = QColor("#4C1D1D")
+DARK_INVALID_STROKE = QColor("#F87171")
+
+#: True while the structure is painted on screen in the dark theme.
+_dark_ink = False
+
+
+def _use_dark_ink(on_screen: bool) -> None:
+    global _dark_ink
+    _dark_ink = on_screen and theme.is_dark()
+
+
+def _ink(light: QColor, dark: QColor) -> QColor:
+    return dark if _dark_ink else light
+
+
+def _paper() -> QColor:
+    """Background the structure sits on: the canvas on screen, white in exports."""
+    return QColor(theme.SURFACE) if _dark_ink else QColor("white")
+
+
 #: Clipboard format carrying a copied part of a structure with its attachment point.
 FRAGMENT_MIME = "application/x-ir-spectra-fragment+json"
 MOLFILE_MIME = "chemical/x-mdl-molfile"
@@ -167,7 +205,21 @@ _SUPERSCRIPT_DIGITS = str.maketrans("0123456789", "⁰¹²³⁴⁵⁶⁷⁸⁹")
 
 
 def element_color(symbol: str) -> QColor:
+    if _dark_ink:
+        return QColor(DARK_ELEMENT_COLORS.get(symbol, DARK_DEFAULT_ELEMENT_COLOR))
     return QColor(ELEMENT_COLORS.get(symbol, DEFAULT_ELEMENT_COLOR))
+
+
+def screen_element_color(symbol: str) -> QColor:
+    """Element colour for widgets on screen (palette buttons, template icons)."""
+    if theme.is_dark():
+        return QColor(DARK_ELEMENT_COLORS.get(symbol, DARK_DEFAULT_ELEMENT_COLOR))
+    return QColor(ELEMENT_COLORS.get(symbol, DEFAULT_ELEMENT_COLOR))
+
+
+def screen_bond_color() -> QColor:
+    """Bond colour for widgets on screen in the active theme."""
+    return QColor(DARK_BOND_COLOR if theme.is_dark() else BOND_COLOR)
 
 
 def _charge_text(charge: int) -> str:
@@ -270,6 +322,7 @@ class MoleculeCanvas(QWidget):
         self._hint = ""
 
         self._placement: Fragment | None = None
+        self._placement_sticky = False
         self._custom_groups: dict[str, str] = {}
         self._show_atom_numbers = False
         self._show_stereo_labels = False
@@ -347,6 +400,8 @@ class MoleculeCanvas(QWidget):
     def set_tool(self, tool: str) -> None:
         if tool not in TOOLS:
             raise ValueError(f"Unknown tool: {tool!r}")
+        # Picking any tool ends repeated placing of a group or salt.
+        self.cancel_placement()
         if tool == self._tool:
             return
         self._tool = tool
@@ -547,16 +602,19 @@ class MoleculeCanvas(QWidget):
         self.begin_placement(fragment)
         return True
 
-    def begin_placement(self, fragment: Fragment, label: str = "") -> None:
+    def begin_placement(self, fragment: Fragment, label: str = "", *, sticky: bool = False) -> None:
         """Let *fragment* follow the cursor until the user clicks.
 
-        Clicking an atom bonds the fragment's attachment atom to it; clicking
-        empty space drops it there as a separate molecule (salt, solvent …).
-        Esc or a right click cancels.
+        Clicking an atom bonds the fragment's attachment atom to it; pressing
+        on an atom and dragging sets the direction of that bond; clicking empty
+        space drops it there as a separate molecule (salt, solvent …).  With
+        *sticky* the fragment stays on the cursor so it can be placed again
+        and again.  Esc or a right click ends placing.
         """
         if label:
             fragment.label = label
         self._placement = fragment
+        self._placement_sticky = sticky
         self._drag = None
         self.setCursor(Qt.CursorShape.CrossCursor)
         self._update_hint()
@@ -573,10 +631,20 @@ class MoleculeCanvas(QWidget):
     def placement(self) -> Fragment | None:
         return self._placement
 
+    def placement_is_sticky(self) -> bool:
+        return self._placement is not None and self._placement_sticky
+
     def place_fragment(
-        self, *, target_atom: int | None = None, position: tuple[float, float] | None = None
+        self,
+        *,
+        target_atom: int | None = None,
+        position: tuple[float, float] | None = None,
+        angle: float | None = None,
     ) -> list[int]:
-        """Drop the fragment being placed; returns the new atom indices."""
+        """Drop the fragment being placed; returns the new atom indices.
+
+        *angle* (degrees) is the direction of the bond from *target_atom*.
+        """
         fragment = self._placement
         if fragment is None:
             return []
@@ -586,10 +654,11 @@ class MoleculeCanvas(QWidget):
             target_atom = None
             position = (position[0] + 2 * BOND_LENGTH, position[1])
         created = self._model.insert_fragment(
-            fragment, target_atom_idx=target_atom, position=position
+            fragment, target_atom_idx=target_atom, position=position, angle=angle
         )
-        self._placement = None
-        self.unsetCursor()
+        if not self._placement_sticky:
+            self._placement = None
+            self.unsetCursor()
         self._after_edit()
         self._update_hint()
         return created
@@ -1062,6 +1131,7 @@ class MoleculeCanvas(QWidget):
         self, painter: QPainter, zoom: float, origin: QPointF, *, interactive: bool
     ) -> None:
         self._refresh_cache()
+        _use_dark_ink(interactive)
         model = self._model
         if model.is_empty():
             return
@@ -1075,17 +1145,17 @@ class MoleculeCanvas(QWidget):
 
         # Invalid valence markers sit underneath bonds and labels.
         if self._invalid:
-            pen = QPen(INVALID_STROKE)
+            pen = QPen(_ink(INVALID_STROKE, DARK_INVALID_STROKE))
             pen.setWidthF(1.3)
             painter.setPen(pen)
-            painter.setBrush(INVALID_FILL)
+            painter.setBrush(_ink(INVALID_FILL, DARK_INVALID_FILL))
             radius = 0.55 * font_px + 3
             for idx in self._invalid:
                 if idx < len(positions):
                     painter.drawEllipse(positions[idx], radius, radius)
 
         width = max(1.1, min(3.2, 0.035 * bond_px))
-        pen = QPen(BOND_COLOR)
+        pen = QPen(_ink(BOND_COLOR, DARK_BOND_COLOR))
         pen.setWidthF(width)
         pen.setCapStyle(Qt.PenCapStyle.RoundCap)
         pen.setJoinStyle(Qt.PenJoinStyle.RoundJoin)
@@ -1098,7 +1168,7 @@ class MoleculeCanvas(QWidget):
             a, b = model.bond_atoms(bond)
             p1, p2 = positions[a], positions[b]
             if bond in bold:
-                gap = QPen(QColor(theme.SURFACE) if interactive else QColor("white"))
+                gap = QPen(_paper())
                 gap.setWidthF(max(3.0, 0.1 * bond_px) + max(4.0, 0.12 * bond_px))
                 gap.setCapStyle(Qt.PenCapStyle.FlatCap)
                 painter.setPen(gap)
@@ -1123,7 +1193,7 @@ class MoleculeCanvas(QWidget):
             font = QFont(small)
             font.setWeight(QFont.Weight.Normal)
             painter.setFont(font)
-            painter.setPen(ATOM_NUMBER_COLOR)
+            painter.setPen(_ink(ATOM_NUMBER_COLOR, DARK_ATOM_NUMBER_COLOR))
             metrics = QFontMetricsF(font)
             for idx, pos in enumerate(positions):
                 text = str(idx + 1)
@@ -1140,7 +1210,7 @@ class MoleculeCanvas(QWidget):
             font.setItalic(True)
             font.setWeight(QFont.Weight.Bold)
             painter.setFont(font)
-            painter.setPen(STEREO_LABEL_COLOR)
+            painter.setPen(_ink(STEREO_LABEL_COLOR, DARK_STEREO_LABEL_COLOR))
             for idx, code in self._stereo_atoms.items():
                 if idx < len(positions):
                     pos = positions[idx]
@@ -1201,7 +1271,7 @@ class MoleculeCanvas(QWidget):
                     QPointF(p2.x() - nx * half, p2.y() - ny * half),
                 ]
             )
-            painter.setBrush(QBrush(BOND_COLOR))
+            painter.setBrush(QBrush(_ink(BOND_COLOR, DARK_BOND_COLOR)))
             thin = QPen(pen)
             thin.setWidthF(0.6)
             painter.setPen(thin)
@@ -1461,7 +1531,7 @@ class MoleculeCanvas(QWidget):
 
         # A soft halo keeps crossing lines away from the glyphs.
         painter.setPen(Qt.PenStyle.NoPen)
-        painter.setBrush(QColor(theme.SURFACE))
+        painter.setBrush(_paper())
         for box in layout.boxes:
             painter.drawRoundedRect(box.adjusted(-1.5, -1.5, 1.5, 1.5), 2.5, 2.5)
 
@@ -1500,6 +1570,21 @@ class MoleculeCanvas(QWidget):
                 pen.setWidthF(1.5)
                 painter.setPen(pen)
                 painter.drawEllipse(self._atom_screen(target), SNAP_PX * 0.8, SNAP_PX * 0.8)
+            return
+        if drag is not None and drag.moved and drag.kind == "draw" and self._tool == "group":
+            if drag.atom is not None:
+                angle = math.radians(self._drag_angle(drag, cursor))
+                ax, ay = self._model.atom_position(drag.atom)
+                end = (ax + BOND_LENGTH * math.cos(angle), ay + BOND_LENGTH * math.sin(angle))
+                painter.setPen(self._ghost_pen())
+                painter.drawLine(self._atom_screen(drag.atom), self._to_screen(*end))
+                font = QFont(self.font())
+                font.setPixelSize(13)
+                font.setWeight(QFont.Weight.DemiBold)
+                painter.setFont(font)
+                painter.setPen(QColor(theme.ACCENT_DARK))
+                tip = self._to_screen(*end)
+                painter.drawText(QPointF(tip.x() + 6, tip.y() - 6), self._group_key)
             return
         if drag is not None and drag.moved and drag.kind == "draw":
             if self._tool == "chain":
@@ -1576,10 +1661,27 @@ class MoleculeCanvas(QWidget):
                 self._atom_symbol,
             )
 
+    def _drag_angle(self, drag: _Drag, point: QPointF) -> float:
+        """Snapped direction (degrees) from the pressed atom towards *point*."""
+        assert drag.atom is not None
+        start = self._model.atom_position(drag.atom)
+        return self._snapped_angle(start, point, drag.atom, free=drag.free_angle)
+
     def _placement_coordinates(self, cursor: QPointF) -> list[tuple[float, float]]:
         fragment = self._placement
         if fragment is None:
             return []
+        drag = self._drag
+        if (
+            drag is not None
+            and drag.kind == "place"
+            and drag.moved
+            and drag.atom is not None
+            and fragment.attach is not None
+        ):
+            return self._model.fragment_coordinates(
+                fragment, target_atom_idx=drag.atom, angle=self._drag_angle(drag, cursor)
+            )
         if self._hover_atom is not None and fragment.attach is not None:
             return self._model.fragment_coordinates(fragment, target_atom_idx=self._hover_atom)
         return self._model.fragment_coordinates(fragment, position=self._to_world(cursor))
@@ -1602,8 +1704,14 @@ class MoleculeCanvas(QWidget):
                 length = math.hypot(dx, dy) or 1.0
                 off = QPointF(-dy / length * 4, dx / length * 4)
                 painter.drawLine(pa + off, pb + off)
-        if self._hover_atom is not None and fragment.attach is not None:
-            painter.drawLine(self._atom_screen(self._hover_atom), points[fragment.attach])
+        drag = self._drag
+        anchor_atom = (
+            drag.atom
+            if drag is not None and drag.kind == "place" and drag.moved
+            else self._hover_atom
+        )
+        if anchor_atom is not None and fragment.attach is not None:
+            painter.drawLine(self._atom_screen(anchor_atom), points[fragment.attach])
         font = QFont(self.font())
         font.setPixelSize(max(9, round(self._font_px(self._zoom) * 0.85)))
         font.setWeight(QFont.Weight.DemiBold)
@@ -1691,7 +1799,8 @@ class MoleculeCanvas(QWidget):
                 hint = tr("Click to place {name}; Esc cancels").format(name=name)
             else:
                 hint = tr(
-                    "Click an atom to attach {name}, or empty space to place it; Esc cancels"
+                    "Click an atom to attach {name} (drag from it to choose the direction), "
+                    "or empty space to place it; Esc ends"
                 ).format(name=name)
             self._set_hint(hint)
             return
@@ -1724,7 +1833,9 @@ class MoleculeCanvas(QWidget):
                     symbol=self._atom_symbol
                 ),
                 "ring": tr("Click empty space, an atom or a bond to add the ring"),
-                "group": tr("Click an atom to attach {group}").format(group=self._group_key),
+                "group": tr(
+                    "Click an atom to attach {group}; drag from it to choose the direction"
+                ).format(group=self._group_key),
             }
             hint = hints.get(self._tool, "")
         if hint != self._hint:
@@ -1777,7 +1888,17 @@ class MoleculeCanvas(QWidget):
         point = event.position()
         self._cursor = point
         drag = self._drag
-        if drag is None or drag.kind == "place":
+        if drag is not None and drag.kind == "place":
+            drag.free_angle = bool(event.modifiers() & Qt.KeyboardModifier.AltModifier)
+            if drag.atom is not None and not drag.moved:
+                delta = point - drag.start
+                drag.moved = math.hypot(delta.x(), delta.y()) >= DRAG_THRESHOLD_PX
+            if not drag.moved:
+                self._update_hover(point)
+            drag.last = point
+            self.update()
+            return
+        if drag is None:
             self._update_hover(point)
             self.update()
             return
@@ -1812,7 +1933,12 @@ class MoleculeCanvas(QWidget):
             drag.free_length = bool(event.modifiers() & Qt.KeyboardModifier.ShiftModifier)
             drag.free_angle = bool(event.modifiers() & Qt.KeyboardModifier.AltModifier)
         if drag.kind == "place":
-            atom = self._atom_at(point)
+            drag.free_angle = bool(event.modifiers() & Qt.KeyboardModifier.AltModifier)
+            if drag.atom is not None and drag.moved:
+                # Pressed on an atom and dragged: the bond goes where it was pulled.
+                self.place_fragment(target_atom=drag.atom, angle=self._drag_angle(drag, point))
+                return
+            atom = drag.atom if drag.atom is not None else self._atom_at(point)
             if atom is not None:
                 self.place_fragment(target_atom=atom)
             else:
@@ -1994,6 +2120,14 @@ class MoleculeCanvas(QWidget):
                     new_bond = model.find_bond(origin_atom, self._last_atom)
                     if new_bond is not None:
                         model.set_bond_bold(new_bond, True)
+            self._after_edit()
+            return
+        if tool == "group" and drag.atom is not None:
+            # Drag from an atom: the group's bond points the way it was pulled.
+            model.attach_functional_group(
+                drag.atom, self._group_key, angle=self._drag_angle(drag, point)
+            )
+            self._last_atom = drag.atom
             self._after_edit()
             return
         # Other tools treat a drag like a click where the press happened.

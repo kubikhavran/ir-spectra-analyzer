@@ -797,3 +797,96 @@ def test_open_atom_properties_preserves_auto_charge_when_charge_untouched(canvas
     # Automatic charge still reverts when a methyl is removed.
     canvas.model().delete_atom(4)
     assert canvas.model().atom_charge(1) == 0
+
+
+# ---------------------------------------------------------------------------
+# Repeated placing and drag direction for groups
+# ---------------------------------------------------------------------------
+
+
+def _bond_angle(model, a: int, b: int) -> float:
+    (ax, ay), (bx, by) = model.atom_position(a), model.atom_position(b)
+    return math.degrees(math.atan2(by - ay, bx - ax))
+
+
+def test_sticky_placement_attaches_the_group_again_and_again(canvas):
+    from chemistry.mol_fragments import parse_group
+
+    canvas.load_smiles("CCCC")
+    fragment = parse_group("OMe")
+    assert fragment is not None
+    canvas.begin_placement(fragment, "OMe", sticky=True)
+    QTest.mouseClick(canvas, Qt.MouseButton.LeftButton, pos=_pt(canvas, 0))
+    assert canvas.placement() is not None  # still on the cursor
+    QTest.mouseClick(canvas, Qt.MouseButton.LeftButton, pos=_pt(canvas, 3))
+    assert canvas.to_smiles() == "COCCCCOC"
+    QTest.keyClick(canvas, Qt.Key.Key_Escape)
+    assert canvas.placement() is None
+
+
+def test_one_shot_placement_still_ends_after_one_click(canvas):
+    from chemistry.mol_fragments import parse_group
+
+    canvas.load_smiles("CC")
+    fragment = parse_group("OH")
+    assert fragment is not None
+    canvas.begin_placement(fragment)
+    QTest.mouseClick(canvas, Qt.MouseButton.LeftButton, pos=_pt(canvas, 1))
+    assert canvas.placement() is None
+    assert canvas.to_smiles() == "CCO"
+
+
+def test_picking_a_tool_ends_sticky_placement(canvas):
+    from chemistry.mol_fragments import parse_group
+
+    fragment = parse_group("OMe")
+    assert fragment is not None
+    canvas.begin_placement(fragment, sticky=True)
+    canvas.set_tool("bond_single")
+    assert canvas.placement() is None
+
+
+def test_drag_from_atom_sets_direction_of_placed_group(canvas):
+    from chemistry.mol_fragments import parse_group
+
+    canvas.load_smiles("CC")
+    fragment = parse_group("CO2Et")
+    assert fragment is not None
+    canvas.begin_placement(fragment, sticky=True)
+    start = _pt(canvas, 1)
+    end = QPoint(start.x() + 4, start.y() + 70)  # straight down on screen
+    _drag(canvas, start, end)
+    model = canvas.model()
+    attach = next(n for n in model.atom_neighbors(1) if n != 0)
+    assert _bond_angle(model, 1, attach) == pytest.approx(-90.0, abs=1e-6)
+    assert canvas.to_smiles() == "CCOC(=O)CC"  # ethyl propanoate
+    assert canvas.placement() is not None
+
+
+def test_alt_drag_places_group_at_any_angle(canvas):
+    from chemistry.mol_fragments import parse_group
+
+    canvas.load_smiles("CC")
+    fragment = parse_group("OH")
+    assert fragment is not None
+    canvas.begin_placement(fragment)
+    start = _pt(canvas, 1)
+    end = QPoint(start.x() + 80, start.y() - 17)  # ~12°
+    QTest.mousePress(canvas, Qt.MouseButton.LeftButton, Qt.KeyboardModifier.NoModifier, start)
+    QTest.mouseMove(canvas, QPoint(start.x() + 20, start.y()))
+    QTest.mouseMove(canvas, end)
+    QTest.mouseRelease(canvas, Qt.MouseButton.LeftButton, Qt.KeyboardModifier.AltModifier, end)
+    angle = _bond_angle(canvas.model(), 1, 2)
+    assert 8 < angle < 16
+
+
+def test_group_tool_drag_sets_direction(canvas):
+    canvas.load_smiles("CC")
+    canvas.set_group("-NO2")
+    start = _pt(canvas, 1)
+    _drag(canvas, start, QPoint(start.x() - 70, start.y()))  # to the left
+    model = canvas.model()
+    nitrogen = next(n for n in model.atom_neighbors(1) if model.atom_symbol(n) == "N")
+    assert abs(abs(_bond_angle(model, 1, nitrogen)) - 180.0) < 1e-6
+    assert canvas.to_smiles() == "CC[N+](=O)[O-]"
+    assert canvas.tool() == "group"  # the group tool stays active for the next one

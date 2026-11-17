@@ -133,8 +133,8 @@ class _PresetDelegate(QStyledItemDelegate):
                 QStyle.ControlElement.CE_ItemViewItem, view_option, painter, view_option.widget
             )
         selected = bool(view_option.state & QStyle.StateFlag.State_Selected)
-        name_color = QColor("#FFFFFF") if selected else QColor(theme.TEXT)
-        range_color = QColor("#E3EEF8") if selected else QColor(theme.TEXT_MUTED)
+        name_color = QColor(theme.ON_ACCENT) if selected else QColor(theme.TEXT)
+        range_color = QColor(theme.ON_ACCENT_MUTED) if selected else QColor(theme.TEXT_MUTED)
         if not selected and not preset.is_builtin:
             name_color = QColor(theme.ACCENT_DARK)
 
@@ -401,7 +401,7 @@ class VibrationPanel(QWidget):
                 continue  # section header — leave its styling untouched
             if wavenumber is not None and preset.covers_wavenumber(wavenumber):
                 item.setBackground(QColor(theme.MATCH_HIGHLIGHT))
-                item.setForeground(QColor("#000000"))
+                item.setForeground(QColor(theme.TEXT))
             else:
                 item.setBackground(QBrush())
                 item.setForeground(QBrush())

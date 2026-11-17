@@ -51,90 +51,111 @@ _OVERLAY_COLORS = [
 
 _PEAK_LABEL_FONT_SIZE_PT = 8.0
 
+
+def _rgb(hex_color: str) -> tuple[int, int, int]:
+    """``"#RRGGBB"`` → ``(r, g, b)``."""
+    color = QColor(hex_color)
+    return color.red(), color.green(), color.blue()
+
+
+def _with_alpha(hex_color: str, alpha: int) -> QColor:
+    color = QColor(hex_color)
+    color.setAlpha(alpha)
+    return color
+
+
 # Control bars above the plot. Every rule is scoped to the bar's object name or
 # to a concrete control class, so the bar background never bleeds into the
 # buttons and slider sitting on it (which is what made them unreadable).
-_OVERLAY_BAR_STYLE = """
-QWidget#overlayBar {
-    background: #E4F0FB;
-    border-left: 3px solid #1F6FB2;
-    border-bottom: 1px solid #7F9DB9;
-}
-QWidget#overlayBar QLabel {
-    color: #1B2B38;
+def _overlay_bar_style() -> str:
+    """Stylesheet of the reference-overlay strip, in the active theme colours."""
+    t = theme
+    return f"""
+QWidget#overlayBar {{
+    background: {t.OVERLAY_BAR};
+    border-left: 3px solid {t.ACCENT};
+    border-bottom: 1px solid {t.OVERLAY_BORDER};
+}}
+QWidget#overlayBar QLabel {{
+    color: {t.TEXT};
     background: transparent;
-}
-QWidget#overlayBar QLabel#overlayName {
-    color: #14507A;
-    background: #FFFFFF;
-    border: 1px solid #7F9DB9;
+}}
+QWidget#overlayBar QLabel#overlayName {{
+    color: {t.ACCENT_DARK};
+    background: {t.SURFACE};
+    border: 1px solid {t.OVERLAY_BORDER};
     border-radius: 4px;
     padding: 1px 8px;
     font-weight: bold;
-}
-QWidget#overlayBar QPushButton {
-    background: #FFFFFF;
-    color: #1B2B38;
-    border: 1px solid #7F9DB9;
+}}
+QWidget#overlayBar QPushButton {{
+    background: {t.SURFACE};
+    color: {t.TEXT};
+    border: 1px solid {t.OVERLAY_BORDER};
     border-radius: 4px;
     padding: 2px 8px;
-}
-QWidget#overlayBar QPushButton:hover {
-    background: #F0F7FF;
-    border-color: #14507A;
-}
-QWidget#overlayBar QPushButton:pressed {
-    background: #C9DCEF;
-}
-QWidget#overlayBar QSlider::groove:horizontal {
+}}
+QWidget#overlayBar QPushButton:hover {{
+    background: {t.ACCENT_SOFT};
+    border-color: {t.ACCENT_DARK};
+}}
+QWidget#overlayBar QPushButton:pressed {{
+    background: {t.PRESSED};
+}}
+QWidget#overlayBar QSlider::groove:horizontal {{
     height: 4px;
-    background: #FFFFFF;
-    border: 1px solid #7F9DB9;
+    background: {t.SURFACE};
+    border: 1px solid {t.OVERLAY_BORDER};
     border-radius: 2px;
-}
-QWidget#overlayBar QSlider::sub-page:horizontal {
-    background: #2980B9;
-    border: 1px solid #14507A;
+}}
+QWidget#overlayBar QSlider::sub-page:horizontal {{
+    background: {t.ACCENT};
+    border: 1px solid {t.ACCENT_DARK};
     border-radius: 2px;
-}
-QWidget#overlayBar QSlider::handle:horizontal {
+}}
+QWidget#overlayBar QSlider::handle:horizontal {{
     width: 10px;
     margin: -5px 0;
-    background: #14507A;
-    border: 1px solid #0D3A57;
+    background: {t.ACCENT_DARK};
+    border: 1px solid {t.ACCENT_DARK};
     border-radius: 5px;
-}
+}}
 """
 
-_PLOT_TOOLBAR_STYLE = """
-QWidget#plotToolbarBar {
-    background: #EEF1F4;
-    border-bottom: 1px solid #C9D1D9;
-}
-QWidget#plotToolbarBar QLabel {
-    color: #5E6B78;
+
+def _plot_toolbar_style() -> str:
+    """Stylesheet of the quick-range strip above the plot."""
+    t = theme
+    return f"""
+QWidget#plotToolbarBar {{
+    background: {t.TOOLBAR_BAR};
+    border-bottom: 1px solid {t.BORDER};
+}}
+QWidget#plotToolbarBar QLabel {{
+    color: {t.TEXT_MUTED};
     background: transparent;
-}
-QWidget#plotToolbarBar QPushButton {
-    background: #FFFFFF;
-    color: #1B2733;
-    border: 1px solid #9AA7B4;
+}}
+QWidget#plotToolbarBar QPushButton {{
+    background: {t.SURFACE};
+    color: {t.TEXT};
+    border: 1px solid {t.BORDER_STRONG};
     border-radius: 4px;
     padding: 1px 7px;
     min-height: 0px;
-}
-QWidget#plotToolbarBar QPushButton:hover {
-    background: #F4F8FC;
-    border-color: #14507A;
-}
+}}
+QWidget#plotToolbarBar QPushButton:hover {{
+    background: {t.SURFACE_ALT};
+    border-color: {t.ACCENT_DARK};
+}}
 QWidget#plotToolbarBar QPushButton:checked,
-QWidget#plotToolbarBar QPushButton[activeRange="true"] {
-    background: #DCEAF6;
-    color: #17537F;
-    border-color: #1F6FB2;
+QWidget#plotToolbarBar QPushButton[activeRange="true"] {{
+    background: {t.ACCENT_SOFT};
+    color: {t.ACCENT_DARK};
+    border-color: {t.ACCENT};
     font-weight: 600;
-}
+}}
 """
+
 
 # Quick wavenumber windows offered above the plot: (button text, low, high).
 # None means "to the edge of the data".
@@ -308,10 +329,12 @@ class _Crosshair:
         pen = pg.mkPen(QColor(theme.TEXT_FAINT), width=1, style=Qt.PenStyle.DashLine)
         self._line = pg.InfiniteLine(angle=90, movable=False, pen=pen)
         self._dot = pg.ScatterPlotItem(
-            size=7, pen=pg.mkPen("w", width=1), brush=pg.mkBrush(QColor(theme.ACCENT))
+            size=7, pen=pg.mkPen(theme.PLOT_BG, width=1), brush=pg.mkBrush(QColor(theme.ACCENT))
         )
         self._text = pg.TextItem(
-            color=theme.TEXT, fill=pg.mkBrush(255, 255, 255, 235), border=pg.mkPen(theme.BORDER)
+            color=theme.TEXT,
+            fill=pg.mkBrush(_with_alpha(theme.SURFACE, 235)),
+            border=pg.mkPen(theme.BORDER),
         )
         self._view_box = plot_widget.getPlotItem().vb
         for item, z in ((self._line, 40), (self._dot, 41), (self._text, 42)):
@@ -417,7 +440,7 @@ class SpectrumWidget(QWidget):
         # the bar background and makes them nearly invisible.
         self._overlay_bar = QWidget()
         self._overlay_bar.setObjectName("overlayBar")
-        self._overlay_bar.setStyleSheet(_OVERLAY_BAR_STYLE)
+        self._overlay_bar.setStyleSheet(_overlay_bar_style())
         overlay_row = QHBoxLayout(self._overlay_bar)
         overlay_row.setContentsMargins(8, 4, 8, 4)
         overlay_row.setSpacing(8)
@@ -456,7 +479,7 @@ class SpectrumWidget(QWidget):
         # ── Toolbar bar (always visible) — split-view toggle ─────────────────
         self._toolbar_bar = QWidget()
         self._toolbar_bar.setObjectName("plotToolbarBar")
-        self._toolbar_bar.setStyleSheet(_PLOT_TOOLBAR_STYLE)
+        self._toolbar_bar.setStyleSheet(_plot_toolbar_style())
         toolbar_row = QHBoxLayout(self._toolbar_bar)
         toolbar_row.setContentsMargins(6, 2, 6, 2)
         toolbar_row.setSpacing(4)
@@ -553,11 +576,11 @@ class SpectrumWidget(QWidget):
         self._plot_widget = pg.PlotWidget()
 
         # OMNIC-like style: white background, black axes, no grid
-        self._plot_widget.setBackground("w")
+        self._plot_widget.setBackground(theme.PLOT_BG)
         self._plot_widget.showGrid(x=False, y=False)
 
         # Axis labels with black color
-        label_style = {"color": "#000000", "font-size": "10pt"}
+        label_style = {"color": theme.PLOT_FG, "font-size": "10pt"}
         self._plot_widget.setLabel("bottom", tr("Wavenumber (cm⁻¹)"), **label_style)
         self._plot_widget.setLabel("left", tr("Absorbance"), **label_style)
         # Dropped files belong to the window, not to the graphics scene.
@@ -570,8 +593,8 @@ class SpectrumWidget(QWidget):
         # Style axis ticks/labels black
         for axis in ("bottom", "left"):
             ax = self._plot_widget.getAxis(axis)
-            ax.setPen(pg.mkPen(color="k", width=1))
-            ax.setTextPen(pg.mkPen(color="k"))
+            ax.setPen(pg.mkPen(color=theme.PLOT_FG, width=1))
+            ax.setTextPen(pg.mkPen(color=theme.PLOT_FG))
 
         # Override PyQtGraph "A" button: disconnect default autoBtnClicked, wire to our reset
         _pi = self._plot_widget.getPlotItem()
@@ -579,7 +602,7 @@ class SpectrumWidget(QWidget):
         _pi.autoBtn.clicked.connect(self.reset_view)
 
         # Spectrum curve: black, width 1
-        self._spectrum_curve = self._plot_widget.plot(pen=pg.mkPen("k", width=1))
+        self._spectrum_curve = self._plot_widget.plot(pen=pg.mkPen(theme.PLOT_FG, width=1))
 
         self._overlay_curves: list = []
         self._diagnostic_region_items: list = []
@@ -743,19 +766,19 @@ class SpectrumWidget(QWidget):
     def _create_fp_plot_widget(self) -> pg.PlotWidget:
         """Create and configure the fingerprint-region PlotWidget."""
         fp = pg.PlotWidget()
-        fp.setBackground("w")
+        fp.setBackground(theme.PLOT_BG)
         fp.showGrid(x=False, y=False)
         fp.invertX(True)
         fp.setXRange(_X_DEFAULT_MIN, _SPLIT_WN, padding=0.0)
         fp.hideAxis("left")
         for axis_name in ("bottom",):
             ax = fp.getAxis(axis_name)
-            ax.setPen(pg.mkPen(color="k", width=1))
-            ax.setTextPen(pg.mkPen(color="k"))
-        label_style = {"color": "#000000", "font-size": "10pt"}
+            ax.setPen(pg.mkPen(color=theme.PLOT_FG, width=1))
+            ax.setTextPen(pg.mkPen(color=theme.PLOT_FG))
+        label_style = {"color": theme.PLOT_FG, "font-size": "10pt"}
         fp.setLabel("bottom", tr("Wavenumber (cm⁻¹)"), **label_style)
         fp.setAcceptDrops(False)
-        self._spectrum_curve_fp = fp.plot(pen=pg.mkPen("k", width=1))
+        self._spectrum_curve_fp = fp.plot(pen=pg.mkPen(theme.PLOT_FG, width=1))
         fp.scene().sigMouseClicked.connect(self._on_fp_mouse_clicked)
         fp.scene().sigMouseMoved.connect(self._on_fp_mouse_moved)
         self._attach_reading_aids(fp)
@@ -822,7 +845,7 @@ class SpectrumWidget(QWidget):
             label_offset = y_span * 0.065
             anchor = (0, 0.5)
 
-        leader_pen = pg.mkPen((0, 0, 0), width=0.8)
+        leader_pen = pg.mkPen(theme.PLOT_LEADER, width=0.8)
 
         for peak in peaks:
             leader = pg.PlotCurveItem(pen=leader_pen)
@@ -884,7 +907,10 @@ class SpectrumWidget(QWidget):
             prefix += self._MARK_SELECTED
         if peak_has_assignment(peak):
             prefix += self._MARK_ASSIGNED
-        color = self._COLOR_SELECTED if is_selected else self._COLOR_DEFAULT
+        if theme.is_dark():
+            color = _rgb(theme.ACCENT) if is_selected else _rgb(theme.PLOT_FG)
+        else:
+            color = self._COLOR_SELECTED if is_selected else self._COLOR_DEFAULT
         return (f"{prefix}{number}" if prefix else number), color
 
     def set_selected_peak(self, peak: Peak | None, *, refresh: bool = True) -> None:
@@ -1104,7 +1130,7 @@ class SpectrumWidget(QWidget):
             x=spectrum.wavenumbers, y=spectrum.intensities, connect="finite"
         )
 
-        label_style = {"color": "#000000", "font-size": "10pt"}
+        label_style = {"color": theme.PLOT_FG, "font-size": "10pt"}
         self._plot_widget.setLabel("left", self._axis_title(spectrum), **label_style)
 
         if self._split_mode and self._spectrum_curve_fp is not None:

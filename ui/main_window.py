@@ -40,7 +40,7 @@ from app.report_presets import ReportPresetManager
 from processing.consensus_analysis import build_consensus_analysis
 from storage.database import Database
 from storage.settings import Settings
-from ui import i18n
+from ui import i18n, theme
 from ui.consensus_panel import ConsensusPanel
 from ui.functional_group_panel import FunctionalGroupPanel
 from ui.i18n import tr
@@ -233,6 +233,8 @@ class MainWindow(QMainWindow):
         self._view_menu = menu_bar.addMenu("&View")
         self._language_menu = QMenu("&Language", self)
         self._setup_language_menu()
+        self._appearance_menu = QMenu("&Appearance", self)
+        self._setup_appearance_menu()
 
         help_menu = menu_bar.addMenu("&Help")
         about_action = help_menu.addAction("&About")
@@ -305,6 +307,33 @@ class MainWindow(QMainWindow):
             "Language / Jazyk",
             "The language changes the next time the application starts.\n"
             "Jazyk se změní při příštím spuštění aplikace.",
+        )
+
+    def _setup_appearance_menu(self) -> None:
+        """View → Appearance: dark / light / follow the system (applies after a restart)."""
+        from PySide6.QtGui import QActionGroup  # noqa: PLC0415
+
+        stored = self._settings.get("appearance")
+        known = [code for code, _label in theme.APPEARANCES]
+        current = stored if isinstance(stored, str) and stored in known else theme.DARK_MODE
+        group = QActionGroup(self._appearance_menu)
+        group.setExclusive(True)
+        for code, label in theme.APPEARANCES:
+            action = self._appearance_menu.addAction(tr(label))
+            action.setCheckable(True)
+            action.setChecked(code == current)
+            group.addAction(action)
+            action.triggered.connect(lambda _checked=False, c=code: self._on_appearance_chosen(c))
+
+    def _on_appearance_chosen(self, code: str) -> None:
+        """Remember the appearance; the colours switch the next time the app starts."""
+        if self._settings.get("appearance") == code:
+            return
+        self._settings.set("appearance", code)
+        QMessageBox.information(
+            self,
+            tr("Appearance"),
+            tr("The new appearance is used the next time the application starts."),
         )
 
     def _setup_central_widget(self) -> None:
@@ -415,6 +444,7 @@ class MainWindow(QMainWindow):
         reset_layout_action.setToolTip("Put every panel back where it was when first installed")
         reset_layout_action.triggered.connect(self._on_reset_layout)
         self._view_menu.addMenu(self._language_menu)
+        self._view_menu.addMenu(self._appearance_menu)
 
         self.setTabPosition(Qt.DockWidgetArea.AllDockWidgetAreas, QTabWidget.TabPosition.North)
         # The right-hand tabs follow the order of the work; the first one —

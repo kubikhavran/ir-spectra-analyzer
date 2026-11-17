@@ -75,7 +75,7 @@ class ScoreRowDelegate(QStyledItemDelegate):
             max(number_rect.left() - rect.left() - 2 * _PADDING, 10),
             rect.height(),
         )
-        painter.setPen(QColor("#FFFFFF") if selected else QColor(theme.TEXT))
+        painter.setPen(QColor(theme.ON_ACCENT) if selected else QColor(theme.TEXT))
         painter.drawText(
             name_rect,
             Qt.AlignmentFlag.AlignVCenter | Qt.AlignmentFlag.AlignLeft,
@@ -91,6 +91,6 @@ class ScoreRowDelegate(QStyledItemDelegate):
         painter.drawRoundedRect(track, 3, 3)
         fill = QRect(track)
         fill.setWidth(max(int(round(track.width() * percent / 100.0)), 2))
-        painter.setBrush(QColor("#FFFFFF") if selected else QColor(score_color(percent)))
+        painter.setBrush(QColor(theme.ON_ACCENT) if selected else QColor(score_color(percent)))
         painter.drawRoundedRect(fill, 3, 3)
         painter.restore()

@@ -85,8 +85,8 @@ class _MatchRowDelegate(QStyledItemDelegate):
                 QStyle.ControlElement.CE_ItemViewItem, view_option, painter, view_option.widget
             )
         selected = bool(view_option.state & QStyle.StateFlag.State_Selected)
-        text_color = QColor("#FFFFFF") if selected else QColor(theme.TEXT)
-        muted = QColor("#DDE8F3") if selected else QColor(theme.TEXT_MUTED)
+        text_color = QColor(theme.ON_ACCENT) if selected else QColor(theme.TEXT)
+        muted = QColor(theme.ON_ACCENT_MUTED) if selected else QColor(theme.TEXT_MUTED)
         rect: QRect = view_option.rect
         painter.save()
         painter.setRenderHint(painter.RenderHint.Antialiasing, True)
@@ -126,7 +126,7 @@ class _MatchRowDelegate(QStyledItemDelegate):
         painter.drawRoundedRect(track, 3, 3)
         fill = QRect(track)
         fill.setWidth(max(int(round(track.width() * max(0.0, min(score, 1.0)))), 2))
-        painter.setBrush(QColor("#FFFFFF") if selected else QColor(quality_color(score)))
+        painter.setBrush(QColor(theme.ON_ACCENT) if selected else QColor(quality_color(score)))
         painter.drawRoundedRect(fill, 3, 3)
 
         leads = (fingerprint - score) * 100 >= SKELETON_LEAD_PP

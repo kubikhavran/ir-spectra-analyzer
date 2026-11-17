@@ -97,7 +97,7 @@ class _PeakTableDelegate(QStyledItemDelegate):
             painter.setRenderHint(QPainter.RenderHint.Antialiasing, True)
             painter.setBrush(QColor(bg_hex))
             if option.state & QStyle.StateFlag.State_Selected:
-                painter.setPen(QPen(QColor("#FFFFFF"), 1.0))
+                painter.setPen(QPen(QColor(theme.ON_ACCENT), 1.0))
             else:
                 painter.setPen(Qt.PenStyle.NoPen)
             painter.drawRoundedRect(pill_rect, pill_h / 2.0, pill_h / 2.0)
@@ -124,7 +124,7 @@ class _PeakTableDelegate(QStyledItemDelegate):
             font.setItalic(True)
             painter.setFont(font)
             is_selected = bool(option.state & QStyle.StateFlag.State_Selected)
-            painter.setPen(QColor("#DCEAF6" if is_selected else theme.TEXT_FAINT))
+            painter.setPen(QColor(theme.ON_ACCENT_MUTED if is_selected else theme.TEXT_FAINT))
             text_rect = option.rect.adjusted(8, 0, -6, 0)
             painter.drawText(
                 text_rect,

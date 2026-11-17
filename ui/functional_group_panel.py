@@ -60,13 +60,13 @@ class _DiagnosticBandDelegate(QStyledItemDelegate):
         preview_name = str(index.data(_BAND_PREVIEW_ROLE) or "")
 
         if actionable:
-            pill_bg, pill_fg = "#DDF2EC", theme.SUCCESS
+            pill_bg, pill_fg = theme.SUCCESS_SOFT, theme.SUCCESS
         elif getattr(band, "is_missing_required", False):
             pill_bg, pill_fg = theme.DANGER_SOFT, theme.DANGER
         elif getattr(band, "is_confirmed", False):
             pill_bg, pill_fg = theme.ACCENT_SOFT, theme.ACCENT_DARK
         else:
-            pill_bg, pill_fg = "#FBF0D9", theme.WARNING
+            pill_bg, pill_fg = theme.WARNING_SOFT, theme.WARNING
 
         painter.save()
         painter.setRenderHint(QPainter.RenderHint.Antialiasing, True)
@@ -91,7 +91,7 @@ class _DiagnosticBandDelegate(QStyledItemDelegate):
             pill_h,
         )
         painter.setBrush(QColor(pill_bg))
-        painter.setPen(QPen(QColor("#FFFFFF"), 1.0) if is_selected else Qt.PenStyle.NoPen)
+        painter.setPen(QPen(QColor(theme.ON_ACCENT), 1.0) if is_selected else Qt.PenStyle.NoPen)
         painter.drawRoundedRect(pill_rect, pill_h / 2.0, pill_h / 2.0)
         painter.setPen(QColor(pill_fg))
         painter.drawText(pill_rect, Qt.AlignmentFlag.AlignCenter, status_text)
@@ -104,7 +104,7 @@ class _DiagnosticBandDelegate(QStyledItemDelegate):
         title_metrics = QFontMetrics(title_font)
         conf_w = title_metrics.horizontalAdvance(conf_text) + 6
         conf_rect = top_rect.adjusted(top_rect.width() - conf_w, 0, 0, 0)
-        painter.setPen(QColor("#FFFFFF" if is_selected else theme.ACCENT_DARK))
+        painter.setPen(QColor(theme.ON_ACCENT if is_selected else theme.ACCENT_DARK))
         painter.drawText(
             conf_rect,
             Qt.AlignmentFlag.AlignRight | Qt.AlignmentFlag.AlignVCenter,
@@ -113,7 +113,7 @@ class _DiagnosticBandDelegate(QStyledItemDelegate):
 
         # 3. Band label between pill and confidence
         label_rect = top_rect.adjusted(int(pill_w) + 6, 0, -(conf_w + 4), 0)
-        painter.setPen(QColor("#FFFFFF" if is_selected else theme.TEXT))
+        painter.setPen(QColor(theme.ON_ACCENT if is_selected else theme.TEXT))
         elided_label = title_metrics.elidedText(
             str(band.label), Qt.TextElideMode.ElideRight, max(20, label_rect.width())
         )
@@ -137,7 +137,9 @@ class _DiagnosticBandDelegate(QStyledItemDelegate):
             sub_text += f"  \u2192  {preview_name}"
         painter.setPen(
             QColor(
-                "#DCEAF6" if is_selected else (theme.SUCCESS if actionable else theme.TEXT_MUTED)
+                theme.ON_ACCENT_MUTED
+                if is_selected
+                else (theme.SUCCESS if actionable else theme.TEXT_MUTED)
             )
         )
         elided_sub = sub_metrics.elidedText(
@@ -375,7 +377,7 @@ class FunctionalGroupPanel(QWidget):
             item.setForeground(self._band_foreground_color(band))
             item.setToolTip(self._band_tooltip(band))
             if active_peak is not None and band.covers_wavenumber(active_peak.position):
-                item.setBackground(QColor("#E8F6F3"))
+                item.setBackground(QColor(theme.ROW_POSITIVE))
             self._detail_list.addItem(item)
 
     def _rebuild_group_info(self, result) -> None:
@@ -434,10 +436,10 @@ class FunctionalGroupPanel(QWidget):
 
     def _band_foreground_color(self, band) -> QColor:
         if band.is_missing_required:
-            return QColor("#C0392B")
+            return QColor(theme.DANGER)
         if band.is_confirmed:
             return QColor(band.color)
-        return QColor("#AF6E00")
+        return QColor(theme.WARNING)
 
     def _band_prefix(self, band) -> str:
         if self._is_actionable_band(band):

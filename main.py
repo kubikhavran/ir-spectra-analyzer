@@ -107,8 +107,13 @@ def main() -> None:
     app.setApplicationVersion(APP_VERSION)
     app.setOrganizationName(ORG_NAME)
 
-    from ui.theme import apply_theme  # noqa: PLC0415
+    from storage.settings import Settings  # noqa: PLC0415
+    from ui.theme import apply_theme, resolve_mode, set_mode  # noqa: PLC0415
 
+    # Pick light or dark colours before any window or panel is built.
+    appearance_settings = Settings()
+    appearance_settings.load()
+    set_mode(resolve_mode(appearance_settings.get("appearance")))
     apply_theme(app)
 
     app_icon = _load_app_icon()

@@ -33,6 +33,7 @@ from app.web_reference_import import WebReferenceImportService
 from core.spectrum import Spectrum
 from matching.quality import match_quality_label
 from storage.database import Database
+from ui import theme
 from ui.dialogs.background_task_dialog import BackgroundTaskDialogMixin
 from ui.i18n import current_source_text, tr
 from ui.models.reference_library_table_model import (
@@ -1151,7 +1152,7 @@ class ReferenceLibraryDialog(BackgroundTaskDialogMixin, QDialog):
         import pyqtgraph as pg  # noqa: PLC0415
 
         self._pg = pg
-        self._preview_plot = pg.PlotWidget(background="w")
+        self._preview_plot = pg.PlotWidget(background=theme.PLOT_BG)
         self._preview_plot.setMinimumHeight(220)
         self._preview_plot.setMenuEnabled(False)
         self._preview_plot.setMouseEnabled(x=False, y=False)
@@ -1162,8 +1163,8 @@ class ReferenceLibraryDialog(BackgroundTaskDialogMixin, QDialog):
         self._preview_plot.setLabel("left", "")
         for axis in ("bottom", "left"):
             axis_item = self._preview_plot.getAxis(axis)
-            axis_item.setPen(pg.mkPen(color="k", width=1))
-            axis_item.setTextPen(pg.mkPen(color="k"))
+            axis_item.setPen(pg.mkPen(color=theme.PLOT_FG, width=1))
+            axis_item.setTextPen(pg.mkPen(color=theme.PLOT_FG))
         self._preview_legend = self._preview_plot.addLegend(offset=(10, 10))
         self._current_spectrum_curve = self._preview_plot.plot(
             pen=pg.mkPen(color=(0, 100, 200, 160), width=1.5),
@@ -1172,7 +1173,7 @@ class ReferenceLibraryDialog(BackgroundTaskDialogMixin, QDialog):
         self._current_spectrum_curve.setVisible(False)
         self._preview_placeholder = pg.TextItem(
             tr("Select a row to preview"),
-            color="#666666",
+            color=theme.TEXT_MUTED,
             anchor=(0.5, 0.5),
         )
         self._preview_plot.addItem(self._preview_placeholder)
@@ -1248,7 +1249,12 @@ class ReferenceLibraryDialog(BackgroundTaskDialogMixin, QDialog):
                 y_data = ref_y / ref_max if ref_max > 0 else ref_y
             else:
                 y_data = ref_y
-            color = _PREVIEW_COLORS[idx % len(_PREVIEW_COLORS)]
+            # The first reference uses the plot ink (black, or light in dark mode).
+            color: str | tuple[int, int, int] = (
+                theme.PLOT_FG
+                if idx % len(_PREVIEW_COLORS) == 0
+                else _PREVIEW_COLORS[idx % len(_PREVIEW_COLORS)]
+            )
             pen = pg.mkPen(color=color, width=1)
             curve = self._preview_plot.plot(
                 x=ref["wavenumbers"],
