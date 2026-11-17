@@ -285,12 +285,14 @@ class _DraggableLabel(pg.TextItem):
             ev.ignore()
             return
         ev.accept()
+        # The label hands over its own peak: the one whose label was clicked,
+        # not whichever peak happens to be nearest on the wavenumber axis.
         if ev.modifiers() & Qt.KeyboardModifier.ShiftModifier:
             if self._shift_click_callback is not None:
-                self._shift_click_callback(self._peak_x)
+                self._shift_click_callback(self._peak)
             return
         if self._click_callback is not None:
-            self._click_callback(self._peak_x)
+            self._click_callback(self._peak)
 
     def mouseDragEvent(self, ev) -> None:  # noqa: N802
         """Handle PyQtGraph drag events: move label and update leader."""
@@ -694,13 +696,15 @@ class SpectrumWidget(QWidget):
         return self._hidden_label_count
 
     def _label_priority(self, label: _DraggableLabel, reference: float) -> tuple[int, float]:
-        """Sort key: selected first, then assigned, then by band strength."""
+        """Sort key: selected first, then assigned or hand-placed, then by band strength."""
         from core.peak_assignments import peak_has_assignment  # noqa: PLC0415
 
         peak = label._peak
         if peak is self._selected_peak:
             rank = 2
-        elif peak_has_assignment(peak):
+        elif peak_has_assignment(peak) or peak.manual_placement:
+            # Assigned peaks and peaks the user placed or moved by hand are
+            # deliberate: their labels never step aside.
             rank = 1
         else:
             rank = 0
@@ -1679,13 +1683,20 @@ class SpectrumWidget(QWidget):
         self._opacity_label.setText(f"{value}%")
         self._redraw_overlays()
 
-    def _on_label_clicked(self, peak_x: float) -> None:
-        """Called when a peak label is directly clicked; find and select the peak."""
+    def _peak_of_label(self, peak_or_x: Peak | float) -> Peak | None:
+        """The peak a label belongs to (by identity; a bare position as fallback)."""
         if not self._peaks:
-            return
-        closest = min(self._peaks, key=lambda p: abs(p.position - peak_x))
-        if abs(closest.position - peak_x) <= 1.0:  # exact match (label stores peak_x)
-            self.peak_selected_in_viewer.emit(closest)
+            return None
+        if isinstance(peak_or_x, Peak):
+            return next((peak for peak in self._peaks if peak is peak_or_x), None)
+        closest = min(self._peaks, key=lambda p: abs(p.position - float(peak_or_x)))
+        return closest if abs(closest.position - float(peak_or_x)) <= 1.0 else None
+
+    def _on_label_clicked(self, peak_or_x: Peak | float) -> None:
+        """Called when a peak label is directly clicked; select exactly its peak."""
+        peak = self._peak_of_label(peak_or_x)
+        if peak is not None:
+            self.peak_selected_in_viewer.emit(peak)
 
     def _peak_label_items(self) -> list[_DraggableLabel]:
         items = [item for item in self._peak_items if isinstance(item, _DraggableLabel)]
@@ -1761,13 +1772,11 @@ class SpectrumWidget(QWidget):
             return y1 >= float(np.min(curve_y)) - clearance
         return y0 <= float(np.max(curve_y)) + clearance
 
-    def _on_label_shift_clicked(self, peak_x: float) -> None:
-        """Called on Shift+click of a label; delete peak in any tool mode."""
-        if not self._peaks:
-            return
-        closest = min(self._peaks, key=lambda p: abs(p.position - peak_x))
-        if abs(closest.position - peak_x) <= 1.0:
-            self.peak_delete_requested.emit(closest)
+    def _on_label_shift_clicked(self, peak_or_x: Peak | float) -> None:
+        """Called on Shift+click of a label; delete exactly its peak in any tool mode."""
+        peak = self._peak_of_label(peak_or_x)
+        if peak is not None:
+            self.peak_delete_requested.emit(peak)
 
     def _on_mouse_clicked(self, event) -> None:
         """Handle mouse click on the main plot scene."""
@@ -1804,19 +1813,34 @@ class SpectrumWidget(QWidget):
             # the opt-in shortcut for "put it on the apex of this band".
             if event.modifiers() & Qt.KeyboardModifier.ControlModifier:
                 wavenumber = self.snap_to_band_apex(wavenumber, self._snap_tolerance_for(vb))
-            # Don't add a new peak if the click landed on an existing label
-            if self._peaks:
-                closest = min(self._peaks, key=lambda p: abs(p.position - wavenumber))
-                if abs(closest.position - wavenumber) <= 5.0:
-                    return  # user clicked on/near an existing label — label handles it
+            # A click on an existing label selects that peak (the label took the
+            # click). Anywhere else a new peak goes in, however close it is to
+            # another one — shoulders and split bands sit a few cm⁻¹ apart.
+            if self._click_hit_label(event):
+                return
+            if any(abs(p.position - wavenumber) < self._DUPLICATE_PEAK_CM for p in self._peaks):
+                return  # the very same position is already marked
             # Peaks are stored in the file's own unit, whatever is displayed.
             intensity = self._native_intensity_at(wavenumber)
             self.peak_clicked.emit(wavenumber, intensity, click_y)
         elif self._peaks:
-            # Select nearest peak within 30 cm⁻¹
+            # A click on a label has already selected that label's peak; picking
+            # the nearest position here would override it with a neighbour.
+            if self._click_hit_label(event):
+                return
+            # Elsewhere in the plot: the nearest peak within 30 cm⁻¹.
             closest = min(self._peaks, key=lambda p: abs(p.position - wavenumber))
             if abs(closest.position - wavenumber) <= 30.0:
                 self.peak_selected_in_viewer.emit(closest)
+
+    @staticmethod
+    def _click_hit_label(event) -> bool:
+        """Whether a peak label already took this click (pyqtgraph hands it to
+        the item under the pointer before the scene-wide signal fires)."""
+        is_accepted = getattr(event, "isAccepted", None)
+        if is_accepted is None or not is_accepted():
+            return False
+        return isinstance(getattr(event, "currentItem", None), _DraggableLabel)
 
     def _on_mouse_moved(self, pos) -> None:
         """Handle mouse move on the main plot scene."""
@@ -1879,6 +1903,10 @@ class SpectrumWidget(QWidget):
             x = x[::-1]
             y = y[::-1]
         return float(np.interp(wavenumber, x, y))
+
+    # Two marks closer than this are the same peak (e.g. Ctrl+click snapping
+    # onto an apex that is already labelled).
+    _DUPLICATE_PEAK_CM = 0.01
 
     # How close to a band's apex a Ctrl+click has to land, in screen pixels, for
     # the new peak to snap onto it.

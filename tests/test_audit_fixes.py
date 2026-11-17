@@ -14,6 +14,7 @@ from unittest.mock import MagicMock
 import numpy as np
 import pytest
 from PySide6.QtCore import QPointF, Qt
+from PySide6.QtWidgets import QApplication
 
 from core.commands import CorrectBaselineCommand
 from core.peak import Peak
@@ -538,3 +539,133 @@ def test_pyside6_is_capped_below_the_release_that_crashes_on_python_311() -> Non
     dependencies = tomllib.loads(pyproject.read_text(encoding="utf-8"))["project"]["dependencies"]
     pyside = next(dep for dep in dependencies if dep.startswith("PySide6"))
     assert "<6.12" in pyside
+
+
+def _add_peak_widget(qtbot) -> SpectrumWidget:
+    widget = SpectrumWidget()
+    qtbot.addWidget(widget)
+    widget.resize(1000, 600)
+    widget.show()
+    qtbot.waitExposed(widget)
+    widget.set_spectrum(
+        Spectrum(wavenumbers=_WN.copy(), intensities=_absorbance(), y_unit=SpectralUnit.ABSORBANCE)
+    )
+    widget.set_tool_mode("add_peak")
+    return widget
+
+
+def test_add_peak_right_next_to_an_existing_one(qtbot) -> None:
+    """Shoulders and split bands sit a few cm⁻¹ apart: every click must count."""
+    widget = _add_peak_widget(qtbot)
+    widget.set_peaks([Peak(position=1715.0, intensity=1.0)])
+    view_box = widget._plot_widget.getPlotItem().vb
+    added: list[float] = []
+    widget.peak_clicked.connect(lambda wn, _intensity, _y: added.append(wn))
+
+    for position in (1713.0, 1716.5, 1711.0):
+        scene_pos = view_box.mapViewToScene(QPointF(position, 0.2))
+        widget._handle_mouse_clicked(_Click(scene_pos), widget._plot_widget)
+
+    assert added == pytest.approx([1713.0, 1716.5, 1711.0], abs=0.01)
+
+
+def test_click_taken_by_a_label_does_not_add_a_peak(qtbot) -> None:
+    widget = _add_peak_widget(qtbot)
+    peak = Peak(position=1715.0, intensity=1.0)
+    widget.set_peaks([peak])
+    label = next(item for item in widget._peak_items if hasattr(item, "_peak"))
+    added: list[float] = []
+    widget.peak_clicked.connect(lambda wn, _intensity, _y: added.append(wn))
+
+    class _LabelClick(_Click):
+        currentItem = label  # noqa: N815 (pyqtgraph attribute name)
+
+        def isAccepted(self) -> bool:  # noqa: N802 (Qt naming)
+            return True
+
+    scene_pos = widget._plot_widget.getPlotItem().vb.mapViewToScene(QPointF(1714.0, 0.2))
+    widget._handle_mouse_clicked(_LabelClick(scene_pos), widget._plot_widget)
+    assert added == []
+
+    # Ctrl+click snapping onto the apex that is already marked adds no duplicate.
+    widget._handle_mouse_clicked(
+        _Click(scene_pos, Qt.KeyboardModifier.ControlModifier), widget._plot_widget
+    )
+    assert all(abs(position - 1715.0) >= 0.01 for position in added)
+
+
+def test_hand_placed_peak_labels_are_never_hidden(qtbot) -> None:
+    widget = _add_peak_widget(qtbot)
+    # All three labels at the same height, a few cm⁻¹ apart: they overlap.
+    peaks = [
+        Peak(position=1715.0, intensity=1.0, label_offset_y=0.07, manual_placement=True),
+        Peak(position=1713.0, intensity=1.0, label_offset_y=0.07, manual_placement=True),
+        Peak(position=1711.0, intensity=1.0, label_offset_y=0.07, manual_placement=True),
+        Peak(position=1709.0, intensity=1.0),  # detected, not placed by hand
+    ]
+    widget.set_peaks(peaks)
+    widget._declutter_labels()
+    labels = {item._peak.position: item for item in widget._peak_items if hasattr(item, "_peak")}
+    assert labels[1715.0].isVisible()
+    assert labels[1713.0].isVisible()
+    assert labels[1711.0].isVisible()
+    assert not labels[1709.0].isVisible()  # an ordinary detected label still steps aside
+
+
+def _click_scene_point(widget: SpectrumWidget, scene_point) -> None:
+    from PySide6.QtTest import QTest
+
+    view = widget._plot_widget
+    QTest.mouseClick(
+        view.viewport(),
+        Qt.MouseButton.LeftButton,
+        Qt.KeyboardModifier.NoModifier,
+        view.mapFromScene(scene_point),
+    )
+    QApplication.processEvents()
+
+
+def test_clicking_a_moved_label_selects_its_own_peak(qtbot) -> None:
+    """Close peaks with labels spread apart: the label decides, not the x position."""
+    widget = _add_peak_widget(qtbot)
+    widget.set_tool_mode("select")
+    widget._plot_widget.getPlotItem().vb.setXRange(1650.0, 1780.0, padding=0)
+    QApplication.processEvents()
+    # 1712's label was dragged right over 1720, 1720's label to the left over 1705.
+    left = Peak(
+        position=1712.0,
+        intensity=0.9,
+        manual_placement=True,
+        label_offset_x=8.0,
+        label_offset_y=0.2,
+    )
+    right = Peak(
+        position=1720.0,
+        intensity=0.9,
+        manual_placement=True,
+        label_offset_x=-15.0,
+        label_offset_y=0.2,
+    )
+    widget.set_peaks([right, left])
+    QApplication.processEvents()
+    selected: list[Peak] = []
+    widget.peak_selected_in_viewer.connect(selected.append)
+    labels = {item._peak.position: item for item in widget._peak_items if hasattr(item, "_peak")}
+
+    _click_scene_point(widget, labels[1712.0].sceneBoundingRect().center())
+    _click_scene_point(widget, labels[1720.0].sceneBoundingRect().center())
+
+    assert selected == [left, right]
+
+
+def test_real_clicks_add_peaks_next_to_an_existing_one(qtbot) -> None:
+    widget = _add_peak_widget(qtbot)
+    widget._plot_widget.getPlotItem().vb.setXRange(1650.0, 1780.0, padding=0)
+    QApplication.processEvents()
+    widget.set_peaks([Peak(position=1715.0, intensity=1.0)])
+    added: list[float] = []
+    widget.peak_clicked.connect(lambda wn, _intensity, _y: added.append(wn))
+    view_box = widget._plot_widget.getPlotItem().vb
+    for position in (1712.0, 1718.0):
+        _click_scene_point(widget, view_box.mapViewToScene(QPointF(position, 0.3)))
+    assert added == pytest.approx([1712.0, 1718.0], abs=0.6)
