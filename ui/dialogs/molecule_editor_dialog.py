@@ -964,7 +964,7 @@ class MoleculeEditorDialog(QDialog):
         if fragment is None:
             return
         fragment.attach = None  # always a separate molecule / ion
-        self._canvas.begin_placement(fragment, label)
+        self._canvas.begin_placement(fragment, label, sticky=True)
         self._canvas.setFocus(Qt.FocusReason.OtherFocusReason)
 
     def _custom_groups(self) -> dict[str, str]:
@@ -1000,7 +1000,7 @@ class MoleculeEditorDialog(QDialog):
         fragment = self._parse_group_input()
         if fragment is None:
             return
-        self._canvas.begin_placement(fragment, self._group_input.text().strip())
+        self._canvas.begin_placement(fragment, self._group_input.text().strip(), sticky=True)
         self._canvas.setFocus(Qt.FocusReason.OtherFocusReason)
 
     def _ask_group_name(self, default: str) -> str:
@@ -1038,7 +1038,7 @@ class MoleculeEditorDialog(QDialog):
         fragment = fragment_from_smiles(str(item.data(Qt.ItemDataRole.UserRole)), label=item.text())
         if fragment is None:
             return
-        self._canvas.begin_placement(fragment, item.text())
+        self._canvas.begin_placement(fragment, item.text(), sticky=True)
         self._canvas.setFocus(Qt.FocusReason.OtherFocusReason)
 
     def _on_custom_remove(self) -> None:

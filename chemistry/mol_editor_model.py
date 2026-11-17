@@ -1635,11 +1635,20 @@ class MolEditorModel:
             self._mol.GetBondWithIdx(bidx).SetBondType(work.GetBondWithIdx(bidx).GetBondType())
         self._touch()
 
-    def attach_functional_group(self, atom_idx: int, group_key: str) -> list[int]:
-        """Attach an IR-relevant group (``-OH``, ``-COOH``, ``-NO2`` …) to *atom_idx*."""
+    def attach_functional_group(
+        self, atom_idx: int, group_key: str, angle: float | None = None
+    ) -> list[int]:
+        """Attach an IR-relevant group (``-OH``, ``-COOH``, ``-NO2`` …) to *atom_idx*.
+
+        *angle* (degrees) sets the direction of the bond to the group.
+        """
         if group_key not in FUNCTIONAL_GROUPS:
             raise ValueError(f"Unknown functional group: {group_key!r}")
         if group_key == "-Ph":
+            if angle is not None:
+                phenyl = parse_group("Ph")
+                assert phenyl is not None
+                return self.insert_fragment(phenyl, target_atom_idx=atom_idx, angle=angle)
             return self.add_ring_template("benzene", target_atom_idx=atom_idx)
         with _quiet_rdkit():
             fragment = Chem.MolFromSmiles(FUNCTIONAL_GROUPS[group_key])
@@ -1647,7 +1656,7 @@ class MolEditorModel:
         self._push_undo()
         index_map: dict[int, int] = {}
         root = fragment.GetAtomWithIdx(0)
-        index_map[0] = self._sprout(atom_idx, self._copy_fragment_atom(root), 1, STEREO_NONE, None)
+        index_map[0] = self._sprout(atom_idx, self._copy_fragment_atom(root), 1, STEREO_NONE, angle)
         queue = deque([0])
         visited = {0}
         while queue:
@@ -1998,8 +2007,13 @@ class MolEditorModel:
         *,
         target_atom_idx: int | None = None,
         position: tuple[float, float] | None = None,
+        angle: float | None = None,
     ) -> list[tuple[float, float]]:
-        """Where :meth:`insert_fragment` would put each fragment atom."""
+        """Where :meth:`insert_fragment` would put each fragment atom.
+
+        *angle* (degrees) fixes the direction of the new bond from the target
+        atom, e.g. the direction the user dragged in.
+        """
         self._last_fragment_mirrored = False
         pts = [complex(x, y) for x, y in fragment.coordinates()]
         if not pts:
@@ -2008,7 +2022,12 @@ class MolEditorModel:
         if target_atom_idx is not None and fragment.attach is not None:
             attach = pts[fragment.attach]
             target = complex(*self.atom_position(target_atom_idx))
-            direction = cmath.exp(1j * self._sprout_direction(target_atom_idx))
+            bond_angle = (
+                math.radians(angle)
+                if angle is not None
+                else self._sprout_direction(target_atom_idx)
+            )
+            direction = cmath.exp(1j * bond_angle)
             attach_pos = target + BOND_LENGTH * direction
             if fragment.anchor is not None:
                 inward = complex(*fragment.anchor) - attach
@@ -2061,14 +2080,18 @@ class MolEditorModel:
         *,
         target_atom_idx: int | None = None,
         position: tuple[float, float] | None = None,
+        angle: float | None = None,
     ) -> list[int]:
         """Add *fragment*; bonded to *target_atom_idx* through its attach atom.
+
+        *angle* (degrees) sets the direction of that bond; by default it
+        follows the usual sprouting rules.
 
         Without a target the fragment is centred at *position* (or placed to
         the right of the drawing) as a separate molecule — e.g. a counter-ion.
         """
         coords = self.fragment_coordinates(
-            fragment, target_atom_idx=target_atom_idx, position=position
+            fragment, target_atom_idx=target_atom_idx, position=position, angle=angle
         )
         self._push_undo()
         index_map: dict[int, int] = {}

@@ -795,3 +795,18 @@ def test_sugar_and_ether_ring_buttons(native_dialog, isolated_groups):
     dlg._ring_buttons["oxane"].click()
     _click(dlg._canvas, QPoint(30, 30))
     assert "C1CCOCC1" in dlg._canvas.to_smiles()
+
+
+@requires_rdkit
+def test_custom_group_stays_on_cursor_for_several_atoms(native_dialog, isolated_groups):
+    dlg = native_dialog(initial_smiles="CCCC")
+    dlg._left_tabs.setCurrentIndex(2)
+    dlg._group_input.setText("OMe")
+    dlg._group_place_btn.click()
+    canvas = dlg._canvas
+    for atom in (0, 3):
+        _click(canvas, canvas._atom_screen(atom).toPoint())
+    assert canvas.to_smiles() == "COCCCCOC"
+    assert canvas.placement() is not None
+    dlg._salt_buttons["HCl"].click()
+    assert canvas.placement() is not None
