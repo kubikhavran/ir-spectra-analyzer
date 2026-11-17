@@ -656,7 +656,7 @@ class MoleculeCanvas(QWidget):
         if watched is self._label_editor and event.type() == event.Type.FocusOut:
             if self._label_editor.isVisible():
                 self._close_label_editor()
-        return super().eventFilter(watched, event)
+        return bool(super().eventFilter(watched, event))
 
     def open_atom_properties(self, atom: int) -> bool:
         if not 0 <= atom < self._model.atom_count:
@@ -804,7 +804,7 @@ class MoleculeCanvas(QWidget):
         image = flat
         buffer = QBuffer()
         buffer.open(QIODevice.OpenModeFlag.WriteOnly)
-        image.save(buffer, "PNG")  # type: ignore[call-overload]
+        image.save(buffer, "PNG")  # type: ignore[call-overload, unused-ignore]
         return bytes(buffer.data().data())
 
     def _export_origin(self, zoom: float, width: int, height: int) -> QPointF:

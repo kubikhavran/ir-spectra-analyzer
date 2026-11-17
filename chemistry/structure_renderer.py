@@ -218,7 +218,7 @@ def _crop_transparent_border(png: bytes, *, relative_margin: float) -> tuple[byt
         cropped = image.copy(left, top, right - left + 1, bottom - top + 1)
         buf = QBuffer()
         buf.open(QIODevice.OpenModeFlag.WriteOnly)
-        cropped.save(buf, "PNG")  # type: ignore[call-overload]
+        cropped.save(buf, "PNG")  # type: ignore[call-overload, unused-ignore]
         return bytes(buf.data().data()), cropped.width(), cropped.height()
     except Exception:  # noqa: BLE001 - a border is cosmetic, a failed render is not
         try:

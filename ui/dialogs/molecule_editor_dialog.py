@@ -1007,7 +1007,7 @@ class MoleculeEditorDialog(QDialog):
         name, ok = QInputDialog.getText(
             self, tr("Save Custom Group"), tr("Name of the group:"), text=default
         )
-        return name.strip() if ok else ""
+        return str(name).strip() if ok else ""
 
     def _store_group(self, name: str, fragment: Fragment) -> bool:
         if self._group_store is None or not name:

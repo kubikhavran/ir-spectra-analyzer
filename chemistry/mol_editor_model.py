@@ -429,7 +429,7 @@ class MolEditorModel:
             return ""
         mol = self._export_mol()
         with _quiet_rdkit():
-            return Chem.MolToSmiles(mol)
+            return str(Chem.MolToSmiles(mol))
 
     def to_mol_block(self) -> str:
         """V2000 MOL block with the drawn 2D coordinates; ``""`` if empty."""
@@ -446,7 +446,7 @@ class MolEditorModel:
             lines = block.split("\n")
             lines[2] = f"{_MOLFILE_TAG} bold=" + ",".join(str(i) for i in bold)
             block = "\n".join(lines)
-        return block
+        return str(block)
 
     @staticmethod
     def _read_molfile_tags(mol: Chem.RWMol, mol_block: str) -> None:
@@ -542,20 +542,20 @@ class MolEditorModel:
 
     @property
     def atom_count(self) -> int:
-        return self._mol.GetNumAtoms()
+        return int(self._mol.GetNumAtoms())
 
     @property
     def bond_count(self) -> int:
-        return self._mol.GetNumBonds()
+        return int(self._mol.GetNumBonds())
 
     def is_empty(self) -> bool:
         return self.atom_count == 0
 
     def atom_symbol(self, atom_idx: int) -> str:
-        return self._mol.GetAtomWithIdx(atom_idx).GetSymbol()
+        return str(self._mol.GetAtomWithIdx(atom_idx).GetSymbol())
 
     def atom_charge(self, atom_idx: int) -> int:
-        return self._mol.GetAtomWithIdx(atom_idx).GetFormalCharge()
+        return int(self._mol.GetAtomWithIdx(atom_idx).GetFormalCharge())
 
     def atom_position(self, atom_idx: int) -> tuple[float, float]:
         pos = self._mol.GetConformer().GetAtomPosition(atom_idx)
@@ -565,7 +565,7 @@ class MolEditorModel:
         return [n.GetIdx() for n in self._mol.GetAtomWithIdx(atom_idx).GetNeighbors()]
 
     def atom_degree(self, atom_idx: int) -> int:
-        return self._mol.GetAtomWithIdx(atom_idx).GetDegree()
+        return int(self._mol.GetAtomWithIdx(atom_idx).GetDegree())
 
     def bond_atoms(self, bond_idx: int) -> tuple[int, int]:
         bond = self._mol.GetBondWithIdx(bond_idx)
@@ -599,7 +599,7 @@ class MolEditorModel:
     def implicit_hydrogens(self, atom_idx: int) -> int:
         """Hydrogens shown in the atom label (implicit + explicit H count)."""
         atom = self._mol.GetAtomWithIdx(atom_idx)
-        return atom.GetNumImplicitHs() + atom.GetNumExplicitHs()
+        return int(atom.GetNumImplicitHs() + atom.GetNumExplicitHs())
 
     def invalid_atom_indices(self) -> set[int]:
         """Atoms whose explicit valence exceeds what the element allows."""
@@ -656,7 +656,7 @@ class MolEditorModel:
         mol = Chem.Mol(self._mol)
         with _quiet_rdkit():
             mol.UpdatePropertyCache(strict=False)
-            return float(Descriptors.MolWt(mol))  # type: ignore[attr-defined]
+            return float(Descriptors.MolWt(mol))  # type: ignore[attr-defined, unused-ignore]
 
     def bounds(self) -> tuple[float, float, float, float] | None:
         """``(min_x, min_y, max_x, max_y)`` of all atoms, ``None`` when empty."""
@@ -966,7 +966,7 @@ class MolEditorModel:
     def _add_atom(self, atom: Chem.Atom, x: float, y: float) -> int:
         idx = self._mol.AddAtom(atom)
         self._mol.GetConformer().SetAtomPosition(idx, Point3D(x, y, 0.0))
-        return idx
+        return int(idx)
 
     def _set_position(self, atom_idx: int, x: float, y: float) -> None:
         self._mol.GetConformer().SetAtomPosition(atom_idx, Point3D(x, y, 0.0))
@@ -975,7 +975,7 @@ class MolEditorModel:
         self._mol.AddBond(a, b, _ORDER_TO_TYPE.get(order, Chem.BondType.SINGLE))
         bond = self._mol.GetBondBetweenAtoms(a, b)
         bond.SetBondDir(_STEREO_TO_DIR.get(stereo_dir, Chem.BondDir.NONE))
-        return bond.GetIdx()
+        return int(bond.GetIdx())
 
     def _sprout_direction(
         self,
@@ -1252,7 +1252,7 @@ class MolEditorModel:
         bond.SetIsAromatic(False)
         bond.SetStereo(Chem.BondStereo.STEREONONE)
         self._touch()
-        return bond.GetIdx()
+        return int(bond.GetIdx())
 
     def set_bond_order(self, bond_idx: int, order: int) -> None:
         a, b = self.bond_atoms(bond_idx)
