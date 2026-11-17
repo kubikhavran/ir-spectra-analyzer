@@ -56,15 +56,22 @@ MODE_WAVENUMBER = "wavenumber"
 #: Collapsible sections by vibration type, with the vibrations that fit the
 #: selected peak gathered on top.
 MODE_GROUPED = "grouped"
+#: Only the vibrations the groups of the drawn structure can show, one section
+#: per group, with those that fit the selected peak on top.
+MODE_STRUCTURE = "structure"
 _MODES: tuple[tuple[str, str], ...] = (
     (MODE_GROUPED, "Grouped by type"),
     (MODE_WAVENUMBER, "Sorted by wavenumber"),
+    (MODE_STRUCTURE, "By the drawn structure"),
 )
+_ALL_MODES = tuple(mode for mode, _label in _MODES)
 
 # Item data roles: 256 holds the VibrationPreset of a row (None for a header),
 # 257 the key of a section header.
 _PRESET_ROLE = 256
 _SECTION_ROLE = 257
+#: Colour swatch of a structure-group section (its lane colour in the plot).
+_SECTION_COLOR_ROLE = 258
 
 _SECTION_FITS = "fits"
 _SECTION_CUSTOM = "custom"
@@ -119,9 +126,18 @@ class _PresetDelegate(QStyledItemDelegate):
             font = painter.font()
             font.setBold(True)
             painter.setFont(font)
+            text_rect = rect.adjusted(self._PADDING, 0, -self._PADDING, 0)
+            swatch = index.data(_SECTION_COLOR_ROLE)
+            if swatch:
+                side = 10
+                top = rect.top() + (rect.height() - side) // 2
+                painter.fillRect(
+                    QRect(rect.left() + self._PADDING, top, side, side), QColor(swatch)
+                )
+                text_rect = text_rect.adjusted(side + 6, 0, 0, 0)
             painter.setPen(QColor(theme.TEXT_MUTED))
             painter.drawText(
-                rect.adjusted(self._PADDING, 0, -self._PADDING, 0),
+                text_rect,
                 Qt.AlignmentFlag.AlignVCenter | Qt.AlignmentFlag.AlignLeft,
                 text,
             )
@@ -185,8 +201,11 @@ class VibrationPanel(QWidget):
     #: vibration may appear must not depend on a peak being selected.
     preset_range_requested = Signal(object)
     range_visibility_changed = Signal(bool)
-    #: Emits MODE_GROUPED / MODE_WAVENUMBER when the user switches the arrangement.
+    #: Emits MODE_GROUPED / MODE_WAVENUMBER / MODE_STRUCTURE when the user
+    #: switches the arrangement.
     view_mode_changed = Signal(str)
+    #: The user turned the structure's bands in the spectrum on or off.
+    structure_bands_visibility_changed = Signal(bool)
 
     def __init__(self, db=None, parent=None) -> None:
         super().__init__(parent)
@@ -201,6 +220,8 @@ class VibrationPanel(QWidget):
         # (group name, preset names) pairs provided by MainWindow from the
         # functional-group knowledge base — used as quick tag filters.
         self._group_tags: list[tuple[str, frozenset[str]]] = []
+        # Groups of the drawn structure (chemistry.structure_motifs.FoundMotif).
+        self._structure_motifs: list = []
         self._setup_ui()
 
     def _setup_ui(self) -> None:
@@ -235,8 +256,9 @@ class VibrationPanel(QWidget):
         self._mode_combo.setToolTip(
             tr(
                 "How the list is arranged: in sections by vibration type, with the "
-                "vibrations that fit the selected peak on top, or as one list "
-                "ordered by wavenumber."
+                "vibrations that fit the selected peak on top; as one list ordered "
+                "by wavenumber; or only the vibrations of the groups in the drawn "
+                "structure, one section per group."
             )
         )
         self._mode_combo.currentIndexChanged.connect(self._on_mode_selected)
@@ -292,6 +314,21 @@ class VibrationPanel(QWidget):
         self._show_range_checkbox.toggled.connect(self.range_visibility_changed.emit)
         layout.addWidget(self._show_range_checkbox)
 
+        self._show_structure_bands_checkbox = QCheckBox(
+            tr("Show the structure's bands in spectrum")
+        )
+        self._show_structure_bands_checkbox.setChecked(True)
+        self._show_structure_bands_checkbox.setToolTip(
+            tr(
+                "Mark where the groups of the drawn structure absorb: one coloured lane "
+                "per group at the top of the plot, in the colour of its section here."
+            )
+        )
+        self._show_structure_bands_checkbox.toggled.connect(
+            self.structure_bands_visibility_changed.emit
+        )
+        layout.addWidget(self._show_structure_bands_checkbox)
+
         add_btn = QPushButton(tr("Add custom vibration…"))
         add_btn.setToolTip(tr("Add a permanent custom vibration entry"))
         add_btn.clicked.connect(self._on_add_custom)
@@ -305,7 +342,7 @@ class VibrationPanel(QWidget):
 
     def set_view_mode(self, mode: object) -> None:
         """Choose the arrangement without announcing it as a user change."""
-        resolved = mode if mode in (MODE_GROUPED, MODE_WAVENUMBER) else MODE_GROUPED
+        resolved = mode if mode in _ALL_MODES else MODE_GROUPED
         if resolved == self._view_mode:
             return
         self._view_mode = str(resolved)
@@ -319,7 +356,7 @@ class VibrationPanel(QWidget):
 
     def _on_mode_selected(self, index: int) -> None:
         mode = self._mode_combo.itemData(index)
-        if mode not in (MODE_GROUPED, MODE_WAVENUMBER) or mode == self._view_mode:
+        if mode not in _ALL_MODES or mode == self._view_mode:
             return
         self._view_mode = str(mode)
         self._rebuild_list(self._filter_edit.text())
@@ -376,6 +413,19 @@ class VibrationPanel(QWidget):
         if 0 <= index < len(self._group_tags):
             return self._group_tags[index][1]
         return None
+
+    def set_structure_motifs(self, found: list) -> None:
+        """The groups of the drawn structure (an empty list when there is none)."""
+        self._structure_motifs = list(found)
+        if self._view_mode == MODE_STRUCTURE:
+            self._rebuild_list(self._filter_edit.text())
+            self._reapply_peak_highlight()
+
+    def structure_motifs(self) -> list:
+        return list(self._structure_motifs)
+
+    def show_structure_bands(self) -> bool:
+        return bool(self._show_structure_bands_checkbox.isChecked())
 
     def set_presets(self, presets: list[VibrationPreset]) -> None:
         self._presets = presets
@@ -491,7 +541,9 @@ class VibrationPanel(QWidget):
             self._list.addItem(item)
 
         passing = [p for p in self._presets if _passes(p)]
-        if self._view_mode == MODE_GROUPED:
+        if self._view_mode == MODE_STRUCTURE:
+            self._add_structure_sections(passing, _add_preset)
+        elif self._view_mode == MODE_GROUPED:
             for key, title, members in self._grouped_sections(passing):
                 if self._add_section_header(key, title, len(members)):
                     for preset in members:
@@ -529,6 +581,54 @@ class VibrationPanel(QWidget):
         if not restored:
             scrollbar.setValue(min(scroll_value, scrollbar.maximum()))
         self._update_assign_button()
+
+    def _add_structure_sections(self, passing: list[VibrationPreset], add_preset) -> None:
+        """One section per group of the drawn structure; fitting ones on top."""
+        from ui.structure_bands import motif_colors, presets_for  # noqa: PLC0415
+
+        if not self._structure_motifs:
+            hint = QListWidgetItem(
+                tr(
+                    "Draw a structure in the Structure panel to see only the vibrations "
+                    "of its groups here."
+                )
+            )
+            hint.setFlags(Qt.ItemFlag.NoItemFlags)
+            hint.setForeground(QColor(theme.TEXT_MUTED))
+            self._list.addItem(hint)
+            return
+        passing_ids = {id(p) for p in passing}
+        colors = motif_colors(self._structure_motifs)
+        sections: list[tuple[str, str, list[VibrationPreset], str | None]] = []
+        for found in self._structure_motifs:
+            members = [p for p in presets_for(found, self._presets) if id(p) in passing_ids]
+            if not members:
+                continue
+            title = tr(found.name) + (f"  · {found.count}×" if found.count > 1 else "")
+            sections.append((f"motif:{found.id}", title, members, colors.get(found.id)))
+
+        wavenumber = self._active_wavenumber
+        if wavenumber is not None:
+            fitting: list[VibrationPreset] = []
+            for _key, _title, members, _color in sections:
+                for preset in members:
+                    if preset.covers_wavenumber(wavenumber) and not any(
+                        preset is f for f in fitting
+                    ):
+                        fitting.append(preset)
+            if fitting:
+                fitting.sort(key=lambda p: p.typical_range_max - p.typical_range_min)
+                title = tr("Fits peak {position} cm⁻¹").format(position=f"{wavenumber:.0f}")
+                sections.insert(0, (_SECTION_FITS, title, fitting, None))
+
+        for key, title, members, color in sections:
+            expanded = self._add_section_header(key, title, len(members))
+            if color is not None:
+                header = self._list.item(self._list.count() - 1)
+                header.setData(_SECTION_COLOR_ROLE, color)
+            if expanded:
+                for preset in members:
+                    add_preset(preset)
 
     def _apply_filter(self, text: str) -> None:
         self._rebuild_list(text)

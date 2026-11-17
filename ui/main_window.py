@@ -664,6 +664,22 @@ class MainWindow(QMainWindow):
         self._vibration_presets_cache = presets
         self._vibration_panel.set_presets(presets)
         self._refresh_functional_group_assignment_preview()
+        self._refresh_structure_motifs()
+
+    def _refresh_structure_motifs(self) -> None:
+        """Read the groups of the drawn structure for the Vibrations panel and the plot."""
+        from chemistry.structure_motifs import perceive_smiles  # noqa: PLC0415
+        from ui.structure_bands import structure_bands  # noqa: PLC0415
+
+        smiles = self._project.smiles if self._project is not None else ""
+        try:
+            found = perceive_smiles(smiles or "")
+        except Exception:  # noqa: BLE001 — a reading aid must never block the window
+            found = []
+        self._vibration_panel.set_structure_motifs(found)
+        self._spectrum_widget.set_structure_bands(
+            structure_bands(found, list(self._vibration_presets_cache))
+        )
 
     def _setup_statusbar(self) -> None:
         """Status bar: transient messages left, the standing facts right."""
@@ -871,6 +887,9 @@ class MainWindow(QMainWindow):
         self._vibration_panel.preset_selected.connect(self._on_preset_selected)
         self._vibration_panel.preset_clicked_for_assign.connect(self._on_preset_clicked_for_assign)
         self._vibration_panel.preset_range_requested.connect(self._on_preset_range_requested)
+        self._vibration_panel.structure_bands_visibility_changed.connect(
+            self._spectrum_widget.set_structure_bands_visible
+        )
         self._vibration_panel.range_visibility_changed.connect(
             self._on_vibration_range_visibility_changed
         )
@@ -2479,6 +2498,7 @@ class MainWindow(QMainWindow):
             self._current_functional_group_results = []
             self._functional_group_panel.clear()
             self._spectrum_widget.set_diagnostic_regions([])
+            self._refresh_structure_motifs()
             self._refresh_consensus_analysis()
             return
 
@@ -2505,6 +2525,7 @@ class MainWindow(QMainWindow):
         self._restore_functional_group_selection(preferred_group_id)
         self._set_functional_group_active_peak(self._peak_table.selected_peak())
         self._refresh_structure_check(analysis)
+        self._refresh_structure_motifs()
         self._refresh_consensus_analysis()
 
     def _refresh_structure_check(self, analysis=None) -> None:
