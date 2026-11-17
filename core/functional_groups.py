@@ -138,6 +138,13 @@ class FunctionalGroupScore:
     matched_bonus_labels: tuple[str, ...] = ()
     source_refs: tuple[str, ...] = ()
     source_links: tuple[str, ...] = ()
+    #: Where ``score`` comes from: "model" (the learned group model, judged
+    #: on held-out reference spectra) or "rules" (band windows only).
+    evidence_source: str = "rules"
+    #: The model's probability for the group, when the model covers it.
+    model_probability: float | None = None
+    #: The band-window score, kept for display next to the model's verdict.
+    rule_score: float | None = None
 
     @property
     def suggested_bands(self) -> tuple[DiagnosticBandMatch, ...]:

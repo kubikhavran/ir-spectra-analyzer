@@ -153,6 +153,59 @@ class _DiagnosticBandDelegate(QStyledItemDelegate):
         painter.restore()
 
 
+def _structure_check_html(check) -> str:
+    """Rich text of the structure-check card."""
+    from processing.structure_check import FOUND, NOT_SEEN, WEAK  # noqa: PLC0415
+
+    def names(status: str) -> str:
+        return ", ".join(escape(tr(g.group_name)) for g in check.groups if g.status == status)
+
+    lines = [f"<b>{escape(tr('Structure check'))}</b>"]
+    found, weak, not_seen = names(FOUND), names(WEAK), names(NOT_SEEN)
+    if found:
+        lines.append(
+            f'<span style="color:{theme.SUCCESS}">✓</span> '
+            f"{escape(tr('Found in the spectrum'))}: {found}"
+        )
+    if weak:
+        lines.append(
+            f'<span style="color:{theme.WARNING}">?</span> {escape(tr("Uncertain"))}: {weak}'
+        )
+    if not_seen:
+        lines.append(
+            f'<span style="color:{theme.DANGER}">✗</span> '
+            f"{escape(tr('Not seen in the spectrum — check'))}: {not_seen}"
+        )
+    shown = check.unexplained[:_MAX_UNEXPLAINED_SHOWN]
+    for band in shown:
+        lines.append(
+            f'<span style="color:{theme.WARNING}">⚠</span> '
+            + escape(
+                tr("Band at {wavenumber} cm⁻¹ not explained: {hint}").format(
+                    wavenumber=f"{band.wavenumber:.0f}", hint=tr(band.hint)
+                )
+            )
+        )
+    hidden = len(check.unexplained) - len(shown)
+    if hidden > 0:
+        lines.append(escape(tr("…and {count} more unexplained bands").format(count=hidden)))
+    if check.consistent:
+        lines.append(escape(tr("The spectrum agrees with the drawn structure.")))
+    return "<br>".join(lines)
+
+
+_MAX_UNEXPLAINED_SHOWN = 3
+
+
+def _model_threshold(group_id: str) -> float:
+    from processing.fg_model import load_model  # noqa: PLC0415
+
+    model = load_model()
+    if model is None:
+        return 0.5
+    return float(model.thresholds.get(group_id, 0.5))
+
+
 class FunctionalGroupPanel(QWidget):
     """Ranked functional-group results with clickable diagnostic suggestions."""
 
@@ -163,6 +216,7 @@ class FunctionalGroupPanel(QWidget):
     def __init__(self, parent=None) -> None:
         super().__init__(parent)
         self._results: list = []
+        self._structure_check = None
         self._active_peak: Peak | None = None
         self._assignment_preview_map: dict[str, str] = {}
         self._setup_ui()
@@ -175,10 +229,22 @@ class FunctionalGroupPanel(QWidget):
         self._status_label = QLabel("No functional-group analysis")
         self._status_label.setStyleSheet(theme.CAPTION_STYLE)
         self._status_label.setToolTip(
-            "Confidence score is a heuristic ranking from diagnostic IR bands. "
-            "It is not a statistically calibrated probability."
+            "Scores of most groups come from a model trained on public reference spectra "
+            "with known structures (55 % = found). Groups it does not cover are judged by "
+            "their band windows alone and shown as possible at most."
         )
         layout.addWidget(self._status_label)
+
+        # Structure check: shown only when the project carries a structure.
+        self._structure_check_label = QLabel()
+        self._structure_check_label.setObjectName("structureCheck")
+        self._structure_check_label.setTextFormat(Qt.TextFormat.RichText)
+        self._structure_check_label.setWordWrap(True)
+        self._structure_check_label.setStyleSheet(
+            theme.INFO_CARD_STYLE + f" border-left: 3px solid {theme.ACCENT};"
+        )
+        self._structure_check_label.setVisible(False)
+        layout.addWidget(self._structure_check_label)
 
         self._show_regions_checkbox = QCheckBox("Show highlighted regions in spectrum")
         self._show_regions_checkbox.setChecked(True)
@@ -222,7 +288,21 @@ class FunctionalGroupPanel(QWidget):
         self._detail_list.itemDoubleClicked.connect(self._on_detail_double_clicked)
         layout.addWidget(self._detail_list, stretch=2)
 
+    def set_structure_check(self, check) -> None:
+        """Show how the drawn structure agrees with the spectrum (``None`` hides it)."""
+        self._structure_check = check
+        if check is None or (not check.groups and not check.unexplained):
+            self._structure_check_label.clear()
+            self._structure_check_label.setVisible(False)
+            return
+        self._structure_check_label.setText(_structure_check_html(check))
+        self._structure_check_label.setVisible(True)
+
+    def structure_check(self):
+        return getattr(self, "_structure_check", None)
+
     def clear(self) -> None:
+        self.set_structure_check(None)
         self._results = []
         self._group_list.clear()
         self._detail_list.clear()
@@ -385,8 +465,18 @@ class FunctionalGroupPanel(QWidget):
         missing = ", ".join(escape(str(band.label)) for band in result.missing_bands[:3]) or "none"
         bonuses = ", ".join(escape(str(label)) for label in result.matched_bonus_labels) or "none"
         sources = self._format_source_links(result.source_links)
+        if getattr(result, "evidence_source", "rules") == "model":
+            verdict = tr(
+                "Verdict: learned model, {probability:.0f} % likely (found from {threshold:.0f} %)"
+            ).format(
+                probability=100.0 * float(result.model_probability or 0.0),
+                threshold=100.0 * _model_threshold(result.group_id),
+            )
+        else:
+            verdict = tr("Verdict: band windows only — less reliable, shown as possible at most")
         self._group_info_label.setText(
             f"<b>{escape(str(result.group_name))}</b><br>"
+            f"{escape(verdict)}<br>"
             f"Matched: {matched}<br>"
             f"Missing required: {missing}<br>"
             f"Coherence bonus: {bonuses}<br>"

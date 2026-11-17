@@ -25,6 +25,65 @@ CZECH_TEXTS: dict[str, str] = {
     "Follow system": "Podle systému",
     "Light": "Světlý",
     "Dark": "Tmavý",
+    "Verdict: learned model, {probability:.0f} % likely (found from {threshold:.0f} %)": (
+        "Posouzení: naučený model, pravděpodobnost {probability:.0f} % "
+        "(nalezeno od {threshold:.0f} %)"
+    ),
+    "Verdict: band windows only — less reliable, shown as possible at most": (
+        "Posouzení: jen okna pásů — méně spolehlivé, nejvýše jako možné"
+    ),
+    "Scores of most groups come from a model trained on public reference spectra "
+    "with known structures (55 % = found). Groups it does not cover are judged by "
+    "their band windows alone and shown as possible at most.": (
+        "Skóre většiny skupin počítá model naučený na veřejných referenčních spektrech "
+        "se známou strukturou (55 % = nalezeno). Skupiny, které model nepokrývá, se "
+        "posuzují jen podle oken pásů a ukazují se nejvýše jako možné."
+    ),
+    "Structure check": "Ověření struktury",
+    "…and {count} more unexplained bands": "…a další nevysvětlené pásy: {count}",
+    "Found in the spectrum": "Ve spektru nalezeno",
+    "Uncertain": "Nejisté",
+    "Not seen in the spectrum — check": "Ve spektru není vidět — zkontrolujte",
+    "Band at {wavenumber} cm⁻¹ not explained: {hint}": (
+        "Pás u {wavenumber} cm⁻¹ struktura nevysvětluje: {hint}"
+    ),
+    "The spectrum agrees with the drawn structure.": "Spektrum odpovídá nakreslené struktuře.",
+    "atmospheric CO2 (background not matched)": "atmosférický CO₂ (nesedí pozadí)",
+    "O-H: water (moisture in KBr) or an unexpected OH/NH": (
+        "O–H: voda (vlhkost v KBr) nebo nečekaná skupina OH/NH"
+    ),
+    "O-H: residual methanol or an unexpected alcohol": (
+        "O–H: zbytek methanolu nebo nečekaný alkohol"
+    ),
+    "O-H / N-H not in the structure: water, residual solvent or a hydrolysis product": (
+        "O–H / N–H, které ve struktuře není: voda, zbytek rozpouštědla nebo produkt hydrolýzy"
+    ),
+    "H-O-H bend: water (moisture in KBr)": "deformační H–O–H: voda (vlhkost v KBr)",
+    "C=O not in the structure: oxidation, unreacted starting material or residual "
+    "ester/ketone solvent": (
+        "C=O, které ve struktuře není: oxidace, nezreagovaná výchozí látka nebo zbytek "
+        "esterového či ketonového rozpouštědla"
+    ),
+    "triple bond or cumulated group (C#N, C#C, N=C=O, N3) not in the structure": (
+        "trojná vazba nebo kumulovaná skupina (C≡N, C≡C, N=C=O, N₃), která ve struktuře není"
+    ),
+    "C-Cl: residual chloroform from casting the film": (
+        "C–Cl: zbytek chloroformu z odpaření filmu"
+    ),
+    "residual chloroform from casting the film": "zbytek chloroformu z odpaření filmu",
+    "C-O: residual methanol from casting the film": "C–O: zbytek methanolu z odpaření filmu",
+    "=C-H stretch (aromatic ring or C=C) not in the structure": (
+        "valenční =C–H (aromát nebo C=C), který ve struktuře není"
+    ),
+    "ring or C=C / C=N stretch not in the structure": (
+        "valenční vibrace kruhu nebo C=C / C=N, která ve struktuře není"
+    ),
+    "out-of-plane C-H bend: an aromatic ring or C=C not in the structure?": (
+        "mimorovinná deformační C–H: aromát nebo C=C, který ve struktuře není?"
+    ),
+    "strong band not explained by the structure's groups": (
+        "silný pás, který skupiny struktury nevysvětlují"
+    ),
     "The new appearance is used the next time the application starts.": (
         "Nový vzhled se použije při příštím spuštění aplikace."
     ),
