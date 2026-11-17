@@ -83,10 +83,9 @@ class Application:
 
         from ui import i18n  # noqa: PLC0415
 
-        if i18n.set_language(i18n.resolve_language(self._settings.get("language"))) == i18n.ENGLISH:
-            return
+        i18n.set_language(i18n.resolve_language(self._settings.get("language")))
         app = QApplication.instance()
-        if app is None:
+        if app is None or getattr(self, "_dialog_translator", None) is not None:
             return
 
         class _DialogTranslator(QObject):
@@ -115,7 +114,7 @@ class Application:
         # OS integration at the controller boundary without duplicating it here.
         target._open_recent_path(normalized)
 
-    def new_window(self) -> MainWindow:
+    def new_window(self, *, show: bool = True) -> MainWindow:
         """Create, show and track another independent window."""
         from PySide6.QtCore import Qt  # noqa: PLC0415
 
@@ -125,12 +124,71 @@ class Application:
         # Set here rather than in MainWindow so tests that build a window
         # directly keep their current lifetime.
         window.setAttribute(Qt.WidgetAttribute.WA_DeleteOnClose, True)
-        window.new_window_requested.connect(self.new_window)
+        window.new_window_requested.connect(lambda: self.new_window())
         window.open_path_requested.connect(self.open_path)
+        window.language_change_requested.connect(self.apply_language_change)
+        window.appearance_change_requested.connect(self.apply_appearance_change)
+        window.enable_live_switching()
         window.destroyed.connect(lambda _=None, w=window: self._forget_window(w))
         self._windows.append(window)
-        window.show()
+        if show:
+            window.show()
         return window
+
+    def apply_language_change(self) -> None:
+        """Switch to the stored language now: every window is rebuilt in it."""
+        if not self._can_rebuild_windows():
+            return
+        self._apply_language()
+        self._rebuild_windows()
+
+    def apply_appearance_change(self) -> None:
+        """Switch to the stored light/dark appearance now."""
+        from PySide6.QtWidgets import QApplication  # noqa: PLC0415
+
+        from ui import theme  # noqa: PLC0415
+
+        if not self._can_rebuild_windows():
+            return
+        theme.set_mode(theme.resolve_mode(self._settings.get("appearance")))
+        app = QApplication.instance()
+        if isinstance(app, QApplication):
+            theme.apply_theme(app)
+        self._rebuild_windows()
+
+    def _can_rebuild_windows(self) -> bool:
+        """A running reference search would be cut off; then wait for the next start."""
+        busy = next((window for window in self._windows if window.is_busy()), None)
+        if busy is None:
+            return True
+        from PySide6.QtWidgets import QMessageBox  # noqa: PLC0415
+
+        from ui.i18n import tr  # noqa: PLC0415
+
+        QMessageBox.information(
+            busy,
+            tr("Operation in Progress"),
+            tr(
+                "Reference matching is still running. The change is saved and is "
+                "used the next time the application starts."
+            ),
+        )
+        return False
+
+    def _rebuild_windows(self) -> None:
+        """Replace every window with a fresh one that carries over its analysis.
+
+        Texts and colours are set when widgets are built, so a new language or
+        palette reaches every panel, dialog and plot by building them again.
+        """
+        for old in list(self._windows):
+            window = self.new_window(show=False)
+            window.adopt_from(old)
+            if old.isMaximized():
+                window.showMaximized()
+            else:
+                window.show()
+            old.close_for_rebuild()
 
     def _forget_window(self, window: MainWindow) -> None:
         """Drop a closed window so Qt can reclaim it.
