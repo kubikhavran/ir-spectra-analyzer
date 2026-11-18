@@ -538,7 +538,8 @@ class VibrationPanel(QWidget):
                 label = f"\u2605 {label}"
             item = QListWidgetItem(label)
             item.setData(_PRESET_ROLE, preset)
-            item.setToolTip(label)
+            description = (preset.description or "").strip()
+            item.setToolTip(f"{label}\n{description}" if description else label)
             self._list.addItem(item)
 
         passing = [p for p in self._presets if _passes(p)]
