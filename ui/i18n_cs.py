@@ -451,6 +451,9 @@ CZECH_TEXTS: dict[str, str] = {
     "Label:": "Popis:",
     "Range min:": "Rozsah od:",
     "Range max:": "Rozsah do:",
+    "Drag an end to move it, drag the window to shift it, or click the track": (
+        "Táhněte za konec pro jeho posun, za okno pro posun celého rozsahu, nebo klikněte na osu"
+    ),
     "Edit Peak Vibration": "Upravit vibraci píku",
     "Vibration:": "Vibrace:",
     "Insert Greek letters": "Vložit řecká písmena",

@@ -170,6 +170,7 @@ def test_reset_restores_builtins_and_leaves_custom_alone(tmp_path) -> None:
 from unittest.mock import MagicMock  # noqa: E402
 
 import numpy as np  # noqa: E402
+from PySide6.QtCore import Qt  # noqa: E402
 from PySide6.QtWidgets import QDialog, QMessageBox  # noqa: E402
 
 from core.peak import Peak  # noqa: E402
@@ -334,3 +335,29 @@ def test_f2_and_the_context_menu_offer_editing_for_builtins(qtbot) -> None:
     panel.set_presets([VibrationPreset("ν(OH)", 3200.0, 3600.0, db_id=1, is_builtin=True)])
     keys = {sc.key().toString() for sc in panel._list.findChildren(QShortcut)}
     assert "F2" in keys
+
+
+def test_range_slider_and_number_boxes_stay_in_sync(qtbot) -> None:
+    from PySide6.QtCore import QPoint
+
+    dialog = _VibrationEditorDialog()
+    qtbot.addWidget(dialog)
+    dialog.resize(600, 300)
+    dialog.show()
+    slider = dialog._range_slider
+    assert slider.values() == (1000.0, 1200.0)
+
+    dialog._rmax_spin.setValue(1750.0)
+    dialog._rmin_spin.setValue(1650.0)
+    assert slider.values() == (1650.0, 1750.0)
+
+    # Moving the whole window to higher wavenumbers widens before narrowing.
+    slider.range_changed.emit(2900.0, 3000.0)
+    assert (dialog._rmin_spin.value(), dialog._rmax_spin.value()) == (2900.0, 3000.0)
+
+    # Clicking the track left of the window (higher wavenumbers) moves the max end.
+    x = round(slider._x_of(3500.0))
+    qtbot.mouseClick(slider, Qt.MouseButton.LeftButton, pos=QPoint(x, 12))
+    assert dialog._rmin_spin.value() == 2900.0
+    assert abs(dialog._rmax_spin.value() - 3500.0) <= 25.0
+    assert dialog.values().range_max == dialog._rmax_spin.value()

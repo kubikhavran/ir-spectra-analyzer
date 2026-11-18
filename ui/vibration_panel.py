@@ -22,6 +22,7 @@ from PySide6.QtWidgets import (
     QDialogButtonBox,
     QDoubleSpinBox,
     QFormLayout,
+    QGridLayout,
     QLabel,
     QLineEdit,
     QListWidget,
@@ -40,6 +41,7 @@ from core.vibration_presets import VibrationPreset
 from ui import theme
 from ui.i18n import tr
 from ui.vibration_text_edit import VibrationTextEdit
+from ui.widgets.range_slider import WavenumberRangeSlider
 
 if TYPE_CHECKING:
     from core.peak import Peak
@@ -857,7 +859,7 @@ class _VibrationEditorDialog(QDialog):
             self.setWindowTitle(tr("Add Custom Vibration"))
         else:
             self.setWindowTitle(tr("Edit Vibration"))
-        self.setMinimumWidth(380)
+        self.setMinimumWidth(560)
 
         layout = QVBoxLayout(self)
         form = QFormLayout()
@@ -871,14 +873,32 @@ class _VibrationEditorDialog(QDialog):
         self._rmin_spin.setDecimals(0)
         self._rmin_spin.setSuffix(" cm\u207b\u00b9")
         self._rmin_spin.setValue(1000.0)
-        form.addRow(tr("Range min:"), self._rmin_spin)
+        self._rmin_spin.setToolTip(tr("Range min:"))
 
         self._rmax_spin = QDoubleSpinBox()
         self._rmax_spin.setRange(0.0, 15000.0)
         self._rmax_spin.setDecimals(0)
         self._rmax_spin.setSuffix(" cm\u207b\u00b9")
         self._rmax_spin.setValue(1200.0)
-        form.addRow(tr("Range max:"), self._rmax_spin)
+        self._rmax_spin.setToolTip(tr("Range max:"))
+
+        # The window as on the spectrum axis (high wavenumbers on the left),
+        # with the exact numbers on either side: max on the left, min on the
+        # right.
+        self._range_slider = WavenumberRangeSlider(self)
+        range_row = QGridLayout()
+        range_row.setHorizontalSpacing(6)
+        range_row.setVerticalSpacing(0)
+        range_row.addWidget(self._rmax_spin, 0, 0)
+        range_row.addWidget(self._range_slider, 0, 1)
+        range_row.addWidget(self._rmin_spin, 0, 2)
+        for column, text in ((0, "max"), (2, "min")):
+            caption = QLabel(text)
+            caption.setStyleSheet(theme.CAPTION_STYLE)
+            caption.setAlignment(Qt.AlignmentFlag.AlignHCenter)
+            range_row.addWidget(caption, 1, column)
+        range_row.setColumnStretch(1, 1)
+        form.addRow(tr("Range:"), range_row)
 
         self._category_combo = QComboBox()
         for value, title in _CATEGORY_CHOICES:
@@ -922,6 +942,10 @@ class _VibrationEditorDialog(QDialog):
         self._rmax_spin.valueChanged.connect(self._rmin_spin.setMaximum)
         self._rmax_spin.setMinimum(self._rmin_spin.value())
         self._rmin_spin.setMaximum(self._rmax_spin.value())
+        self._rmin_spin.valueChanged.connect(self._sync_slider)
+        self._rmax_spin.valueChanged.connect(self._sync_slider)
+        self._range_slider.range_changed.connect(self._on_slider_moved)
+        self._sync_slider()
 
         layout.addLayout(form)
 
@@ -931,6 +955,18 @@ class _VibrationEditorDialog(QDialog):
         buttons.accepted.connect(self.accept)
         buttons.rejected.connect(self.reject)
         layout.addWidget(buttons)
+
+    def _sync_slider(self) -> None:
+        self._range_slider.set_values(self._rmin_spin.value(), self._rmax_spin.value())
+
+    def _on_slider_moved(self, low: float, high: float) -> None:
+        # Widen before narrowing so the ordering limits never clamp a value.
+        if low > self._rmax_spin.value():
+            self._rmax_spin.setValue(high)
+            self._rmin_spin.setValue(low)
+        else:
+            self._rmin_spin.setValue(low)
+            self._rmax_spin.setValue(high)
 
     def values(self) -> VibrationValues:
         return VibrationValues(
