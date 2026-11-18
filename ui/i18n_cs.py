@@ -429,6 +429,7 @@ CZECH_TEXTS: dict[str, str] = {
     "Rocking and wagging": "Kývavé a vějířové",
     "Overtones and combinations": "Svrchní tóny a kombinace",
     "Protecting groups": "Chránicí skupiny",
+    "Ring vibrations": "Vibrace kruhů",
     "Other": "Ostatní",
     "Click to fold or unfold this section": "Kliknutím sekci sbalíte nebo rozbalíte",
     "Assign to selected peak": "Přiřadit vybranému píku",

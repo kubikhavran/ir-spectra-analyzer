@@ -160,3 +160,52 @@ def test_vibration_names_cover_the_found_motifs() -> None:
 def test_empty_or_invalid_structure() -> None:
     assert perceive_smiles("") == []
     assert perceive_smiles("not a smiles") == []
+
+
+@pytest.mark.parametrize(
+    ("smiles", "expected", "absent"),
+    [
+        # Groups added from the laboratory's evaluated spectra.
+        ("Cn1ccccc1=O", {"pyridone"}, {"tertiary_amide", "pyridine"}),
+        ("O=C1CCCN1", {"gamma_lactam"}, set()),
+        ("c1ccc2ncccc2c1", {"quinoline"}, {"pyridine"}),
+        ("c1ccc2cnccc2c1", {"pyridine"}, {"quinoline"}),
+        ("Cc1cc(C)on1", {"isoxazole"}, {"oxazole"}),
+        ("c1cocn1", {"oxazole"}, {"isoxazole"}),
+        ("c1cnccn1", {"pyrazine"}, {"diazine"}),
+        ("c1cncnc1", {"diazine"}, {"pyrazine"}),
+        ("CC1(C)Cc2ccccc2C1", {"indane"}, set()),
+        ("c1ccc(cc1)-c1ccccc1", {"biphenyl"}, set()),
+        ("CC(=O)OCC", {"ester", "acetate"}, set()),
+        ("CC(C)(C)OC(=O)NC", {"carbamate", "tert_butoxy", "tert_butyl"}, set()),
+        # Salts drawn neutral with their acid as a separate part.
+        ("NCCN.Cl", {"ammonium", "primary_amine"}, set()),
+        ("CCN(CC)CC.CCOS(=O)(=O)O", {"ammonium", "sulfate"}, set()),
+        ("NCCN", {"primary_amine"}, {"ammonium"}),
+        ("c1ccccc1N.Cl", {"aromatic_primary_amine"}, {"ammonium"}),
+    ],
+)
+def test_groups_from_the_laboratory_spectra(
+    smiles: str, expected: set[str], absent: set[str]
+) -> None:
+    ids = _ids(smiles)
+    assert expected <= ids, expected - ids
+    assert not (absent & ids), absent & ids
+
+
+def test_lab_verified_bands_reach_their_groups() -> None:
+    names = vibration_names(perceive_smiles("Cn1ccccc1=O"))
+    assert "ν(C=O) 2-pyridone" in names
+    assert "2-pyridone ring ~1236" in names
+    salt = vibration_names(perceive_smiles("CC[NH3+].[Cl-]"))
+    assert "comb. R–NH₃⁺ salt indicator ~2030" in salt
+    assert "νas(NH₃⁺) R–NH₃⁺" in salt
+    assert "δs(CH₃) –CH₃ umbrella" in vibration_names(perceive_smiles("CC"))
+
+
+def test_abbreviated_smiles_from_older_projects_are_read() -> None:
+    ids = _ids("CC1OC(C[OAc])C([OAc])C1[OAc]")
+    assert {"ester", "acetate"} <= ids
+    salt = _ids("NCCCN(CCCN)CC(=O)NC.[HCl].[HCl].[.6]")
+    assert {"ammonium", "secondary_amide"} <= salt
+    assert _ids("C[C@H]([OBn])CO") >= {"dialkyl_ether", "primary_alcohol"}
