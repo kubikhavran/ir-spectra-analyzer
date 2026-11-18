@@ -31,7 +31,12 @@ from rdkit import Chem, rdBase
 from rdkit.Chem import Descriptors, rdDepictor, rdMolDescriptors
 from rdkit.Geometry import Point3D
 
-from chemistry.mol_fragments import Fragment, parse_group
+from chemistry.mol_fragments import (
+    Fragment,
+    fragment_from_smiles,
+    fragment_to_group_smiles,
+    parse_group,
+)
 
 BOND_LENGTH = 1.50
 UNDO_LIMIT = 100
@@ -143,6 +148,8 @@ class _RingTemplate:
     fusable: bool = True
     # Template bonds drawn bold (the front edge of a chair).
     bold_bonds: tuple[tuple[int, int], ...] = ()
+    # Optional V2000 MOL block preserving user-edited template geometry/stereo.
+    mol_block: str = ""
 
 
 # Chair conformation as chemists draw it: three pairs of parallel bonds.
@@ -246,7 +253,7 @@ def _least_clashing(
     """The smallest turn that clears every atom, else the one that clears most."""
     clear = [o for o in options if _clearance(o[2], others) >= _CLEAR]
     if clear:
-        return min(clear, key=lambda o: (abs(o[0]), crowding(o[2])))
+        return min(clear, key=lambda o: (abs(o[0]), round(crowding(o[2]), 6), o[1]))
     return max(options, key=lambda o: _clearance(o[2], others))
 
 
@@ -360,6 +367,9 @@ FUNCTIONAL_GROUPS: dict[str, str] = {
 # close a ring).
 _LAID_OUT_GROUPS = frozenset({"-OTIPS", "-OTBS", "-TIPS", "-Ts", "-NHTs"})
 
+_DEFAULT_RING_TEMPLATES: dict[str, _RingTemplate] = dict(RING_TEMPLATES)
+_DEFAULT_FUNCTIONAL_GROUPS: dict[str, str] = dict(FUNCTIONAL_GROUPS)
+
 
 @contextmanager
 def _quiet_rdkit() -> Iterator[None]:
@@ -404,6 +414,13 @@ def _kekulized_template(smiles: str) -> Chem.Mol:
 @lru_cache(maxsize=64)
 def _template_cached(ring_type: str) -> Chem.Mol:
     spec = RING_TEMPLATES[ring_type]
+    if spec.mol_block:
+        try:
+            model = MolEditorModel.from_mol_block(spec.mol_block)
+            if model.atom_count > 0:
+                return Chem.Mol(model._mol)
+        except ValueError:
+            pass
     mol = _kekulized_template(spec.smiles)
     if spec.coords is not None:
         conf = mol.GetConformer()
@@ -425,6 +442,153 @@ def _template_mol(ring_type: str) -> Chem.Mol:
     if ring_type not in RING_TEMPLATES:
         raise ValueError(f"Unknown ring template: {ring_type!r}")
     return Chem.Mol(_template_cached(ring_type))
+
+
+def ring_template_mol_block(ring_type: str) -> str:
+    """Return a V2000 MOL block for *ring_type* preserving its 2D layout and bold/stereo bonds."""
+    if ring_type not in RING_TEMPLATES:
+        raise ValueError(f"Unknown ring template: {ring_type!r}")
+    spec = RING_TEMPLATES[ring_type]
+    if spec.mol_block:
+        return spec.mol_block
+    model = MolEditorModel()
+    model.add_ring_template(ring_type, center=(0.0, 0.0))
+    return model.to_mol_block()
+
+
+def functional_group_editor_smiles(group_key: str) -> str:
+    """Return a SMILES with ``*`` at the attachment atom for editing *group_key*."""
+    if group_key not in FUNCTIONAL_GROUPS:
+        raise ValueError(f"Unknown functional group: {group_key!r}")
+    frag = fragment_from_smiles(FUNCTIONAL_GROUPS[group_key], label=group_key)
+    if frag is None:
+        return FUNCTIONAL_GROUPS[group_key]
+    return fragment_to_group_smiles(frag)
+
+
+def set_ring_template(
+    ring_type: str,
+    *,
+    smiles: str = "",
+    mol_block: str = "",
+) -> _RingTemplate:
+    """Update a ring/scaffold template from a user-edited *mol_block* or *smiles*."""
+    old = RING_TEMPLATES.get(ring_type) or _DEFAULT_RING_TEMPLATES.get(ring_type)
+    model: MolEditorModel | None = None
+    if mol_block.strip():
+        try:
+            model = MolEditorModel.from_mol_block(mol_block)
+        except ValueError:
+            model = None
+    if (model is None or model.atom_count == 0) and smiles.strip():
+        model = MolEditorModel.from_smiles(smiles)
+    if model is None or model.atom_count == 0:
+        raise ValueError(f"Cannot build ring template {ring_type!r} from empty structure")
+
+    attach_atom = old.attach_atom if old is not None else 0
+    attach_pts = model.attachment_points()
+    if attach_pts:
+        star_idx = attach_pts[0]
+        nbrs = [n.GetIdx() for n in model._mol.GetAtomWithIdx(star_idx).GetNeighbors()]
+        model.delete_atom(star_idx)
+        if nbrs:
+            raw_target = nbrs[0]
+            attach_atom = raw_target - 1 if raw_target > star_idx else raw_target
+    if model.atom_count == 0:
+        raise ValueError(f"Ring template {ring_type!r} must have at least one non-* atom")
+    attach_atom = max(0, min(attach_atom, model.atom_count - 1))
+
+    fusion_bond = old.fusion_bond if old is not None else (0, 1)
+    if (
+        fusion_bond[0] >= model.atom_count
+        or fusion_bond[1] >= model.atom_count
+        or model.find_bond(fusion_bond[0], fusion_bond[1]) is None
+    ):
+        if model.bond_count > 0:
+            fusion_bond = model.bond_atoms(0)
+        else:
+            fusion_bond = (0, 0)
+
+    fusable = (old.fusable if old is not None else True) and model.bond_count > 0
+    probe = Chem.Mol(model._mol)
+    with _quiet_rdkit():
+        try:
+            Chem.SanitizeMol(probe)
+            aromatic = any(a.GetIsAromatic() for a in probe.GetAtoms())
+        except Exception:  # noqa: BLE001
+            aromatic = old.aromatic if old is not None else False
+
+    coords = tuple(model.atom_position(i) for i in range(model.atom_count))
+    bold_bonds = tuple(model.bond_atoms(b) for b in range(model.bond_count) if model.bond_bold(b))
+    clean_mol_block = model.to_mol_block()
+    clean_smiles = model.to_smiles() or smiles.strip()
+    spec = _RingTemplate(
+        smiles=clean_smiles,
+        attach_atom=attach_atom,
+        fusion_bond=fusion_bond,
+        aromatic=aromatic,
+        coords=coords,
+        fusable=fusable,
+        bold_bonds=bold_bonds,
+        mol_block=clean_mol_block,
+    )
+    RING_TEMPLATES[ring_type] = spec
+    _template_cached.cache_clear()
+    return spec
+
+
+def set_functional_group_template(group_key: str, smiles: str) -> str:
+    """Update a functional group template from *smiles* (with or without ``*``)."""
+    text = smiles.strip()
+    if not text:
+        raise ValueError("Functional group SMILES cannot be empty")
+    frag = fragment_from_smiles(text, label=group_key) or parse_group(text)
+    if frag is None or frag.mol.GetNumAtoms() == 0:
+        raise ValueError(f"Invalid functional group SMILES: {smiles!r}")
+    mol = Chem.Mol(frag.mol)
+    with _quiet_rdkit():
+        try:
+            Chem.SanitizeMol(mol)
+        except Exception:  # noqa: BLE001
+            pass
+    attach = frag.attach if frag.attach is not None else 0
+    attach = max(0, min(attach, mol.GetNumAtoms() - 1))
+    rooted = Chem.MolToSmiles(mol, rootedAtAtom=attach)
+    if not rooted:
+        raise ValueError(f"Could not convert functional group {group_key!r} to SMILES")
+    FUNCTIONAL_GROUPS[group_key] = rooted
+    return rooted
+
+
+def reset_ring_template(ring_type: str) -> None:
+    """Restore *ring_type* to its built-in default definition."""
+    if ring_type in _DEFAULT_RING_TEMPLATES:
+        RING_TEMPLATES[ring_type] = _DEFAULT_RING_TEMPLATES[ring_type]
+        _template_cached.cache_clear()
+
+
+def reset_functional_group_template(group_key: str) -> None:
+    """Restore *group_key* to its built-in default SMILES."""
+    if group_key in _DEFAULT_FUNCTIONAL_GROUPS:
+        FUNCTIONAL_GROUPS[group_key] = _DEFAULT_FUNCTIONAL_GROUPS[group_key]
+
+
+def reset_all_templates() -> None:
+    """Restore all ring and functional-group templates to their built-in defaults."""
+    RING_TEMPLATES.clear()
+    RING_TEMPLATES.update(_DEFAULT_RING_TEMPLATES)
+    FUNCTIONAL_GROUPS.clear()
+    FUNCTIONAL_GROUPS.update(_DEFAULT_FUNCTIONAL_GROUPS)
+    _template_cached.cache_clear()
+
+
+def is_template_customized(key: str) -> bool:
+    """Return True if *key* (a ring_type or group_key) differs from its built-in default."""
+    if key in _DEFAULT_RING_TEMPLATES:
+        return RING_TEMPLATES.get(key) != _DEFAULT_RING_TEMPLATES[key]
+    if key in _DEFAULT_FUNCTIONAL_GROUPS:
+        return FUNCTIONAL_GROUPS.get(key) != _DEFAULT_FUNCTIONAL_GROUPS[key]
+    return False
 
 
 def _swap_wedges(mol: Chem.Mol) -> None:
@@ -1550,7 +1714,7 @@ class MolEditorModel:
             (
                 b.GetBeginAtomIdx(),
                 b.GetEndAtomIdx(),
-                2 if b.GetBondType() == Chem.BondType.DOUBLE else 1,
+                max(1, min(3, int(round(b.GetBondTypeAsDouble())))),
             )
             for b in template.GetBonds()
         ]
@@ -1606,12 +1770,16 @@ class MolEditorModel:
             b = index_map[t_bond.GetEndAtomIdx()]
             if a == b or self.find_bond(a, b) is not None:
                 continue
-            order = 2 if t_bond.GetBondType() == Chem.BondType.DOUBLE else 1
+            order = max(1, min(3, int(round(t_bond.GetBondTypeAsDouble()))))
             new_bonds.append(self._add_bond(a, b, order))
             if t_bond.GetBondDir() != Chem.BondDir.NONE:
                 self._mol.GetBondWithIdx(new_bonds[-1]).SetBondDir(t_bond.GetBondDir())
             pair = (t_bond.GetBeginAtomIdx(), t_bond.GetEndAtomIdx())
-            if pair in spec.bold_bonds or pair[::-1] in spec.bold_bonds:
+            if (
+                pair in spec.bold_bonds
+                or pair[::-1] in spec.bold_bonds
+                or (t_bond.HasProp(_BOLD) and t_bond.GetBoolProp(_BOLD))
+            ):
                 self._mol.GetBondWithIdx(new_bonds[-1]).SetBoolProp(_BOLD, True)
         if target_atom_idx is not None and target_atom_idx not in index_map.values():
             self._add_bond(target_atom_idx, index_map[spec.attach_atom], 1)
@@ -1683,7 +1851,7 @@ class MolEditorModel:
                 merged = t_a
                 t_a = attach_atom.GetNeighbors()[0].GetIdx()
             outward = pts[t_a] - centroid
-            outward /= abs(outward)
+            outward = outward / abs(outward) if abs(outward) > 1e-6 else complex(1.0, 0.0)
             if self.atom_degree(target_atom_idx) == 0:
                 # Build the ring through the lone atom, ring body up-right.
                 direction = cmath.exp(1j * math.radians(30.0))
@@ -1840,19 +2008,28 @@ class MolEditorModel:
         """
         if group_key not in FUNCTIONAL_GROUPS:
             raise ValueError(f"Unknown functional group: {group_key!r}")
-        if group_key == "-Ph":
+        if (
+            group_key == "-Ph"
+            and not is_template_customized("-Ph")
+            and not is_template_customized("benzene")
+        ):
             if angle is not None:
                 phenyl = parse_group("Ph")
                 assert phenyl is not None
                 return self.insert_fragment(phenyl, target_atom_idx=atom_idx, angle=angle)
             return self.add_ring_template("benzene", target_atom_idx=atom_idx)
-        if group_key in _LAID_OUT_GROUPS:
-            # Atom-by-atom sprouting crowds three branches on one atom into a
-            # ring; these groups are placed with a computed layout instead.
-            self._push_undo()
-            return self._insert_group_layout(atom_idx, group_key, angle)
         with _quiet_rdkit():
             fragment = Chem.MolFromSmiles(FUNCTIONAL_GROUPS[group_key])
+        if (
+            group_key in _LAID_OUT_GROUPS
+            or fragment.GetRingInfo().NumRings() > 0
+            or any(a.GetDegree() >= 4 for a in fragment.GetAtoms())
+        ):
+            # Atom-by-atom sprouting crowds three branches on one atom into a
+            # ring (and cannot close rings); these groups are placed with a
+            # computed layout instead.
+            self._push_undo()
+            return self._insert_group_layout(atom_idx, group_key, angle)
         Chem.Kekulize(fragment, clearAromaticFlags=True)
         self._push_undo()
         before = Chem.RWMol(self._mol)

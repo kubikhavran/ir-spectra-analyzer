@@ -631,12 +631,16 @@ def test_dialog_builds_in_czech(qtbot):
 @pytest.fixture
 def isolated_groups(monkeypatch, tmp_path):
     from app.custom_groups import CustomGroupStore
+    from chemistry.mol_editor_model import reset_all_templates
     from storage.settings import Settings
     from ui.dialogs import molecule_editor_dialog as module
 
     store = CustomGroupStore(Settings(tmp_path / "settings.json"))
     monkeypatch.setattr(module, "_create_group_store", lambda: store)
-    return store
+    try:
+        yield store
+    finally:
+        reset_all_templates()
 
 
 @requires_rdkit
@@ -894,3 +898,72 @@ def test_group_mode_marks_the_attachment_and_checks_the_drawing(
     two._on_ok()
     assert warnings
     assert two.result() != module.QDialog.DialogCode.Accepted
+
+
+@requires_rdkit
+def test_edit_and_reset_ring_and_group_templates(native_dialog, isolated_groups, monkeypatch):
+    from PySide6.QtCore import QPoint
+
+    from chemistry.mol_editor_model import (
+        FUNCTIONAL_GROUPS,
+        RING_TEMPLATES,
+        MolEditorModel,
+        is_template_customized,
+    )
+
+    dlg = native_dialog(initial_smiles="")
+    assert not dlg._template_edit_btn.isHidden()
+    assert not dlg._template_reset_btn.isEnabled()
+
+    # 1. Edit a ring template (cyclohexane -> 4-methylcyclohexane with * at C1)
+    edited_ring = MolEditorModel.from_smiles("*C1CCC(C)CC1")
+    monkeypatch.setattr(
+        dlg,
+        "_draw_template",
+        lambda smiles="", mol_block="", title="": (
+            edited_ring.to_smiles(),
+            edited_ring.to_mol_block(),
+        ),
+    )
+    dlg._ring_buttons["cyclohexane"].click()
+    assert dlg._on_edit_selected_template()
+    assert is_template_customized("cyclohexane")
+    assert dlg._template_reset_btn.isEnabled()
+    assert RING_TEMPLATES["cyclohexane"].smiles == "CC1CCCCC1"
+    assert "cyclohexane" in isolated_groups.ring_templates()
+
+    # Place the customized ring template onto the canvas
+    _click(dlg._canvas, QPoint(200, 200))
+    assert dlg._canvas.model().atom_count == 7
+
+    # 2. Edit an IR functional-group template (-OMe -> -OCD3 / -OCH2F)
+    monkeypatch.setattr(
+        dlg,
+        "_draw_template",
+        lambda smiles="", mol_block="", title="": ("*OCF", ""),
+    )
+    dlg._group_buttons["-OMe"].click()
+    assert dlg._on_edit_selected_template()
+    assert is_template_customized("-OMe")
+    assert FUNCTIONAL_GROUPS["-OMe"] == "OCF"
+    assert isolated_groups.group_templates().get("-OMe") == "OCF"
+
+    # Attach the customized -OMe group to atom 0 on the canvas
+    _click(dlg._canvas, dlg._canvas._atom_screen(0).toPoint())
+    assert "OCF" in dlg._canvas.to_smiles() or "FCO" in dlg._canvas.to_smiles()
+
+    # 3. Re-opening a new dialog loads the persisted template overrides from settings
+    dlg2 = native_dialog(initial_smiles="CC")
+    assert is_template_customized("cyclohexane")
+    assert is_template_customized("-OMe")
+    assert dlg2._template_reset_btn.isEnabled()
+
+    # 4. Resetting restores built-in defaults and clears persisted overrides
+    dlg2._on_reset_all_templates()
+    assert not is_template_customized("cyclohexane")
+    assert not is_template_customized("-OMe")
+    assert not dlg2._template_reset_btn.isEnabled()
+    assert RING_TEMPLATES["cyclohexane"].smiles == "C1CCCCC1"
+    assert FUNCTIONAL_GROUPS["-OMe"] == "OC"
+    assert isolated_groups.ring_templates() == {}
+    assert isolated_groups.group_templates() == {}

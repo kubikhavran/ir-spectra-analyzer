@@ -60,7 +60,19 @@ from PySide6.QtWidgets import (
 )
 
 from app.custom_groups import CustomGroupStore
-from chemistry.mol_editor_model import MolEditorModel
+from chemistry.mol_editor_model import (
+    FUNCTIONAL_GROUPS,
+    RING_TEMPLATES,
+    MolEditorModel,
+    functional_group_editor_smiles,
+    is_template_customized,
+    reset_all_templates,
+    reset_functional_group_template,
+    reset_ring_template,
+    ring_template_mol_block,
+    set_functional_group_template,
+    set_ring_template,
+)
 from chemistry.mol_fragments import (
     SALTS_AND_SOLVENTS,
     Fragment,
@@ -176,6 +188,8 @@ _GROUP_BUTTONS: tuple[tuple[str, str], ...] = (
     ("-NHTs", "-NHTs"),
     ("-TIPS", "-TIPS"),
 )
+_RING_LABELS: dict[str, str] = dict(_RING_BUTTONS + _HETEROCYCLE_BUTTONS)
+_GROUP_LABELS: dict[str, str] = dict(_GROUP_BUTTONS)
 _ELEMENT_BUTTONS: tuple[str, ...] = (
     "C",
     "H",
@@ -319,7 +333,7 @@ def _tool_icon(tool: str) -> QIcon:
 def _ring_icon(ring_type: str, size: int = 34) -> QIcon:
     model = MolEditorModel()
     model.add_ring_template(ring_type, center=(0.0, 0.0))
-    coords = [model.atom_position(i) for i in range(model.atom_count)]
+    coords = [model.atom_position(i) for i in range(model.atom_count)] or [(0.0, 0.0)]
     xs = [x for x, _ in coords]
     ys = [y for _, y in coords]
     span = max(max(xs) - min(xs), max(ys) - min(ys), 1e-6)
@@ -338,14 +352,26 @@ def _ring_icon(ring_type: str, size: int = 34) -> QIcon:
     painter.setPen(pen)
     for bond in range(model.bond_count):
         i, j = model.bond_atoms(bond)
-        painter.drawLine(points[i], points[j])
+        order = model.bond_order(bond)
         ring_center = model.bond_ring_center(bond)
-        if model.bond_order(bond) == 2 and ring_center is not None:
+        if order == 2 and ring_center is not None:
+            painter.drawLine(points[i], points[j])
             center = to_icon(*ring_center)
             painter.drawLine(
                 points[i] + (center - points[i]) * 0.24,
                 points[j] + (center - points[j]) * 0.24,
             )
+        elif order in (2, 3):
+            dx = points[j].x() - points[i].x()
+            dy = points[j].y() - points[i].y()
+            length = math.hypot(dx, dy) or 1.0
+            nx, ny = -dy / length, dx / length
+            offsets = (-1.4, 1.4) if order == 2 else (-2.0, 0.0, 2.0)
+            for off in offsets:
+                shift = QPointF(nx * off, ny * off)
+                painter.drawLine(points[i] + shift, points[j] + shift)
+        else:
+            painter.drawLine(points[i], points[j])
     font = QFont()
     font.setPixelSize(9)
     font.setWeight(QFont.Weight.Bold)
@@ -476,6 +502,8 @@ class MoleculeEditorDialog(QDialog):
             self._group_store: CustomGroupStore | None = _create_group_store()
         except OSError:
             self._group_store = None
+        if not self._group_mode:
+            self._load_custom_templates()
 
         self._build_ui()
         self._connect_signals()
@@ -735,16 +763,38 @@ class MoleculeEditorDialog(QDialog):
         groups = QGridLayout()
         groups.setSpacing(4)
         for i, (key, label) in enumerate(_GROUP_BUTTONS):
-            button = _palette_button(
-                label, tooltip=tr("Attach {group} to an atom").format(group=label)
-            )
+            button = _palette_button(label, tooltip=self._group_button_tooltip(key))
             button.setFixedHeight(28)
             button.setSizePolicy(QSizePolicy.Policy.Expanding, QSizePolicy.Policy.Fixed)
             button.clicked.connect(lambda _checked=False, g=key: self._canvas.set_group(g))
+            button.setContextMenuPolicy(Qt.ContextMenuPolicy.CustomContextMenu)
+            button.customContextMenuRequested.connect(
+                lambda pos, g=key: self._on_group_template_context_menu(g, pos)
+            )
             self._palette_group.addButton(button)
             self._group_buttons[key] = button
             groups.addWidget(button, i // 2, i % 2)
         vbox.addLayout(groups)
+
+        vbox.addSpacing(6)
+        template_actions = QHBoxLayout()
+        template_actions.setSpacing(4)
+        self._template_edit_btn = QPushButton(tr("Edit template…"))
+        self._template_edit_btn.setToolTip(
+            tr("Edit the selected ring or group template (or right-click any template)")
+        )
+        self._template_edit_btn.clicked.connect(self._on_edit_selected_template)
+        self._template_reset_btn = QPushButton(tr("Reset defaults"))
+        self._template_reset_btn.setToolTip(
+            tr("Restore all ring and functional-group templates to defaults")
+        )
+        self._template_reset_btn.clicked.connect(self._on_reset_all_templates)
+        for action_btn in (self._template_edit_btn, self._template_reset_btn):
+            action_btn.setVisible(not self._group_mode)
+            template_actions.addWidget(action_btn)
+        vbox.addLayout(template_actions)
+        self._update_template_buttons_state()
+
         vbox.addStretch(1)
         scroll = QScrollArea()
         scroll.setObjectName("molecule_templates_scroll")
@@ -757,13 +807,17 @@ class MoleculeEditorDialog(QDialog):
     def _ring_grid(self, items: tuple[tuple[str, str], ...]) -> QGridLayout:
         grid = QGridLayout()
         grid.setSpacing(4)
-        for i, (ring_type, label) in enumerate(items):
-            button = _palette_button(tooltip=tr(label))
+        for i, (ring_type, _label) in enumerate(items):
+            button = _palette_button(tooltip=self._ring_button_tooltip(ring_type))
             button.setIcon(_ring_icon(ring_type, 40))
             button.setIconSize(QSize(40, 40))
             button.setFixedSize(52, 48)
             button.clicked.connect(
                 lambda _checked=False, r=ring_type: self._canvas.set_ring_type(r)
+            )
+            button.setContextMenuPolicy(Qt.ContextMenuPolicy.CustomContextMenu)
+            button.customContextMenuRequested.connect(
+                lambda pos, r=ring_type: self._on_ring_template_context_menu(r, pos)
             )
             self._palette_group.addButton(button)
             self._ring_buttons[ring_type] = button
@@ -847,6 +901,9 @@ class MoleculeEditorDialog(QDialog):
         self._custom_list = QListWidget()
         self._custom_list.setObjectName("molecule_custom_groups")
         self._custom_list.itemClicked.connect(self._on_custom_item_clicked)
+        self._custom_list.itemDoubleClicked.connect(lambda _item: self._on_group_edit())
+        self._custom_list.setContextMenuPolicy(Qt.ContextMenuPolicy.CustomContextMenu)
+        self._custom_list.customContextMenuRequested.connect(self._on_custom_list_context_menu)
         vbox.addWidget(self._custom_list, 1)
         self._custom_remove_btn = QPushButton(tr("Remove"))
         self._custom_remove_btn.clicked.connect(self._on_custom_remove)
@@ -1234,6 +1291,266 @@ class MoleculeEditorDialog(QDialog):
         except OSError:
             return
         self._refresh_custom_groups()
+
+    def _on_custom_list_context_menu(self, pos) -> None:  # noqa: ANN001
+        item = self._custom_list.itemAt(pos)
+        if item is None:
+            return
+        self._custom_list.setCurrentItem(item)
+        menu = QMenu(self)
+        if not self._group_mode:
+            menu.addAction(tr("Edit drawing…"), self._on_group_edit)
+        menu.addAction(tr("Remove"), self._on_custom_remove)
+        menu.exec(self._custom_list.mapToGlobal(pos))
+
+    # -- structure templates (Rings, Heterocycles, Chairs, Sugars, IR Groups) --
+
+    def _load_custom_templates(self) -> None:
+        """Apply persisted ring and functional-group template overrides from settings."""
+        reset_all_templates()
+        if self._group_store is None:
+            return
+        for ring_type, data in self._group_store.ring_templates().items():
+            if ring_type not in RING_TEMPLATES:
+                continue
+            try:
+                set_ring_template(
+                    ring_type,
+                    smiles=data.get("smiles", ""),
+                    mol_block=data.get("mol_block", ""),
+                )
+            except ValueError:
+                continue
+        for group_key, smiles in self._group_store.group_templates().items():
+            if group_key not in FUNCTIONAL_GROUPS:
+                continue
+            try:
+                set_functional_group_template(group_key, smiles)
+            except ValueError:
+                continue
+
+    def _ring_button_tooltip(self, ring_type: str) -> str:
+        base = tr(_RING_LABELS.get(ring_type, ring_type))
+        if is_template_customized(ring_type) and ring_type in RING_TEMPLATES:
+            return f"{base} ({RING_TEMPLATES[ring_type].smiles})"
+        return base
+
+    def _group_button_tooltip(self, group_key: str) -> str:
+        label = _GROUP_LABELS.get(group_key, group_key)
+        base = tr("Attach {group} to an atom").format(group=label)
+        if is_template_customized(group_key) and group_key in FUNCTIONAL_GROUPS:
+            return f"{base} ({FUNCTIONAL_GROUPS[group_key]})"
+        return base
+
+    def _any_template_customized(self) -> bool:
+        return any(is_template_customized(k) for k in _RING_LABELS) or any(
+            is_template_customized(k) for k in _GROUP_LABELS
+        )
+
+    def _update_template_buttons_state(self) -> None:
+        if hasattr(self, "_template_reset_btn"):
+            self._template_reset_btn.setEnabled(self._any_template_customized())
+
+    def _draw_template(
+        self, smiles: str = "", mol_block: str = "", title: str = ""
+    ) -> tuple[str, str] | None:
+        """Open the editor in group mode to edit a template; returns ``(smiles, mol_block)``."""
+        dialog = MoleculeEditorDialog(
+            initial_smiles=smiles,
+            initial_mol_block=mol_block,
+            parent=self,
+            group_mode=True,
+        )
+        if title:
+            dialog.setWindowTitle(title)
+        if dialog.exec() != QDialog.DialogCode.Accepted:
+            return None
+        return dialog.smiles(), dialog.mol_block()
+
+    def _edit_ring_template(self, ring_type: str) -> bool:
+        if ring_type not in RING_TEMPLATES:
+            return False
+        label = tr(_RING_LABELS.get(ring_type, ring_type))
+        spec = RING_TEMPLATES[ring_type]
+        result = self._draw_template(
+            smiles=spec.smiles,
+            mol_block=ring_template_mol_block(ring_type),
+            title=tr("Edit Template — {name}").format(name=label),
+        )
+        if result is None:
+            return False
+        new_smiles, new_mol_block = result
+        try:
+            updated = set_ring_template(ring_type, smiles=new_smiles, mol_block=new_mol_block)
+        except ValueError:
+            self._hint_label.setText(tr("The template could not be updated"))
+            return False
+        if self._group_store is not None:
+            try:
+                self._group_store.save_ring_template(ring_type, updated.smiles, updated.mol_block)
+            except (OSError, ValueError):
+                pass
+        button = self._ring_buttons.get(ring_type)
+        if button is not None:
+            button.setIcon(_ring_icon(ring_type, 40))
+            button.setToolTip(self._ring_button_tooltip(ring_type))
+        self._canvas.set_ring_type(ring_type)
+        self._update_template_buttons_state()
+        self._hint_label.setText(tr("Updated template “{name}”").format(name=label))
+        return True
+
+    def _edit_group_template(self, group_key: str) -> bool:
+        if group_key not in FUNCTIONAL_GROUPS:
+            return False
+        label = _GROUP_LABELS.get(group_key, group_key)
+        result = self._draw_template(
+            smiles=functional_group_editor_smiles(group_key),
+            mol_block="",
+            title=tr("Edit Template — {name}").format(name=label),
+        )
+        if result is None:
+            return False
+        new_smiles, _new_mol_block = result
+        try:
+            rooted = set_functional_group_template(group_key, new_smiles)
+        except ValueError:
+            self._hint_label.setText(tr("The template could not be updated"))
+            return False
+        if self._group_store is not None:
+            try:
+                self._group_store.save_group_template(group_key, rooted)
+            except (OSError, ValueError):
+                pass
+        button = self._group_buttons.get(group_key)
+        if button is not None:
+            button.setToolTip(self._group_button_tooltip(group_key))
+        self._canvas.set_group(group_key)
+        self._update_template_buttons_state()
+        self._hint_label.setText(tr("Updated template “{name}”").format(name=label))
+        return True
+
+    def _on_edit_selected_template(self) -> bool:
+        tool = self._canvas.tool()
+        if tool == "group":
+            return self._edit_group_template(self._canvas.group_key())
+        return self._edit_ring_template(self._canvas.ring_type())
+
+    def _reset_single_ring_template(self, ring_type: str) -> None:
+        reset_ring_template(ring_type)
+        if self._group_store is not None:
+            try:
+                self._group_store.remove_ring_template(ring_type)
+            except OSError:
+                pass
+        button = self._ring_buttons.get(ring_type)
+        if button is not None:
+            button.setIcon(_ring_icon(ring_type, 40))
+            button.setToolTip(self._ring_button_tooltip(ring_type))
+        self._update_template_buttons_state()
+        self._canvas.update()
+
+    def _reset_single_group_template(self, group_key: str) -> None:
+        reset_functional_group_template(group_key)
+        if self._group_store is not None:
+            try:
+                self._group_store.remove_group_template(group_key)
+            except OSError:
+                pass
+        button = self._group_buttons.get(group_key)
+        if button is not None:
+            button.setToolTip(self._group_button_tooltip(group_key))
+        self._update_template_buttons_state()
+        self._canvas.update()
+
+    def _on_reset_all_templates(self) -> None:
+        reset_all_templates()
+        if self._group_store is not None:
+            try:
+                self._group_store.clear_templates()
+            except OSError:
+                pass
+        for ring_type, button in self._ring_buttons.items():
+            button.setIcon(_ring_icon(ring_type, 40))
+            button.setToolTip(self._ring_button_tooltip(ring_type))
+        for group_key, button in self._group_buttons.items():
+            button.setToolTip(self._group_button_tooltip(group_key))
+        self._update_template_buttons_state()
+        self._canvas.update()
+        self._hint_label.setText(tr("All structure templates restored to defaults"))
+
+    def _insert_ring_template_into_canvas(self, ring_type: str) -> None:
+        if ring_type not in RING_TEMPLATES:
+            return
+        self._canvas.model().add_ring_template(ring_type)
+        self._canvas._after_edit()
+        self._canvas.fit_to_view()
+
+    def _save_template_copy_to_custom(self, default_name: str, smiles: str) -> None:
+        self._store_drawn_group(smiles, default_name)
+        self._left_tabs.setCurrentIndex(2)
+
+    def _on_ring_template_context_menu(self, ring_type: str, pos) -> None:  # noqa: ANN001
+        button = self._ring_buttons.get(ring_type)
+        if button is None:
+            return
+        label = tr(_RING_LABELS.get(ring_type, ring_type))
+        menu = QMenu(self)
+        if not self._group_mode:
+            menu.addAction(
+                tr("Edit template “{name}”…").format(name=label),
+                lambda: self._edit_ring_template(ring_type),
+            )
+        menu.addAction(
+            tr("Insert “{name}” into canvas").format(name=label),
+            lambda: self._insert_ring_template_into_canvas(ring_type),
+        )
+        if not self._group_mode and ring_type in RING_TEMPLATES:
+            menu.addAction(
+                tr("Save a copy to Custom groups…"),
+                lambda: self._save_template_copy_to_custom(label, RING_TEMPLATES[ring_type].smiles),
+            )
+        menu.addSeparator()
+        reset_one = menu.addAction(
+            tr("Reset “{name}” to default").format(name=label),
+            lambda: self._reset_single_ring_template(ring_type),
+        )
+        reset_one.setEnabled(is_template_customized(ring_type))
+        reset_all = menu.addAction(
+            tr("Reset all templates to defaults"),
+            self._on_reset_all_templates,
+        )
+        reset_all.setEnabled(self._any_template_customized())
+        menu.exec(button.mapToGlobal(pos))
+
+    def _on_group_template_context_menu(self, group_key: str, pos) -> None:  # noqa: ANN001
+        button = self._group_buttons.get(group_key)
+        if button is None:
+            return
+        label = _GROUP_LABELS.get(group_key, group_key)
+        menu = QMenu(self)
+        if not self._group_mode:
+            menu.addAction(
+                tr("Edit template “{name}”…").format(name=label),
+                lambda: self._edit_group_template(group_key),
+            )
+            menu.addAction(
+                tr("Save a copy to Custom groups…"),
+                lambda: self._save_template_copy_to_custom(
+                    group_key.lstrip("-"), functional_group_editor_smiles(group_key)
+                ),
+            )
+            menu.addSeparator()
+        reset_one = menu.addAction(
+            tr("Reset “{name}” to default").format(name=label),
+            lambda: self._reset_single_group_template(group_key),
+        )
+        reset_one.setEnabled(is_template_customized(group_key))
+        reset_all = menu.addAction(
+            tr("Reset all templates to defaults"),
+            self._on_reset_all_templates,
+        )
+        reset_all.setEnabled(self._any_template_customized())
+        menu.exec(button.mapToGlobal(pos))
 
     # -- export / import -----------------------------------------------
 

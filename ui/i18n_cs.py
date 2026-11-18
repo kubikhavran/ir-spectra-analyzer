@@ -1077,4 +1077,24 @@ CZECH_TEXTS: dict[str, str] = {
         "Kliknutím na atom připojíte {name} (tažením z atomu určíte směr vazby), "
         "kliknutím do prázdna ji umístíte samostatně; Esc ukončí"
     ),
+    # ── Molecule editor: structure template editing ────────────────────────
+    "Edit template…": "Upravit šablonu…",
+    "Edit the selected ring or group template (or right-click any template)": (
+        "Upravit vybranou šablonu kruhu nebo skupiny (nebo klikněte pravým tlačítkem na šablonu)"
+    ),
+    "Reset defaults": "Obnovit výchozí",
+    "Restore all ring and functional-group templates to defaults": (
+        "Obnovit všechny šablony kruhů a funkčních skupin na výchozí hodnoty"
+    ),
+    "Edit Template — {name}": "Upravit šablonu — {name}",
+    "The template could not be updated": "Šablonu se nepodařilo aktualizovat",
+    "Updated template “{name}”": "Šablona „{name}“ aktualizována",
+    "All structure templates restored to defaults": (
+        "Všechny šablony struktur byly obnoveny na výchozí hodnoty"
+    ),
+    "Edit template “{name}”…": "Upravit šablonu „{name}“…",
+    "Insert “{name}” into canvas": "Vložit „{name}“ do kreslicí plochy",
+    "Save a copy to Custom groups…": "Uložit kopii do vlastních skupin…",
+    "Reset “{name}” to default": "Obnovit „{name}“ na výchozí",
+    "Reset all templates to defaults": "Obnovit všechny šablony na výchozí",
 }

@@ -349,3 +349,15 @@ def test_bulky_groups_do_not_depend_on_the_depiction(monkeypatch, group, turn):
         for atom in atoms:
             model.attach_functional_group(atom, group)
         assert geometry_problems(model) == [], (group, start)
+
+
+@pytest.mark.parametrize("group_key", ["-OTIPS", "-OTBS", "-NHTs"])
+@pytest.mark.parametrize("dy", [-1e-15, 0.0, 1e-15])
+def test_linker_branched_groups_fold_cleanly_under_symmetry_perturbations(group_key, dy):
+    model = MolEditorModel()
+    model.add_ring_template("benzene")
+    x0, y0 = model.atom_position(0)
+    model.move_atom(0, x0, y0 + dy)
+    for atom in (0, 1, 2):
+        model.attach_functional_group(atom, group_key)
+    assert geometry_problems(model) == []
