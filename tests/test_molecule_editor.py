@@ -810,3 +810,32 @@ def test_custom_group_stays_on_cursor_for_several_atoms(native_dialog, isolated_
     assert canvas.placement() is not None
     dlg._salt_buttons["HCl"].click()
     assert canvas.placement() is not None
+
+
+@requires_rdkit
+def test_imported_scaffold_is_placed_as_its_own_molecule(
+    native_dialog, isolated_groups, monkeypatch, tmp_path
+):
+    import json
+
+    from PySide6.QtCore import QPoint
+
+    from ui.dialogs import molecule_editor_dialog as module
+
+    file = tmp_path / "lab.json"
+    file.write_text(json.dumps({"groups": {"Lactam": "O=C1CCCN1"}}), encoding="utf-8")
+    monkeypatch.setattr(module.QFileDialog, "getOpenFileName", lambda *a, **k: (str(file), ""))
+    dlg = native_dialog(initial_smiles="CC")
+    dlg._on_custom_import()
+    assert isolated_groups.groups() == {"Lactam": "O=C1CCCN1"}
+    item = dlg._custom_list.item(0)
+    dlg._on_custom_item_clicked(item)
+    placement = dlg._canvas.placement()
+    assert placement is not None
+    _click(dlg._canvas, QPoint(dlg._canvas.width() - 60, 60))
+    assert sorted(dlg._canvas.to_smiles().split(".")) == ["CC", "O=C1CCCN1"]
+
+    out = tmp_path / "out.json"
+    monkeypatch.setattr(module.QFileDialog, "getSaveFileName", lambda *a, **k: (str(out), ""))
+    dlg._on_custom_export()
+    assert json.loads(out.read_text(encoding="utf-8"))["groups"] == {"Lactam": "O=C1CCCN1"}
