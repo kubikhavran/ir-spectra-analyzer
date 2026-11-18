@@ -104,6 +104,16 @@ molecule, and export a publication-quality PDF report — all in one native app.
   show, one coloured section per group, with the ones that fit the selected peak on
   top; the same colours mark each group's bands as lanes at the top of the spectrum
   (*Show the structure's bands in spectrum*).
+- **Lab-verified bands** — ~100 vibrations were added from evaluated laboratory
+  spectra with structures (2-pyridone, 2-pyrrolidone lactam N–H, quinoline,
+  isoxazole, pyridine, pyrazine, indane, biphenyl, naphthalene and para-benzene ring
+  bands; amine-salt NH₃⁺ bands incl. the ~2030 cm⁻¹ indicator; CH₃ umbrella,
+  tert-amide C–N, acetate, O-tBu, TIPS, SO₃⁻, CF₃). A band was kept only when it was
+  assigned in at least three spectra at a consistent position and the group was in
+  the structure, or when fewer spectra agree with the literature; uncertain or
+  ambiguous assignments were left out. Amines drawn next to their acid (`… .Cl`)
+  are recognised as salts, and abbreviations in older projects (`[OAc]`, `[HCl]`)
+  are expanded.
 - **Structure check** — when the project has a structure, the Functional Groups
   panel checks each of its groups against the spectrum (found / uncertain / not
   seen) and lists strong bands the structure does not explain, with the usual

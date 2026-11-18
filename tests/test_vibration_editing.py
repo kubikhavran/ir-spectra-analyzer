@@ -40,7 +40,7 @@ def test_reopening_the_database_keeps_edits_and_removals(tmp_path) -> None:
     assert "ν(OH) free" in names
     assert "ν(OH) –OH isolated" not in names  # the edit was not undone
     assert "ν(OH) H₂O crystal" not in names  # the removal was not undone
-    assert sum(1 for p in presets if p["is_builtin"] == 1) == 247
+    assert sum(1 for p in presets if p["is_builtin"] == 1) == 346
     kept = next(p for p in presets if p["name"] == "ν(OH) free")
     assert kept["id"] == edited["id"]
     assert (kept["typical_range_min"], kept["typical_range_max"]) == (3590.0, 3660.0)
@@ -70,7 +70,7 @@ def test_a_database_from_before_editing_gets_the_current_library(tmp_path) -> No
     upgraded.initialize()
     presets = upgraded.get_vibration_presets()
     builtin = [p for p in presets if p["is_builtin"] == 1]
-    assert len(builtin) == 248
+    assert len(builtin) == 347
     assert all(p["seed_name"] == p["name"] for p in builtin)
     assert any(p["name"] == "custom kept" and p["is_builtin"] == 0 for p in presets)
 
@@ -160,7 +160,7 @@ def test_reset_restores_builtins_and_leaves_custom_alone(tmp_path) -> None:
     assert restored["category"] == "stretch"
     assert _builtin(db, "ν(OH) H₂O crystal")["id"] == removed["id"]
     presets = db.get_vibration_presets()
-    assert sum(1 for p in presets if p["is_builtin"] == 1) == 248
+    assert sum(1 for p in presets if p["is_builtin"] == 1) == 347
     assert any(p["id"] == custom_id and p["name"] == "my band" for p in presets)
     assert db.reset_builtin_vibration_presets() == 0  # nothing left to restore
 

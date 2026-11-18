@@ -23,7 +23,8 @@ methylene, tert-butyl, methoxy or the benzene substitution pattern are
 
 from __future__ import annotations
 
-from dataclasses import dataclass, field
+import re
+from dataclasses import dataclass, field, replace
 from functools import cache
 from typing import Any
 
@@ -121,6 +122,14 @@ _DISUBSTITUTED_ALKENE = "[#6][CX3H1;!a:1]=[CX3H1;!a:2][#6]"
 
 #: The catalog, most specific first. Map numbers mark core atoms.
 MOTIFS: tuple[Motif, ...] = (
+    # 2-Pyridone first: its ring C=O–N would otherwise read as a tertiary amide.
+    _m(
+        "pyridone",
+        "2-Pyridone",
+        FAMILY_HETEROCYCLE,
+        "[#8X1]=[#6:1]1:[#7:2]:[#6]:[#6]:[#6]:[#6]:1",
+        ("ν(C=O) 2-pyridone", "ν(C–N) 2-pyridone", "δ(CH) 2-pyridone", "ν(CH) Ar"),
+    ),
     # ── Carbonyl groups and their derivatives ───────────────────────────────
     _m(
         "anhydride",
@@ -185,7 +194,7 @@ MOTIFS: tuple[Motif, ...] = (
     ),
     _m(
         "gamma_lactam",
-        "γ-Lactam (5-ring)",
+        "γ-Lactam (2-pyrrolidone)",
         FAMILY_CARBONYL,
         "[#6X3;r5:1](=[OX1:2])[#7X3;r5:3]",
         ("ν(C=O) γ-lactam", "ν(NH) –NH–", "δ(NH)+ν(CN) amide II –CO–NH– sec."),
@@ -705,10 +714,20 @@ MOTIFS: tuple[Motif, ...] = (
         ("ν(C=N) oxazole/isoxazole/oxadiazole", "ν(C–O–C) oxazole/oxadiazole ring"),
     ),
     _m(
-        "oxazole",
-        "Oxazole / isoxazole",
+        "isoxazole",
+        "Isoxazole / benzisoxazole",
         FAMILY_HETEROCYCLE,
-        ("[#8:1]1:[#6:2]:[#7:3]:[#6:4]:[#6:5]:1", "[#8:1]1:[#7:2]:[#6:3]:[#6:4]:[#6:5]:1"),
+        "[#8:1]1:[#7:2]:[#6:3]:[#6:4]:[#6:5]:1",
+        (
+            "ν(C=N) oxazole/isoxazole/oxadiazole",
+            "ν(C–O–C) oxazole/oxadiazole ring",
+        ),
+    ),
+    _m(
+        "oxazole",
+        "Oxazole / benzoxazole",
+        FAMILY_HETEROCYCLE,
+        "[#8:1]1:[#6:2]:[#7:3]:[#6:4]:[#6:5]:1",
         (
             "ν(C=N) oxazole/isoxazole/oxadiazole",
             "ν(C–O–C) oxazole/oxadiazole ring",
@@ -758,20 +777,33 @@ MOTIFS: tuple[Motif, ...] = (
         ("ν(CH) furan/thiophene", "ν(ring) thiophene", "γ(CH) thiophene"),
     ),
     _m(
+        "pyrazine",
+        "Pyrazine / quinoxaline",
+        FAMILY_HETEROCYCLE,
+        "[#7:1]1:[#6:2]:[#6:3]:[#7:4]:[#6:5]:[#6:6]:1",
+        ("ν(ring) diazine", "ν(ring) diazine ~1410", "ν(CH) Ar"),
+    ),
+    _m(
         "diazine",
-        "Pyrimidine / pyrazine / pyridazine / triazine",
+        "Pyrimidine / pyridazine / triazine",
         FAMILY_HETEROCYCLE,
         (
             "[#7:1]1:[#6:2]:[#7:3]:[#6:4]:[#6:5]:[#6:6]:1",
-            "[#7:1]1:[#6:2]:[#6:3]:[#7:4]:[#6:5]:[#6:6]:1",
             "[#7:1]1:[#7:2]:[#6:3]:[#6:4]:[#6:5]:[#6:6]:1",
             "[#7:1]1:[#6:2]:[#7:3]:[#6:4]:[#7:5]:[#6:6]:1",
         ),
         ("ν(ring) diazine", "ν(ring) diazine ~1410", "ν(CH) Ar"),
     ),
     _m(
+        "quinoline",
+        "Quinoline",
+        FAMILY_HETEROCYCLE,
+        "[#7:1]1:[#6:2]:[#6:3]:[#6:4]:[#6:5]2:[#6]:[#6]:[#6]:[#6]:[#6:6]:1:2",
+        ("ν(CH) Ar", "ν(ring) pyridine ~1590"),
+    ),
+    _m(
         "pyridine",
-        "Pyridine / quinoline",
+        "Pyridine / isoquinoline",
         FAMILY_HETEROCYCLE,
         "[#7:1]1:[#6:2]:[#6:3]:[#6:4]:[#6:5]:[#6:6]:1",
         (
@@ -989,6 +1021,38 @@ MOTIFS: tuple[Motif, ...] = (
         exclusive=False,
     ),
     _m(
+        "indane",
+        "Indane (benzo-fused cyclopentane)",
+        FAMILY_AROMATIC,
+        "[CX4:1]1[CX4][CX4]c2ccccc12",
+        ("δ(CH₂) –CH₂–",),
+        exclusive=False,
+    ),
+    _m(
+        "biphenyl",
+        "Biphenyl",
+        FAMILY_AROMATIC,
+        "[c:1]1ccccc1-!@c1ccccc1",
+        ("ν(CH) Ar",),
+        exclusive=False,
+    ),
+    _m(
+        "acetate",
+        "Acetate –O–CO–CH₃ (OAc)",
+        FAMILY_ALKYL,
+        "[CH3][#6X3:1](=[OX1])[OX2][#6]",
+        ("δs(CH₃) CH₃–C=O", "δd(CH₃) CH₃–C=O/N/S"),
+        exclusive=False,
+    ),
+    _m(
+        "tert_butoxy",
+        "tert-Butoxy –OC(CH₃)₃ (Boc, t-Bu ester / ether)",
+        FAMILY_ALKYL,
+        "[CH3][CX4:1]([CH3])([CH3])[OX2]",
+        ("–C(CH₃)₃ tert-butyl",),
+        exclusive=False,
+    ),
+    _m(
         "tert_butyl",
         "tert-Butyl –C(CH₃)₃",
         FAMILY_ALKYL,
@@ -1070,6 +1134,129 @@ MOTIFS: tuple[Motif, ...] = (
     ),
 )
 
+# Bands verified on the laboratory's own evaluated spectra (100 projects with
+# structures; see the seed-version-3 block of the built-in vibration library),
+# appended to the motifs they belong to.
+_LAB_VIBRATIONS: dict[str, tuple[str, ...]] = {
+    "methyl": ("δs(CH₃) –CH₃ umbrella",),
+    "methylene": ("ω(CH₂) –CH₂– wagging",),
+    "tert_butyl": ("δs(CH₃) t-Bu doublet",),
+    "tert_butoxy": ("ν(O–C(CH₃)₃) t-Bu ester/Boc", "δs(CH₃) t-Bu doublet"),
+    "acetate": ("νas(C–O) acetate ~1230", "νs(O–C–C) acetate ~1045", "δ(O–C=O) acetate ~605"),
+    "tertiary_amide": ("ν(C–N) tert. amide ~1410",),
+    "gamma_lactam": (
+        "ν(NH) lactam cis-NH (2-pyrrolidone)",
+        "δ(NH) lactam cis-NH (2-pyrrolidone)",
+        "2-pyrrolidone ring ~1457",
+        "2-pyrrolidone ring ~1290",
+        "2-pyrrolidone ring ~1154",
+        "2-pyrrolidone ring ~888",
+        "2-pyrrolidone ring ~621",
+    ),
+    "pyridone": (
+        "2-pyridone ring ~1359",
+        "2-pyridone ring ~1326",
+        "2-pyridone ring ~1236",
+        "2-pyridone ring ~1136",
+        "2-pyridone ring ~1052",
+        "2-pyridone ring ~876",
+        "2-pyridone ring ~768",
+        "2-pyridone ring ~752",
+        "2-pyridone ring ~559",
+        "2-pyridone ring ~458",
+    ),
+    "quinoline": (
+        "ν(CH) quinoline",
+        "quinoline ring ~1426",
+        "quinoline ring ~1392",
+        "quinoline ring ~1330",
+        "quinoline ring ~1305",
+        "quinoline ring ~1098",
+        "quinoline ring ~789",
+        "quinoline ring ~749",
+    ),
+    "pyridine": (
+        "pyridine ring ~1597",
+        "pyridine ring ~1372",
+        "pyridine ring ~1146",
+        "pyridine ring ~1078",
+        "pyridine ring ~1049",
+        "pyridine ring ~972",
+        "pyridine ring ~826",
+        "pyridine ring ~786",
+        "pyridine ring ~711",
+        "pyridine ring ~664",
+    ),
+    "pyrazine": (
+        "pyrazine ring ~1576",
+        "pyrazine ring ~1549",
+        "pyrazine ring ~1416",
+        "pyrazine ring ~1368",
+        "pyrazine ring ~1216",
+        "pyrazine ring ~1082",
+        "pyrazine ring ~1003",
+        "pyrazine ring ~923",
+        "pyrazine ring ~773",
+        "pyrazine ring ~723",
+        "pyrazine ring ~594",
+    ),
+    "isoxazole": (
+        "ν(CH) isoxazole",
+        "isoxazole ring ~1559",
+        "isoxazole ring ~1270",
+        "isoxazole ring ~1085",
+        "isoxazole ring ~924",
+    ),
+    "indane": (
+        "indane ring ~1273",
+        "indane ring ~1022",
+        "indane ring ~925",
+        "indane ring ~831",
+        "indane ring ~754",
+    ),
+    "biphenyl": (
+        "biphenyl ring ~1437",
+        "biphenyl ring ~1159",
+        "biphenyl ring ~1076",
+        "biphenyl ring ~1008",
+        "biphenyl ring ~756",
+        "biphenyl ring ~697",
+    ),
+    "polycyclic_aromatic": (
+        "ν(CH) naphthalene",
+        "naphthalene ring ~1390",
+        "naphthalene ring ~1365",
+        "naphthalene ring ~1285",
+        "naphthalene ring ~1145",
+        "naphthalene ring ~954",
+        "naphthalene ring ~774",
+    ),
+    "trifluoromethyl": ("νs(CF₃) Ar–CF₃",),
+    "tips": (
+        "νas(Si–C₃) TIPS",
+        "νs(Si–C₃) TIPS",
+        "ρ(CH₃) TIPS ~995",
+        "δs(CH₃) iPr TIPS doublet",
+    ),
+    "sulfate": ("νas(SO₃⁻) sulfate/sulfonate anion", "δs(SO₃⁻)", "ν(S–O–C) sulfate ester"),
+    "sulfonate": ("νas(SO₃⁻) sulfate/sulfonate anion", "δs(SO₃⁻)"),
+    "sulfonamide": ("δ(SO₂) scissoring",),
+    "sulfone": ("δ(SO₂) scissoring",),
+    "sulfonyl_chloride": ("δ(SO₂) scissoring",),
+    "ammonium": (
+        "νas(NH₃⁺) R–NH₃⁺",
+        "ν(NH⁺) ammonium salt broad",
+        "comb. R–NH₃⁺ salt indicator ~2030",
+        "δas(NH₃⁺) R–NH₃⁺",
+        "δs(NH₃⁺) R–NH₃⁺",
+        "ρ(NH₃⁺) R–NH₃⁺",
+    ),
+}
+MOTIFS = tuple(
+    replace(motif, vibrations=motif.vibrations + _LAB_VIBRATIONS.get(motif.id, ()))
+    for motif in MOTIFS
+)
+
 _BENZENE_SUBSTITUTION_VIBRATIONS: dict[tuple[int, ...], tuple[str, str, tuple[str, ...]]] = {
     (): ("benzene", "Benzene (unsubstituted)", ("γ(CH) Ar 6H benzene ~670",)),
     (1,): (
@@ -1083,7 +1270,17 @@ _BENZENE_SUBSTITUTION_VIBRATIONS: dict[tuple[int, ...], tuple[str, str, tuple[st
         "1,3-Disubstituted benzene (meta)",
         ("γ(CH) Ar 3H adjacent", "γ(CH) Ar 1H isolated", "γ(CH) Ar mono/1,3-/1,2,3-/1,2,4-"),
     ),
-    (1, 4): ("para_benzene", "1,4-Disubstituted benzene (para)", ("γ(CH) Ar 2H adjacent",)),
+    (1, 4): (
+        "para_benzene",
+        "1,4-Disubstituted benzene (para)",
+        (
+            "γ(CH) Ar 2H adjacent",
+            "para-disubst. benzene ring ~1224",
+            "para-disubst. benzene ring ~1182",
+            "para-disubst. benzene ring ~1107",
+            "para-disubst. benzene ring ~816",
+        ),
+    ),
     (1, 2, 3): (
         "benzene_123",
         "1,2,3-Trisubstituted benzene",
@@ -1170,10 +1367,47 @@ def perceive_motifs(mol: Any) -> list[FoundMotif]:
         if accepted:
             found.append(FoundMotif(motif=motif, matches=tuple(accepted)))
     found.extend(_benzene_rings(mol))
+    salt = _amine_salt(mol, found)
+    if salt is not None:
+        found = [f for f in found if f.id != "ammonium"] + [salt]
     order = {family: index for index, family in enumerate(FAMILIES)}
     position = {motif.id: index for index, motif in enumerate(ALL_MOTIFS)}
     found.sort(key=lambda f: (order.get(f.motif.family, 99), position.get(f.motif.id, 999)))
     return found
+
+
+# Abbreviations older projects carry inside their SMILES ("[OAc]", "[HCl]"),
+# expanded so those structures can still be read.
+_SMILES_ABBREVIATIONS = (
+    ("[OAc]", "OC(C)=O"),
+    ("[OBn]", "OCc9ccccc9"),
+    ("[OMe]", "OC"),
+    ("[OTr]", "OC(c9ccccc9)(c9ccccc9)c9ccccc9"),
+    ("[Boc]", "C(=O)OC(C)(C)C"),
+    ("[HCl]", "Cl"),
+    ("[HBr]", "Br"),
+)
+
+
+def parse_structure(smiles: str) -> Any:
+    """RDKit molecule for a drawing's SMILES, abbreviations expanded; ``None`` if unreadable."""
+    if not smiles:
+        return None
+    from rdkit import RDLogger  # noqa: PLC0415
+
+    RDLogger.DisableLog("rdApp.*")
+    try:
+        mol = Chem.MolFromSmiles(smiles)
+        if mol is None:
+            expanded = smiles
+            for short, full in _SMILES_ABBREVIATIONS:
+                expanded = expanded.replace(short, full)
+            # Stray tokens such as "[.6]" (a stoichiometry note) are dropped.
+            expanded = re.sub(r"\.?\[\.[^\]]*\]", "", expanded)
+            mol = Chem.MolFromSmiles(expanded) if expanded != smiles else None
+    finally:
+        RDLogger.EnableLog("rdApp.*")
+    return mol
 
 
 def perceive_smiles(smiles: str) -> list[FoundMotif]:
@@ -1181,12 +1415,43 @@ def perceive_smiles(smiles: str) -> list[FoundMotif]:
 
     A drawing may hold several molecules (a salt, a mixture); all of them count.
     """
-    if not smiles:
-        return []
-    mol = Chem.MolFromSmiles(smiles)
+    mol = parse_structure(smiles)
     if mol is None:
         return []
     return perceive_motifs(mol)
+
+
+_BASIC_AMINE = "[NX3;!$(N[#6,#16,#15]=[O,S,N]);!$(N-a);!$(N-[N,O,S]);!a]"
+_ACID_FRAGMENT = "[$([Cl,Br,I;D0]),$([Cl-,Br-,I-]),$([OX2H1][SX4](=O)=O),$([OX2H1][PX4]=O)]"
+
+
+def _amine_salt(mol: Any, found: list[FoundMotif]) -> FoundMotif | None:
+    """An amine drawn next to its acid (``R-NH2 . HCl``) is an ammonium salt.
+
+    Salts are often drawn neutral with the acid as a separate part — a
+    hydrochloride as ``.Cl``, a triethylammonium salt as ``Et3N`` next to a
+    sulfonic acid — so ``[NH3+]`` never appears. When a drawing holds such an
+    acid and a basic amine, the ammonium bands are offered as well.
+    """
+    existing = next((f for f in found if f.id == "ammonium"), None)
+    fragments = Chem.GetMolFrags(mol, asMols=True)
+    if len(fragments) < 2:
+        return existing
+    acid = _pattern_once(_ACID_FRAGMENT)
+    amine = _pattern_once(_BASIC_AMINE)
+    if not any(fragment.HasSubstructMatch(acid) for fragment in fragments):
+        return existing
+    amines = tuple((match[0],) for match in mol.GetSubstructMatches(amine))
+    if not amines:
+        return existing
+    motif = next(m for m in MOTIFS if m.id == "ammonium")
+    matches = tuple(dict.fromkeys((existing.matches if existing else ()) + amines))
+    return FoundMotif(motif=motif, matches=matches)
+
+
+@cache
+def _pattern_once(smarts: str) -> Any:
+    return Chem.MolFromSmarts(smarts)
 
 
 def _benzene_rings(mol: Any) -> list[FoundMotif]:

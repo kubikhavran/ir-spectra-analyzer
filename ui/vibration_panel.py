@@ -83,6 +83,7 @@ _TYPE_SECTIONS: tuple[tuple[str, str, frozenset[str]], ...] = (
     ("oop", "Out-of-plane γ", frozenset({"oop"})),
     ("rock", "Rocking and wagging", frozenset({"rocking", "wagging"})),
     ("overtone", "Overtones and combinations", frozenset({"overtone"})),
+    ("ring", "Ring vibrations", frozenset({"ring"})),
     ("silyl", "Protecting groups", frozenset(_PG_CATEGORIES)),
 )
 
@@ -839,6 +840,7 @@ _CATEGORY_CHOICES: tuple[tuple[str, str], ...] = (
     ("rocking", "Rocking \u03c1"),
     ("wagging", "Wagging \u03c9"),
     ("overtone", "Overtones and combinations"),
+    ("ring", "Ring vibrations"),
     ("silyl", "Protecting groups"),
     ("", "Other"),
 )
