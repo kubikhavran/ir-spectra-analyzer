@@ -553,7 +553,7 @@ def set_functional_group_template(group_key: str, smiles: str) -> str:
             pass
     attach = frag.attach if frag.attach is not None else 0
     attach = max(0, min(attach, mol.GetNumAtoms() - 1))
-    rooted = Chem.MolToSmiles(mol, rootedAtAtom=attach)
+    rooted = str(Chem.MolToSmiles(mol, rootedAtAtom=attach))
     if not rooted:
         raise ValueError(f"Could not convert functional group {group_key!r} to SMILES")
     FUNCTIONAL_GROUPS[group_key] = rooted
