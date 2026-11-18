@@ -227,6 +227,11 @@ def test_abbreviated_smiles_from_older_projects_are_read() -> None:
         ("indane", "indane"),
         ("biphenyl", "biphenyl"),
         ("pyrrolidone", "gamma_lactam"),
+        ("benzisoxazole", "isoxazole"),
+        ("benzimidazole", "imidazole"),
+        ("benzodioxole", "acetal"),
+        ("pyrene", "polycyclic_aromatic"),
+        ("oxazolidinone", "carbamate"),
     ],
 )
 def test_editor_ring_quick_picks_are_recognised(ring_type: str, motif: str) -> None:
@@ -251,6 +256,10 @@ def test_editor_ring_quick_picks_are_recognised(ring_type: str, motif: str) -> N
         ("-SO3-", {"sulfonate"}),
         ("-OTBS", {"tbs", "silyl_ether"}),
         ("-OTIPS", {"tips", "silyl_ether"}),
+        ("-TIPS", {"tips"}),
+        ("-Piv", {"tert_butyl"}),
+        ("-OSO3H", {"sulfate"}),
+        ("-NHTs", {"sulfonamide", "para_benzene"}),
     ],
 )
 def test_editor_group_quick_picks_are_recognised(group: str, motifs: set[str]) -> None:

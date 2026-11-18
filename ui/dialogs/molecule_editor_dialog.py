@@ -116,6 +116,10 @@ _RING_BUTTONS: tuple[tuple[str, str], ...] = (
     ("quinoline", "Quinoline"),
     ("indane", "Indane"),
     ("biphenyl", "Biphenyl"),
+    ("benzisoxazole", "1,2-Benzisoxazole"),
+    ("benzimidazole", "Benzimidazole"),
+    ("benzodioxole", "1,3-Benzodioxole"),
+    ("pyrene", "Pyrene"),
 )
 # Saturated O/N rings, chairs and sugars (the building blocks of carbohydrates).
 _HETEROCYCLE_BUTTONS: tuple[tuple[str, str], ...] = (
@@ -126,6 +130,10 @@ _HETEROCYCLE_BUTTONS: tuple[tuple[str, str], ...] = (
     ("morpholine", "Morpholine"),
     ("piperazine", "Piperazine"),
     ("pyrrolidone", "2-Pyrrolidone (γ-lactam, attached through N)"),
+    ("pyrrolidine", "Pyrrolidine"),
+    ("thiazolidine", "Thiazolidine"),
+    ("oxazolidinone", "2-Oxazolidinone (attached through N)"),
+    ("steroid", "Steroid skeleton (gonane, attached at C3)"),
     ("chair", "Cyclohexane chair"),
     ("oxane_chair", "Pyranose chair (oxane)"),
     ("beta_glucopyranose", "β-D-Glucopyranose (click an OH or atom to make a glycoside)"),
@@ -157,6 +165,15 @@ _GROUP_BUTTONS: tuple[tuple[str, str], ...] = (
     ("-SO3-", "-SO₃⁻"),
     ("-OTBS", "-OTBS"),
     ("-OTIPS", "-OTIPS"),
+    ("-OEt", "-OEt"),
+    ("-COOEt", "-COOEt"),
+    ("-NEt2", "-NEt₂"),
+    ("-Piv", "-Piv"),
+    ("-OPiv", "-OPiv"),
+    ("-OSO3H", "-OSO₃H"),
+    ("-Ts", "-Ts"),
+    ("-NHTs", "-NHTs"),
+    ("-TIPS", "-TIPS"),
 )
 _ELEMENT_BUTTONS: tuple[str, ...] = (
     "C",
