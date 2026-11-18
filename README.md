@@ -65,8 +65,9 @@ molecule, and export a publication-quality PDF report — all in one native app.
   follows the operating system. Chemical names (vibrations, functional groups)
   are data and stay as they are.
 - **Dark mode** — *View → Appearance*: Dark (default), Light or Follow system,
-  applied at once. Exported reports, spreadsheets and structure images stay
-  light.
+  applied at once. *Light spectrum background in dark mode* keeps the plot white
+  with black axes while the rest of the window is dark. Exported reports,
+  spreadsheets and structure images stay light.
 
 ### Peak picking & interpretation
 - **Automatic peak detection** (SciPy `find_peaks`) with a **Sensitivity** slider
@@ -142,7 +143,10 @@ molecule, and export a publication-quality PDF report — all in one native app.
   - **Copy & attach parts** — select atoms, `Ctrl+C`, then `Ctrl+V` and click any
     atom: the copied part is bonded there through its original attachment point.
   - **Custom groups** — type `OMe`, `CO2Et`, `NHBoc`, `CH2CH2OH` or SMILES with `*`
-    on an atom (`Enter` / double-click), and save your own groups for later.
+    on an atom (`Enter` / double-click), and save your own groups for later — or
+    *Draw new…* a group in the editor and mark its attachment atom with the `*`
+    tool (without `*` it is a whole building block). Saved groups can be exported
+    to and imported from a JSON file.
   - **Atom properties** — charge, isotope (e.g. ²H for C–D bands), H count and
     radicals; structure check, R/S and E/Z labels, atom numbers, rotate/flip,
     explicit hydrogens, MOL/SDF open & save, InChI/InChIKey and image copy.
@@ -513,11 +517,11 @@ runs on `windows-latest` to produce an installer and attach it to the
 matching GitHub Release:
 
 ```bash
-git tag v0.32.0
-git push origin v0.32.0
+git tag v0.33.0
+git push origin v0.33.0
 ```
 
-A few minutes later `IR-Spectra-Analyzer-Setup-0.32.0.exe` appears on the
+A few minutes later `IR-Spectra-Analyzer-Setup-0.33.0.exe` appears on the
 [Releases page](https://github.com/kubikhavran/ir-spectra-analyzer/releases).
 
 Without pushing a tag, run the workflow by hand instead (**Actions → Build
@@ -536,13 +540,13 @@ pip install pyinstaller dmgbuild
 python scripts/build_icon.py
 
 # 3. Bundle to dist/IR Spectra Analyzer.app/
-IR_SPECTRA_VERSION=0.32.0 pyinstaller packaging/ir-spectra-analyzer-mac.spec --clean --noconfirm
+IR_SPECTRA_VERSION=0.33.0 pyinstaller packaging/ir-spectra-analyzer-mac.spec --clean --noconfirm
 
 # 4. Wrap in a DMG
 dmgbuild -s packaging/dmg_settings.py \
-  -D version=0.32.0 -D arch=arm64 \
+  -D version=0.33.0 -D arch=arm64 \
   "IR Spectra Analyzer" \
-  "dist/IR-Spectra-Analyzer-0.32.0-arm64.dmg"
+  "dist/IR-Spectra-Analyzer-0.33.0-arm64.dmg"
 ```
 
 To build locally on a **Windows** machine:
