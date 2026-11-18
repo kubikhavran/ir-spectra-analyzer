@@ -225,6 +225,9 @@ QToolButton#molPaletteButton:disabled {{ color: {theme.TEXT_FAINT}; }}
 QFrame#molSidePanel {{
     background: {theme.SURFACE_ALT}; border: 1px solid {theme.BORDER}; border-radius: 6px;
 }}
+QFrame#molSidePanel QPushButton {{
+    padding: 4px 6px; min-width: 0px;
+}}
 QFrame#molCanvasFrame {{
     background: {theme.SURFACE}; border: 1px solid {theme.BORDER_STRONG}; border-radius: 6px;
 }}
@@ -444,6 +447,7 @@ def _palette_button(text: str = "", *, tooltip: str = "", checkable: bool = True
 
 def _section_label(text: str) -> QLabel:
     label = QLabel(text)
+    label.setWordWrap(True)
     label.setStyleSheet(theme.SECTION_TITLE_STYLE)
     return label
 
@@ -589,7 +593,10 @@ class MoleculeEditorDialog(QDialog):
         self._clean_btn = self._action_button(QIcon(), tr("Clean 2D"), "")
         self._clean_btn.setText(tr("Clean 2D"))
         self._clean_btn.setToolButtonStyle(Qt.ToolButtonStyle.ToolButtonTextOnly)
-        self._clean_btn.setFixedSize(QSize(78, 34))
+        self._clean_btn.setMinimumWidth(78)
+        self._clean_btn.setMaximumWidth(16777215)
+        self._clean_btn.setFixedHeight(34)
+        self._clean_btn.setStyleSheet("QToolButton#molPaletteButton { padding: 2px 8px; }")
         self._fit_btn = self._action_button(icons.icon("zoom"), tr("Fit View"), "Space")
         self._undo_btn.clicked.connect(self._canvas.undo)
         self._redo_btn.clicked.connect(self._canvas.redo)
@@ -635,6 +642,7 @@ class MoleculeEditorDialog(QDialog):
             tr("More"), tooltip=tr("Export, import and hydrogens"), checkable=False
         )
         self._more_btn.setFixedHeight(34)
+        self._more_btn.setStyleSheet("QToolButton#molPaletteButton { padding: 2px 8px; }")
         self._more_btn.setPopupMode(QToolButton.ToolButtonPopupMode.InstantPopup)
         self._more_btn.setMenu(self._build_more_menu())
         toolbar.addWidget(self._more_btn)
@@ -729,7 +737,7 @@ class MoleculeEditorDialog(QDialog):
     def _build_left_panel(self) -> QFrame:
         panel = QFrame()
         panel.setObjectName("molSidePanel")
-        panel.setFixedWidth(196)
+        panel.setFixedWidth(214)
         outer = QVBoxLayout(panel)
         outer.setContentsMargins(4, 4, 4, 4)
         self._left_tabs = QTabWidget()
@@ -777,7 +785,7 @@ class MoleculeEditorDialog(QDialog):
         vbox.addLayout(groups)
 
         vbox.addSpacing(6)
-        template_actions = QHBoxLayout()
+        template_actions = QVBoxLayout()
         template_actions.setSpacing(4)
         self._template_edit_btn = QPushButton(tr("Edit template…"))
         self._template_edit_btn.setToolTip(
@@ -790,6 +798,7 @@ class MoleculeEditorDialog(QDialog):
         )
         self._template_reset_btn.clicked.connect(self._on_reset_all_templates)
         for action_btn in (self._template_edit_btn, self._template_reset_btn):
+            action_btn.setSizePolicy(QSizePolicy.Policy.Expanding, QSizePolicy.Policy.Fixed)
             action_btn.setVisible(not self._group_mode)
             template_actions.addWidget(action_btn)
         vbox.addLayout(template_actions)
@@ -883,7 +892,7 @@ class MoleculeEditorDialog(QDialog):
             row.addWidget(button)
         vbox.addLayout(row)
 
-        draw_row = QHBoxLayout()
+        draw_row = QVBoxLayout()
         draw_row.setSpacing(4)
         self._group_draw_btn = QPushButton(tr("Draw new…"))
         self._group_draw_btn.setToolTip(tr("Draw a group or building block and save it"))
@@ -892,6 +901,7 @@ class MoleculeEditorDialog(QDialog):
         self._group_edit_btn.setToolTip(tr("Redraw the selected saved group"))
         self._group_edit_btn.clicked.connect(self._on_group_edit)
         for button in (self._group_draw_btn, self._group_edit_btn):
+            button.setSizePolicy(QSizePolicy.Policy.Expanding, QSizePolicy.Policy.Fixed)
             button.setVisible(not self._group_mode)
             draw_row.addWidget(button)
         vbox.addLayout(draw_row)

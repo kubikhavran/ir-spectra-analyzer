@@ -967,3 +967,73 @@ def test_edit_and_reset_ring_and_group_templates(native_dialog, isolated_groups,
     assert FUNCTIONAL_GROUPS["-OMe"] == "OC"
     assert isolated_groups.ring_templates() == {}
     assert isolated_groups.group_templates() == {}
+
+
+def test_template_panel_buttons_fit_within_viewport_and_click(qtbot, isolated_groups):
+    """All 3 ring columns and 2 group columns fit inside the scroll viewport in EN and CS."""
+    from PySide6.QtWidgets import QScrollArea
+
+    from ui.dialogs.molecule_editor_dialog import MoleculeEditorDialog
+    from ui.i18n import language, set_language
+
+    prev_lang = language()
+    try:
+        for lang in ("en", "cs"):
+            set_language(lang)
+            dlg = MoleculeEditorDialog()
+            qtbot.addWidget(dlg)
+            dlg.show()
+            scroll = dlg._left_tabs.widget(0)
+            assert isinstance(scroll, QScrollArea)
+            page = scroll.widget()
+            assert page is not None
+            viewport_w = scroll.viewport().width()
+            assert page.width() <= viewport_w, (
+                f"Templates page width ({page.width()}) overflows viewport ({viewport_w}) in {lang}"
+            )
+            for ring_type, btn in dlg._ring_buttons.items():
+                assert btn.geometry().right() <= viewport_w, (
+                    f"Ring button {ring_type} overflows viewport in {lang}"
+                )
+            for group_key, btn in dlg._group_buttons.items():
+                assert btn.geometry().right() <= viewport_w, (
+                    f"Group button {group_key} overflows viewport in {lang}"
+                )
+            # Clicking 3rd-column ring and 2nd-column group buttons switches tools cleanly
+            dlg._ring_buttons["benzene"].click()
+            assert dlg._canvas.tool() == "ring"
+            assert dlg._canvas.ring_type() == "benzene"
+            dlg._group_buttons["-NH2"].click()
+            assert dlg._canvas.tool() == "group"
+            assert dlg._canvas.group_key() == "-NH2"
+    finally:
+        set_language(prev_lang)
+
+
+def test_periodic_table_dark_mode_contrast(qtbot):
+    """In dark mode, PeriodicTableDialog uses dark category backgrounds and readable text."""
+    import re
+
+    from PySide6.QtGui import QColor
+
+    from ui import theme
+    from ui.widgets.molecule_canvas import PeriodicTableDialog
+
+    prev_mode = theme._mode
+    try:
+        theme.set_mode(theme.DARK_MODE)
+        dlg = PeriodicTableDialog()
+        qtbot.addWidget(dlg)
+        for symbol in ("H", "C", "N", "O", "Na", "Fe", "Cl", "Xe", "La", "U"):
+            btn = dlg.button_for(symbol)
+            css = btn.styleSheet()
+            bg_match = re.search(r"background:\s*(#[0-9A-Fa-f]{6})", css)
+            fg_match = re.search(r"color:\s*(#[0-9A-Fa-f]{6})", css)
+            assert bg_match is not None, f"Missing bg color for {symbol}: {css}"
+            assert fg_match is not None, f"Missing fg color for {symbol}: {css}"
+            bg = QColor(bg_match.group(1))
+            fg = QColor(fg_match.group(1))
+            assert bg.lightnessF() < 0.35, f"Dark mode bg too bright for {symbol}: {bg.name()}"
+            assert fg.lightnessF() > 0.55, f"Dark mode fg too dim for {symbol}: {fg.name()}"
+    finally:
+        theme.set_mode(prev_mode)

@@ -422,24 +422,36 @@ class MoleculeCanvas(QWidget):
                 for idx in sorted(self._selection):
                     self._model.set_atom_symbol(idx, symbol)
             self._after_edit(keep_selection=True)
+        was_atom = self._tool == "atom"
         self.set_tool("atom")
         self._update_hint()
+        if was_atom:
+            self.update()
+            self.tool_changed.emit("atom")
 
     def ring_type(self) -> str:
         return self._ring_type
 
     def set_ring_type(self, ring_type: str) -> None:
         self._ring_type = ring_type
+        was_ring = self._tool == "ring"
         self.set_tool("ring")
         self._update_hint()
+        if was_ring:
+            self.update()
+            self.tool_changed.emit("ring")
 
     def group_key(self) -> str:
         return self._group_key
 
     def set_group(self, group_key: str) -> None:
         self._group_key = group_key
+        was_group = self._tool == "group"
         self.set_tool("group")
         self._update_hint()
+        if was_group:
+            self.update()
+            self.tool_changed.emit("group")
 
     def adjust_charge(self, delta: int) -> bool:
         """Change the charge of the selected / hovered / last edited atom."""
@@ -2370,6 +2382,18 @@ _CATEGORY_COLORS: dict[str, str] = {
     "lanthanide": "#FCE7F3",
     "actinide": "#FAE8FF",
 }
+_DARK_CATEGORY_COLORS: dict[str, str] = {
+    "alkali": "#4A202A",
+    "alkaline": "#4A3019",
+    "transition": "#1F2D4D",
+    "post_transition": "#283545",
+    "metalloid": "#163F35",
+    "nonmetal": "#1A365D",
+    "halogen": "#19422E",
+    "noble": "#352352",
+    "lanthanide": "#46203C",
+    "actinide": "#3E1F4C",
+}
 _CATEGORY_MEMBERS: dict[str, frozenset[str]] = {
     "alkali": frozenset({"Li", "Na", "K", "Rb", "Cs", "Fr"}),
     "alkaline": frozenset({"Be", "Mg", "Ca", "Sr", "Ba", "Ra"}),
@@ -2434,6 +2458,9 @@ class PeriodicTableDialog(QDialog):
         grid.setHorizontalSpacing(3)
         grid.setVerticalSpacing(3)
         positions = periodic_table_positions()
+        dark = theme.is_dark()
+        category_palette = _DARK_CATEGORY_COLORS if dark else _CATEGORY_COLORS
+        fg_palette = DARK_ELEMENT_COLORS if dark else ELEMENT_COLORS
         for symbol, (row, col) in positions.items():
             grid_row = row + 1 if row >= 7 else row  # gap above the f-block
             button = QPushButton(symbol)
@@ -2442,8 +2469,8 @@ class PeriodicTableDialog(QDialog):
             button.setCursor(Qt.CursorShape.PointingHandCursor)
             z = ELEMENT_SYMBOLS.index(symbol) + 1
             button.setToolTip(f"{symbol} (Z = {z})")
-            bg = _CATEGORY_COLORS[element_category(symbol)]
-            fg = ELEMENT_COLORS.get(symbol, theme.TEXT)
+            bg = category_palette[element_category(symbol)]
+            fg = fg_palette.get(symbol, theme.TEXT)
             button.setStyleSheet(
                 f"QPushButton {{ background: {bg}; color: {fg}; border: 1px solid {theme.BORDER};"
                 " border-radius: 4px; font-weight: 600; padding: 0; min-width: 0; }"
@@ -2460,6 +2487,9 @@ class PeriodicTableDialog(QDialog):
         grid.setRowMinimumHeight(7, 8)
         layout.addLayout(grid)
         buttons = QDialogButtonBox(QDialogButtonBox.StandardButton.Cancel)
+        cancel_btn = buttons.button(QDialogButtonBox.StandardButton.Cancel)
+        if cancel_btn is not None:
+            cancel_btn.setText(tr("Cancel"))
         buttons.rejected.connect(self.reject)
         layout.addWidget(buttons)
 
@@ -2641,6 +2671,12 @@ class AtomPropertiesDialog(QDialog):
         buttons = QDialogButtonBox(
             QDialogButtonBox.StandardButton.Ok | QDialogButtonBox.StandardButton.Cancel
         )
+        ok_btn = buttons.button(QDialogButtonBox.StandardButton.Ok)
+        if ok_btn is not None:
+            ok_btn.setText(tr("OK"))
+        cancel_btn = buttons.button(QDialogButtonBox.StandardButton.Cancel)
+        if cancel_btn is not None:
+            cancel_btn.setText(tr("Cancel"))
         buttons.accepted.connect(self._on_accept)
         buttons.rejected.connect(self.reject)
         form.addRow(buttons)

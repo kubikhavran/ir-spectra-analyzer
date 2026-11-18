@@ -252,7 +252,7 @@ CZECH_TEXTS: dict[str, str] = {
     "Reference overlay:": "Překrytá reference:",
     "Opacity:": "Krytí:",
     "Reference spectrum opacity": "Krytí referenčního spektra",
-    "Clear": "Skrýt",
+    "Clear": "Vymazat",
     "Remove the reference overlay from the plot": "Odstraní překrytou referenci z grafu",
     "band found": "pás nalezen",
     "band expected, weak or absent": "pás očekávaný, slabý nebo chybí",

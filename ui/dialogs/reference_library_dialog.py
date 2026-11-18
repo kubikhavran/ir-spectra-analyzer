@@ -164,13 +164,13 @@ class ReferenceLibraryDialog(BackgroundTaskDialogMixin, QDialog):
         self._library_label = QLabel(self._project_library_status_text())
         self._library_label.setWordWrap(True)
         self._library_label.setTextFormat(Qt.TextFormat.PlainText)
-        self._library_label.setStyleSheet("color: gray; font-size: 9pt;")
+        self._library_label.setStyleSheet(theme.CAPTION_STYLE)
         right_layout.addWidget(self._library_label)
 
         self._search_label = QLabel(self._search_status_text())
         self._search_label.setWordWrap(True)
         self._search_label.setTextFormat(Qt.TextFormat.PlainText)
-        self._search_label.setStyleSheet("color: gray; font-size: 9pt;")
+        self._search_label.setStyleSheet(theme.CAPTION_STYLE)
         right_layout.addWidget(self._search_label)
 
         right_layout.addStretch()
@@ -184,7 +184,7 @@ class ReferenceLibraryDialog(BackgroundTaskDialogMixin, QDialog):
         # --- Footer stats line ---
         self._stats_label = QLabel("")
         self._stats_label.setTextFormat(Qt.TextFormat.PlainText)
-        self._stats_label.setStyleSheet("color: gray; font-size: 9pt;")
+        self._stats_label.setStyleSheet(theme.CAPTION_STYLE)
         self._stats_label.setWordWrap(True)
         root_layout.addWidget(self._stats_label)
 
