@@ -150,7 +150,10 @@ class Application:
 
         if not self._can_rebuild_windows():
             return
-        theme.set_mode(theme.resolve_mode(self._settings.get("appearance")))
+        theme.set_mode(
+            theme.resolve_mode(self._settings.get("appearance")),
+            light_plot=bool(self._settings.get(theme.LIGHT_PLOT_SETTING)),
+        )
         app = QApplication.instance()
         if isinstance(app, QApplication):
             theme.apply_theme(app)

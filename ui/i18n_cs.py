@@ -1010,6 +1010,10 @@ CZECH_TEXTS: dict[str, str] = {
     "Tetrazole": "Tetrazol",
     "Indane": "Indan",
     "Biphenyl": "Bifenyl",
+    "Light spectrum background in dark mode": "Světlé pozadí spektra v tmavém režimu",
+    "Keep the spectrum white with black axes while the rest of the window is dark": (
+        "Spektrum zůstane bílé s černými osami, zatímco zbytek okna je tmavý"
+    ),
     "Import…": "Importovat…",
     "Export…": "Exportovat…",
     "Add the groups from a group file (.json)": "Přidat skupiny ze souboru skupin (.json)",

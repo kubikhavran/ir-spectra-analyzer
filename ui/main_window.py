@@ -409,6 +409,31 @@ class MainWindow(QMainWindow):
             action.setChecked(code == current)
             group.addAction(action)
             action.triggered.connect(lambda _checked=False, c=code: self._on_appearance_chosen(c))
+        self._appearance_menu.addSeparator()
+        light_plot = self._appearance_menu.addAction(tr("Light spectrum background in dark mode"))
+        light_plot.setCheckable(True)
+        light_plot.setChecked(bool(self._settings.get(theme.LIGHT_PLOT_SETTING)))
+        light_plot.setToolTip(
+            tr("Keep the spectrum white with black axes while the rest of the window is dark")
+        )
+        light_plot.toggled.connect(self._on_light_plot_toggled)
+        self._light_plot_action = light_plot
+
+    def _on_light_plot_toggled(self, checked: bool) -> None:
+        """Remember the plot background choice and apply it like an appearance change."""
+        if bool(self._settings.get(theme.LIGHT_PLOT_SETTING)) == checked:
+            return
+        self._settings.set(theme.LIGHT_PLOT_SETTING, checked)
+        if not theme.is_dark():
+            return  # the light appearance already has a light plot
+        if self._live_switching:
+            self.appearance_change_requested.emit()
+            return
+        QMessageBox.information(
+            self,
+            tr("Appearance"),
+            tr("The new appearance is used the next time the application starts."),
+        )
 
     def _on_appearance_chosen(self, code: str) -> None:
         """Remember the appearance and switch to it (at once when the controller can)."""
