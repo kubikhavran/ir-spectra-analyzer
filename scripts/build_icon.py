@@ -137,7 +137,7 @@ def _rounded_squircle_bg(size: int, radius_ratio: float = 0.225) -> Image.Image:
                     min(255, int(c[2] + boost * 1.4)),
                 )
             px[x, y] = (*c, 255)
-    gradient = grad_small.resize((size, size), Image.BICUBIC)
+    gradient = grad_small.resize((size, size), Image.Resampling.BICUBIC)
 
     mask = Image.new("L", (size, size), 0)
     mdraw = ImageDraw.Draw(mask)
@@ -167,7 +167,7 @@ def _rounded_squircle_bg(size: int, radius_ratio: float = 0.225) -> Image.Image:
         col = _lerp_color((148, 168, 214), (72, 86, 128), y / 255.0)
         for x in range(4):
             rg_px[x, y] = (*col, alpha)
-    rim_grad = rg_small.resize((size, size), Image.BICUBIC)
+    rim_grad = rg_small.resize((size, size), Image.Resampling.BICUBIC)
     rim_alpha = ImageChops.multiply(rim_mask, mask)
     rim_grad.putalpha(ImageChops.multiply(rim_grad.split()[3], rim_alpha))
     base.alpha_composite(rim_grad)
@@ -337,7 +337,7 @@ def _colorize_gradient(size: int) -> Image.Image:
                 base_c = _lerp_color(base_c, amber, weight)
 
             px[x, y] = base_c
-    return grad_small.resize((size, size), Image.BICUBIC)
+    return grad_small.resize((size, size), Image.Resampling.BICUBIC)
 
 
 def _draw_emblem(canvas: Image.Image) -> None:
@@ -375,7 +375,7 @@ def build_master(size: int = 1024) -> Image.Image:
     large = size * ss
     canvas = _rounded_squircle_bg(large)
     _draw_emblem(canvas)
-    return canvas.resize((size, size), Image.LANCZOS)
+    return canvas.resize((size, size), Image.Resampling.LANCZOS)
 
 
 def _write_icns_fallback(iconset_dir: Path, icns_path: Path) -> None:
@@ -422,7 +422,7 @@ def export_icns(master: Image.Image) -> None:
     iconset_dir = ASSETS_DIR / "icon.iconset"
     iconset_dir.mkdir(parents=True, exist_ok=True)
     for filename, px in iconset_specs:
-        resized = master.resize((px, px), Image.LANCZOS)
+        resized = master.resize((px, px), Image.Resampling.LANCZOS)
         resized.save(iconset_dir / filename, format="PNG")
         print(f"  {filename} ({px}×{px})")
 
