@@ -322,3 +322,30 @@ def test_pdf_report_places_structure_without_border_or_distortion(tmp_path, monk
         assert height / width == pytest.approx(image.height() / image.width(), rel=0.01)
         margins, _ = _alpha_margins(png)
         assert max(margins) <= 0.02 * max(image.width(), image.height()) + 4
+
+
+@pytest.mark.parametrize("turn", [0.7, 2.1])
+@pytest.mark.parametrize("group", ["-OTIPS", "-TIPS", "-OTBS", "-Ts", "-NHTs", "-Piv", "-OPiv"])
+def test_bulky_groups_do_not_depend_on_the_depiction(monkeypatch, group, turn):
+    """Another RDKit version may hand back a group mirrored or turned (as CI did)."""
+    from rdkit.Chem import rdDepictor
+    from rdkit.Geometry import Point3D
+
+    import chemistry.mol_fragments as fragments
+
+    def turned(mol):
+        rdDepictor.Compute2DCoords(mol)
+        conf = mol.GetConformer()
+        c, s = math.cos(turn), math.sin(turn)
+        for i in range(mol.GetNumAtoms()):
+            p = conf.GetAtomPosition(i)
+            x, y = p.x, -p.y  # mirrored, then turned
+            conf.SetAtomPosition(i, Point3D(x * c - y * s, x * s + y * c, 0.0))
+        return mol
+
+    monkeypatch.setattr(fragments, "_with_coordinates", turned)
+    for start, atoms in (("c1ccccc1", (0, 1, 2)), ("CC(C)C", (1,))):
+        model = MolEditorModel.from_smiles(start)
+        for atom in atoms:
+            model.attach_functional_group(atom, group)
+        assert geometry_problems(model) == [], (group, start)

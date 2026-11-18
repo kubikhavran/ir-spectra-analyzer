@@ -163,17 +163,17 @@ def _folded_branches(
 ) -> list[complex] | None:
     """*pts* redrawn as a compact fan pointing along *outward*.
 
-    The attach atom's branches spread over 120° in front of it and deeper
-    branches over 60°, chains zig-zag, and ring systems keep their shape:
+    Branches leave each atom 60° apart (the attach atom's over at least
+    120°), chains zig-zag, and ring systems keep their shape:
     how a group is drawn on a crowded atom. ``None`` when the attach atom is
-    in a ring or has fewer than two branches.
+    in a ring or has no branch.
     """
     if fragment.attach is None or abs(outward) < 1e-9:
         return None
     mol = fragment.mol
     attach = fragment.attach
     root = mol.GetAtomWithIdx(attach)
-    if root.IsInRing() or root.GetDegree() < 2:
+    if root.IsInRing() or root.GetDegree() < 1:
         return None
     folded = list(pts)
 
@@ -197,19 +197,27 @@ def _folded_branches(
         if len(children) == 1:
             offsets = [0.0 if depth == 0 else 30.0 * flip]
         else:
-            width = 120.0 if depth == 0 else 60.0
+            # Neighbouring branches stay 60° apart (one bond length).
+            width = max(60.0 * (len(children) - 1), 120.0 if depth == 0 else 0.0)
             offsets = [-width / 2 + width * i / (len(children) - 1) for i in range(len(children))]
         centre = folded[atom]
-        current = sorted(children, key=lambda c: cmath.phase((pts[c] - pts[atom]) / direction))
-        for child, offset in zip(current, offsets, strict=True):
+        # The largest branches take the middle directions, the smallest the sides.
+        by_size = sorted(children, key=lambda c: (-len(subtree(c, atom)), c))
+        middle_first = sorted(offsets, key=lambda o: (abs(o), o))
+        for child, offset in zip(by_size, middle_first, strict=True):
             heading = direction * cmath.exp(1j * math.radians(offset))
             if mol.GetAtomWithIdx(child).IsInRing():
-                # A ring system keeps its drawn shape, turned onto the new bond.
+                # A ring system keeps its drawn shape, turned so that it
+                # points straight along the new bond.
                 members = subtree(child, atom)
-                old = pts[child] - pts[atom]
+                middle = sum(pts[idx] for idx in members) / len(members)
+                old = middle - pts[child]
+                if abs(old) < 1e-9:
+                    old = pts[child] - pts[atom]
                 turn = (heading / abs(heading)) / (old / abs(old))
+                start = centre + BOND_LENGTH * heading
                 for idx in members:
-                    folded[idx] = centre + (pts[idx] - pts[atom]) * turn
+                    folded[idx] = start + (pts[idx] - pts[child]) * turn
                 continue
             folded[child] = centre + BOND_LENGTH * heading
             place(child, atom, heading, depth + 1, -flip if flip else 1)
@@ -217,6 +225,13 @@ def _folded_branches(
     axis = outward / abs(outward)
     place(attach, -1, axis, 0, 1)
     return folded
+
+
+def _self_clearance(points: list[complex]) -> float:
+    """Smallest distance between two atoms of one layout."""
+    return min(
+        (abs(a - b) for i, a in enumerate(points) for b in points[i + 1 :]), default=math.inf
+    )
 
 
 def _clearance(placed: list[complex], others: list[complex]) -> float:
@@ -2270,17 +2285,19 @@ class MolEditorModel:
             def crowding(placed: list[complex]) -> float:
                 return sum(1.0 / max(abs(p - o), 0.2) ** 2 for p in placed for o in others)
 
-            options = layouts(cmath.exp(1j * bond_angle))
+            folded = _folded_branches(fragment, pts, -inward)
+            base = pts
+            if folded is not None and _self_clearance(pts) < _CLEAR:
+                base = folded  # the depiction folds the group onto itself
+            options = layouts(cmath.exp(1j * bond_angle), 0.0, base)
             mirrored = crowding(options[0]) > crowding(options[1]) * 1.05
             placed = options[1] if mirrored else options[0]
             if angle is None and _clearance(placed, others) < _CLEAR:
                 # A crowded atom: turn the new bond a little until the group
-                # clears its neighbours (or, failing that, as far as it can).
-                # Last resort: fold the group's branches closer together
-                # (60° instead of 90° around a crowded S, Si or C).
-                shapes = [(0, pts)]
-                folded = _folded_branches(fragment, pts, -inward)
-                if folded is not None:
+                # clears its neighbours (or, failing that, as far as it can),
+                # also trying the group drawn as a compact fan.
+                shapes = [(0, base)]
+                if folded is not None and folded is not base:
                     shapes.append((90, folded))
                 turned = [
                     (abs(step) + abs(spin) + cost, index == 1, option)
