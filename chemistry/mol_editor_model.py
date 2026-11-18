@@ -1299,6 +1299,36 @@ class MolEditorModel:
             self._mol.RemoveAtom(idx)
         self._touch()
 
+    def attachment_points(self) -> list[int]:
+        """Atoms drawn as ``*``: where a custom group attaches."""
+        return [a.GetIdx() for a in self._mol.GetAtoms() if a.GetAtomicNum() == 0]
+
+    def toggle_attachment_point(self, atom_idx: int) -> int | None:
+        """Mark *atom_idx* as the atom a custom group attaches through.
+
+        The mark is a ``*`` atom bonded to it (a group has one, so any other
+        mark is removed). Clicking the ``*`` itself, or an atom that already
+        carries it, removes the mark. Returns the ``*`` atom, or ``None``.
+        """
+        atom = self._mol.GetAtomWithIdx(atom_idx)
+        marks = self.attachment_points()
+        own = [n.GetIdx() for n in atom.GetNeighbors() if n.GetAtomicNum() == 0]
+        if atom.GetAtomicNum() == 0 or own:
+            self.delete_atoms([atom_idx] if atom.GetAtomicNum() == 0 else own)
+            return None
+        dummy = Chem.Atom(0)
+        dummy.SetNoImplicit(True)
+        with self.compound():
+            idx = self._sprout(atom_idx, dummy, 1, STEREO_NONE, None)
+            if marks:
+                self._mol.BeginBatchEdit()
+                for mark in marks:
+                    self._mol.RemoveAtom(mark)
+                self._mol.CommitBatchEdit()
+                idx = self.attachment_points()[0]
+            self._touch()
+        return idx
+
     def delete_bond(self, bond_idx: int) -> None:
         a, b = self.bond_atoms(bond_idx)
         self._push_undo()

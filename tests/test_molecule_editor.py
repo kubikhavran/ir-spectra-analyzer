@@ -839,3 +839,58 @@ def test_imported_scaffold_is_placed_as_its_own_molecule(
     monkeypatch.setattr(module.QFileDialog, "getSaveFileName", lambda *a, **k: (str(out), ""))
     dlg._on_custom_export()
     assert json.loads(out.read_text(encoding="utf-8"))["groups"] == {"Lactam": "O=C1CCCN1"}
+
+
+@requires_rdkit
+def test_drawn_group_is_saved_with_its_attachment_point(
+    native_dialog, isolated_groups, monkeypatch
+):
+    from ui.dialogs import molecule_editor_dialog as module
+
+    dlg = native_dialog(initial_smiles="CC")
+    assert not dlg._group_draw_btn.isHidden()
+    monkeypatch.setattr(dlg, "_draw_group", lambda smiles="": "*CC1CCC(=O)N1")
+    monkeypatch.setattr(module.QInputDialog, "getText", lambda *a, **k: ("Lactam-CH2", True))
+    dlg._on_group_draw()
+    assert isolated_groups.groups() == {"Lactam-CH2": "*CC1CCC(=O)N1"}
+
+    # Redrawing a saved group keeps its name.
+    dlg._custom_list.setCurrentRow(0)
+    seen: list[str] = []
+
+    def redraw(smiles: str = "") -> str:
+        seen.append(smiles)
+        return "*OC1CCC(=O)N1"
+
+    monkeypatch.setattr(dlg, "_draw_group", redraw)
+    monkeypatch.setattr(module.QInputDialog, "getText", lambda *a, **k: (k.get("text", ""), True))
+    dlg._on_group_edit()
+    assert seen == ["*CC1CCC(=O)N1"]
+    assert isolated_groups.groups() == {"Lactam-CH2": "*OC1CCC(=O)N1"}
+
+
+@requires_rdkit
+def test_group_mode_marks_the_attachment_and_checks_the_drawing(
+    native_dialog, isolated_groups, monkeypatch
+):
+    from ui.dialogs import molecule_editor_dialog as module
+
+    warnings: list[str] = []
+    monkeypatch.setattr(module.QMessageBox, "warning", lambda *a, **k: warnings.append(a[2]))
+    dlg = native_dialog(initial_smiles="CCO", group_mode=True)
+    assert dlg._group_draw_btn.isHidden()
+    dlg._tool_buttons["attach"].click()
+    assert dlg._canvas.tool() == "attach"
+    model = dlg._canvas.model()
+    x, y = model.atom_position(2)
+    _click(dlg._canvas, dlg._canvas._to_screen(x, y).toPoint())
+    assert dlg._canvas.to_smiles() == "*OCC"
+    dlg._on_ok()
+    assert dlg.result() == module.QDialog.DialogCode.Accepted
+    assert dlg.smiles() == "*OCC"
+
+    two = native_dialog(initial_smiles="*CC*", group_mode=True)
+    assert len(two._canvas.model().attachment_points()) == 2
+    two._on_ok()
+    assert warnings
+    assert two.result() != module.QDialog.DialogCode.Accepted

@@ -49,6 +49,7 @@ from PySide6.QtWidgets import (
     QListWidget,
     QListWidgetItem,
     QMenu,
+    QMessageBox,
     QPushButton,
     QScrollArea,
     QSizePolicy,
@@ -279,6 +280,14 @@ def _tool_icon(tool: str) -> QIcon:
             wave = 2.2 * math.sin(2.0 * math.pi * 3.0 * t)
             path.lineTo(a.x() + dx * t + nx * wave, a.y() + dy * t + ny * wave)
         painter.drawPath(path)
+    elif tool == "attach":
+        painter.drawLine(QPointF(4, 20), QPointF(12, 12))
+        font = painter.font()
+        font.setPixelSize(15)
+        font.setBold(True)
+        painter.setFont(font)
+        painter.setPen(QColor(theme.ACCENT))
+        painter.drawText(QRectF(10, 0, 14, 16), Qt.AlignmentFlag.AlignCenter, "*")
     elif tool in ("rotate_left", "rotate_right"):
         painter.drawArc(
             QRectF(5, 5, 14, 14), 30 * 16 if tool == "rotate_left" else 150 * 16, 270 * 16
@@ -430,9 +439,20 @@ class MoleculeEditorDialog(QDialog):
     Tab 2 — SMILES: text input with live RDKit preview.
     """
 
-    def __init__(self, initial_smiles: str = "", initial_mol_block: str = "", parent=None) -> None:
+    def __init__(
+        self,
+        initial_smiles: str = "",
+        initial_mol_block: str = "",
+        parent=None,
+        *,
+        group_mode: bool = False,
+    ) -> None:
         super().__init__(parent)
-        self.setWindowTitle(tr("Edit Molecular Structure"))
+        # Group mode: draw a custom group or building block for the Custom page.
+        self._group_mode = group_mode
+        self.setWindowTitle(
+            tr("Draw Custom Group") if group_mode else tr("Edit Molecular Structure")
+        )
         self.setMinimumSize(820, 560)
         self.resize(1000, 660)
 
@@ -516,6 +536,18 @@ class MoleculeEditorDialog(QDialog):
             self._palette_group.addButton(button)
             self._tool_buttons[tool] = button
             toolbar.addWidget(button)
+        if self._group_mode:
+            button = _palette_button(
+                tooltip=tr("Attachment point (*): click the atom the group attaches through")
+            )
+            button.setIcon(_tool_icon("attach"))
+            button.setIconSize(QSize(22, 22))
+            button.setFixedSize(34, 34)
+            button.setObjectName("molPaletteButton")
+            button.clicked.connect(lambda _checked=False: self._canvas.set_tool("attach"))
+            self._palette_group.addButton(button)
+            self._tool_buttons["attach"] = button
+            toolbar.addWidget(button)
 
         separator = QFrame()
         separator.setFrameShape(QFrame.Shape.VLine)
@@ -580,6 +612,17 @@ class MoleculeEditorDialog(QDialog):
         toolbar.addWidget(self._more_btn)
         toolbar.addStretch(1)
         vbox.addLayout(toolbar)
+        if self._group_mode:
+            guide = QLabel(
+                tr(
+                    "Draw the group. Use the * tool to mark the atom it attaches through; "
+                    "without * it is saved as a whole building block placed on its own."
+                )
+            )
+            guide.setObjectName("molecule_group_guide")
+            guide.setWordWrap(True)
+            guide.setStyleSheet(theme.ACCENT_CARD_STYLE)
+            vbox.addWidget(guide)
 
         # ── Body: rings & groups | canvas | elements ───────────────────
         body = QHBoxLayout()
@@ -785,6 +828,19 @@ class MoleculeEditorDialog(QDialog):
             button.setEnabled(False)
             row.addWidget(button)
         vbox.addLayout(row)
+
+        draw_row = QHBoxLayout()
+        draw_row.setSpacing(4)
+        self._group_draw_btn = QPushButton(tr("Draw new…"))
+        self._group_draw_btn.setToolTip(tr("Draw a group or building block and save it"))
+        self._group_draw_btn.clicked.connect(self._on_group_draw)
+        self._group_edit_btn = QPushButton(tr("Edit drawing…"))
+        self._group_edit_btn.setToolTip(tr("Redraw the selected saved group"))
+        self._group_edit_btn.clicked.connect(self._on_group_edit)
+        for button in (self._group_draw_btn, self._group_edit_btn):
+            button.setVisible(not self._group_mode)
+            draw_row.addWidget(button)
+        vbox.addLayout(draw_row)
 
         vbox.addSpacing(6)
         vbox.addWidget(_section_label(tr("Saved groups")))
@@ -1097,6 +1153,44 @@ class MoleculeEditorDialog(QDialog):
         self._canvas.begin_placement(fragment, item.text(), sticky=True)
         self._canvas.setFocus(Qt.FocusReason.OtherFocusReason)
 
+    def _draw_group(self, smiles: str = "") -> str | None:
+        """Open the editor in group mode; the drawn SMILES, or ``None`` if cancelled."""
+        dialog = MoleculeEditorDialog(initial_smiles=smiles, parent=self, group_mode=True)
+        if dialog.exec() != QDialog.DialogCode.Accepted:
+            return None
+        return dialog.smiles()
+
+    def _store_drawn_group(self, smiles: str, default_name: str) -> bool:
+        fragment = fragment_from_smiles(smiles, label=default_name)
+        if fragment is None:
+            self._group_status.setText(tr("Draw one structure with at most one * attachment point"))
+            return False
+        name = self._ask_group_name(default_name)
+        if not name or self._group_store is None:
+            return False
+        try:
+            self._group_store.save(name, smiles)
+        except (OSError, ValueError):
+            self._group_status.setText(tr("The group could not be saved"))
+            return False
+        self._refresh_custom_groups()
+        self._group_status.setText(tr("Saved “{name}”").format(name=name))
+        return True
+
+    def _on_group_draw(self) -> None:
+        smiles = self._draw_group()
+        if smiles:
+            self._store_drawn_group(smiles, "")
+
+    def _on_group_edit(self) -> None:
+        item = self._custom_list.currentItem()
+        if item is None:
+            self._group_status.setText(tr("Select a saved group to redraw"))
+            return
+        smiles = self._draw_group(str(item.data(Qt.ItemDataRole.UserRole)))
+        if smiles:
+            self._store_drawn_group(smiles, item.text())
+
     def _on_custom_import(self) -> None:
         if self._group_store is None:
             return
@@ -1298,6 +1392,8 @@ class MoleculeEditorDialog(QDialog):
 
     def _on_ok(self) -> None:
         """Collect the structure from the active tab and accept the dialog."""
+        if self._group_mode and not self._group_drawing_is_valid():
+            return
         if self._tabs.currentIndex() == 0:
             if self._canvas_modified:
                 self._accepted_smiles = self._canvas.to_smiles()
@@ -1329,6 +1425,23 @@ class MoleculeEditorDialog(QDialog):
                     self._canvas_mol_block = ""
                 self._canvas_png_bytes = b""
         self.accept()
+
+    def _group_drawing_is_valid(self) -> bool:
+        """A drawn group needs atoms, one connected structure and at most one *."""
+        if self._tabs.currentIndex() != 0:
+            return True  # the SMILES tab is validated like any structure
+        model = self._canvas.model()
+        problem = ""
+        if model.atom_count == 0:
+            problem = tr("Draw the group first")
+        elif len(model.attachment_points()) > 1:
+            problem = tr("A group attaches through one atom: keep a single *")
+        elif "." in model.to_smiles():
+            problem = tr("Draw one connected structure")
+        if problem:
+            QMessageBox.warning(self, tr("Draw Custom Group"), problem)
+            return False
+        return True
 
     def _on_clear(self) -> None:
         """Clear the structure in the active tab."""
