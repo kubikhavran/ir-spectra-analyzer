@@ -164,6 +164,7 @@ TOOLS: tuple[str, ...] = (
     "atom",
     "ring",
     "group",
+    "attach",  # mark where a custom group attaches (a * atom)
 )
 _BOND_TOOLS: dict[str, tuple[int, str]] = {
     "bond_single": (1, STEREO_NONE),
@@ -1836,6 +1837,9 @@ class MoleculeCanvas(QWidget):
                 "group": tr(
                     "Click an atom to attach {group}; drag from it to choose the direction"
                 ).format(group=self._group_key),
+                "attach": tr(
+                    "Click the atom the group attaches through (adds *); click again to remove"
+                ),
             }
             hint = hints.get(self._tool, "")
         if hint != self._hint:
@@ -2078,6 +2082,10 @@ class MoleculeCanvas(QWidget):
             if atom is None:
                 return
             model.attach_functional_group(atom, self._group_key)
+        elif tool == "attach":
+            if atom is None:
+                return
+            model.toggle_attachment_point(atom)
         self._after_edit()
 
     def _finish_drag(self, drag: _Drag, point: QPointF) -> None:

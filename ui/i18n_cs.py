@@ -1010,6 +1010,36 @@ CZECH_TEXTS: dict[str, str] = {
     "Tetrazole": "Tetrazol",
     "Indane": "Indan",
     "Biphenyl": "Bifenyl",
+    "Light spectrum background in dark mode": "Světlé pozadí spektra v tmavém režimu",
+    "Draw Custom Group": "Nakreslit vlastní skupinu",
+    "Attachment point (*): click the atom the group attaches through": (
+        "Bod napojení (*): klikněte na atom, přes který se skupina napojuje"
+    ),
+    "Draw the group. Use the * tool to mark the atom it attaches through; "
+    "without * it is saved as a whole building block placed on its own.": (
+        "Nakreslete skupinu. Nástrojem * označte atom, přes který se napojuje; "
+        "bez * se uloží jako celý stavební blok vkládaný samostatně."
+    ),
+    "Draw new…": "Nakreslit novou…",
+    "Draw a group or building block and save it": "Nakreslit skupinu nebo stavební blok a uložit ji",
+    "Edit drawing…": "Upravit kresbu…",
+    "Redraw the selected saved group": "Překreslit vybranou uloženou skupinu",
+    "Draw one structure with at most one * attachment point": (
+        "Nakreslete jednu strukturu s nejvýše jedním bodem napojení *"
+    ),
+    "Saved “{name}”": "Uloženo „{name}“",
+    "Select a saved group to redraw": "Vyberte uloženou skupinu k překreslení",
+    "Draw the group first": "Nejdříve nakreslete skupinu",
+    "A group attaches through one atom: keep a single *": (
+        "Skupina se napojuje přes jeden atom: ponechte jediné *"
+    ),
+    "Draw one connected structure": "Nakreslete jednu souvislou strukturu",
+    "Click the atom the group attaches through (adds *); click again to remove": (
+        "Klikněte na atom, přes který se skupina napojuje (přidá *); dalším kliknutím se odebere"
+    ),
+    "Keep the spectrum white with black axes while the rest of the window is dark": (
+        "Spektrum zůstane bílé s černými osami, zatímco zbytek okna je tmavý"
+    ),
     "Import…": "Importovat…",
     "Export…": "Exportovat…",
     "Add the groups from a group file (.json)": "Přidat skupiny ze souboru skupin (.json)",

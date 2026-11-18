@@ -1184,3 +1184,16 @@ def test_new_heteroaromatic_templates_and_fusion():
     fused = MolEditorModel.from_smiles("c1ccccc1")
     fused.add_ring_template("imidazole", target_bond_idx=0)
     assert fused.to_smiles() == _canon("c1ccc2[nH]cnc2c1")
+
+
+def test_attachment_point_toggles_and_stays_single():
+    model = MolEditorModel.from_smiles("CCO")
+    model.toggle_attachment_point(2)
+    assert model.to_smiles() == "*OCC"
+    model.toggle_attachment_point(0)  # moves the mark: a group has one
+    assert model.to_smiles() == "*CCO"
+    assert len(model.attachment_points()) == 1
+    model.toggle_attachment_point(model.attachment_points()[0])  # click the * itself
+    assert model.to_smiles() == "CCO"
+    model.undo()
+    assert model.to_smiles() == "*CCO"

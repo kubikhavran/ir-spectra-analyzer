@@ -138,7 +138,7 @@ class _PresetDelegate(QStyledItemDelegate):
                     QRect(rect.left() + self._PADDING, top, side, side), QColor(swatch)
                 )
                 text_rect = text_rect.adjusted(side + 6, 0, 0, 0)
-            painter.setPen(QColor(theme.TEXT_MUTED))
+            painter.setPen(QColor(theme.TEXT))
             painter.drawText(
                 text_rect,
                 Qt.AlignmentFlag.AlignVCenter | Qt.AlignmentFlag.AlignLeft,

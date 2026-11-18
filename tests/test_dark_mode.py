@@ -180,8 +180,17 @@ def test_appearance_menu_stores_the_choice(qtbot, monkeypatch) -> None:
     monkeypatch.setattr(
         "ui.main_window.QMessageBox.information", lambda *args, **kwargs: shown.append(args[2])
     )
-    actions = {action.text(): action for action in window._appearance_menu.actions()}
-    assert set(actions) == {"Follow system", "Light", "Dark"}
+    actions = {
+        action.text(): action
+        for action in window._appearance_menu.actions()
+        if not action.isSeparator()
+    }
+    assert set(actions) == {
+        "Follow system",
+        "Light",
+        "Dark",
+        "Light spectrum background in dark mode",
+    }
     assert actions["Dark"].isChecked()
     assert window._appearance_menu.menuAction() in window._view_menu.actions()
 
@@ -191,3 +200,53 @@ def test_appearance_menu_stores_the_choice(qtbot, monkeypatch) -> None:
     assert "next time" in shown[0]
     actions["Follow system"].trigger()
     assert window._settings.stored["appearance"] == "system"
+
+
+def test_dark_mode_can_keep_a_light_spectrum_plot() -> None:
+    try:
+        theme.set_mode(theme.DARK_MODE, light_plot=True)
+        assert theme.light_plot()
+        for key in theme.PLOT_KEYS:
+            assert getattr(theme, key) == theme.LIGHT[key]
+        assert theme.TEXT == theme.DARK["TEXT"]
+        assert theme.SURFACE == theme.DARK["SURFACE"]
+        # The light appearance is unaffected, and the choice can be dropped.
+        theme.set_mode(theme.LIGHT_MODE)
+        assert theme.PLOT_BG == theme.LIGHT["PLOT_BG"]
+        theme.set_mode(theme.DARK_MODE, light_plot=False)
+        assert theme.PLOT_BG == theme.DARK["PLOT_BG"]
+    finally:
+        theme.set_mode(theme.LIGHT_MODE, light_plot=False)
+
+
+def test_dark_text_is_clearly_readable() -> None:
+    surface = _luminance(theme.DARK["SURFACE"])
+    header = _luminance(theme.DARK["HEADER"])
+    for key, minimum in (("TEXT", 0.85), ("TEXT_MUTED", 0.55), ("TEXT_FAINT", 0.3)):
+        assert _luminance(theme.DARK[key]) >= minimum, key
+        assert _luminance(theme.DARK[key]) > max(surface, header) + 0.2, key
+
+
+def test_light_plot_menu_item_stores_the_choice(qtbot, monkeypatch, dark) -> None:
+    from ui.main_window import MainWindow
+
+    db = MagicMock()
+    db.get_vibration_presets.return_value = []
+    window = MainWindow(db=db, settings=_settings())
+
+    def _discard_changes(closing: MainWindow) -> None:
+        closing._non_undo_dirty = False
+        closing._undo_stack.setClean()
+
+    qtbot.addWidget(window, before_close_func=_discard_changes)
+    shown: list[str] = []
+    monkeypatch.setattr(
+        "ui.main_window.QMessageBox.information", lambda *args, **kwargs: shown.append(args[2])
+    )
+    action = window._light_plot_action
+    assert not action.isChecked()
+    action.trigger()
+    assert window._settings.stored[theme.LIGHT_PLOT_SETTING] is True
+    assert shown
+    action.trigger()
+    assert window._settings.stored[theme.LIGHT_PLOT_SETTING] is False

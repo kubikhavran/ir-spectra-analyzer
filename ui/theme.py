@@ -89,9 +89,11 @@ DARK: dict[str, str] = {
     "ACCENT": "#3A86D0",
     "ACCENT_DARK": "#9CCBF5",
     "ACCENT_SOFT": "#1F3A56",
-    "TEXT": "#E3E8EE",
-    "TEXT_MUTED": "#A7B2BF",
-    "TEXT_FAINT": "#6F7B89",
+    # Text kept bright on purpose: thin UI fonts on a dark background read
+    # weaker than the contrast ratio suggests.
+    "TEXT": "#F1F4F8",
+    "TEXT_MUTED": "#C4CDD7",
+    "TEXT_FAINT": "#919DAB",
     "BORDER": "#3A4552",
     "BORDER_STRONG": "#56626F",
     "WINDOW": "#1B2027",
@@ -118,7 +120,7 @@ DARK: dict[str, str] = {
     "STRENGTH_M_BG": "#45371A",
     "STRENGTH_M_FG": "#F0C36B",
     "STRENGTH_W_BG": "#2C3540",
-    "STRENGTH_W_FG": "#A7B2BF",
+    "STRENGTH_W_FG": "#C4CDD7",
     "ON_ACCENT": "#FFFFFF",
     "ON_ACCENT_MUTED": "#DCE9F6",
     "TOOLTIP_BG": "#2C3540",
@@ -148,6 +150,21 @@ APPEARANCES: tuple[tuple[str, str], ...] = (
 ENV_VAR = "IR_SPECTRA_APPEARANCE"
 
 _mode = LIGHT_MODE
+_light_plot = False
+
+#: Colours of the spectrum plot. With ``light_plot`` the dark appearance keeps
+#: these from the light palette: a white plot in an otherwise dark window.
+PLOT_KEYS: tuple[str, ...] = (
+    "PLOT_BG",
+    "PLOT_FG",
+    "PLOT_LEADER",
+    "REGION_CONFIRMED",
+    "REGION_EXPECTED",
+    "REGION_MISSING",
+    "REGION_VIBRATION",
+)
+#: Setting that keeps the spectrum plot light in the dark appearance.
+LIGHT_PLOT_SETTING = "light_plot_in_dark"
 
 # The active palette, as module constants (``set_mode`` swaps them).
 ACCENT = LIGHT["ACCENT"]
@@ -421,16 +438,26 @@ def is_dark() -> bool:
     return _mode == DARK_MODE
 
 
-def set_mode(appearance: str) -> str:
+def light_plot() -> bool:
+    """Whether the spectrum plot stays light in the dark appearance."""
+    return _light_plot
+
+
+def set_mode(appearance: str, *, light_plot: bool | None = None) -> str:
     """Switch every colour constant to the light or dark palette.
 
-    Call it before any window is built (the main window, panels and
-    dialogs read the constants when they are created). Returns the mode
-    actually used.
+    *light_plot* keeps the spectrum plot light in the dark appearance
+    (``None`` leaves the current choice). Call it before any window is built
+    (the main window, panels and dialogs read the constants when they are
+    created). Returns the mode actually used.
     """
-    global _mode
+    global _mode, _light_plot
+    if light_plot is not None:
+        _light_plot = bool(light_plot)
     chosen = DARK_MODE if appearance == DARK_MODE else LIGHT_MODE
     globals().update(DARK if chosen == DARK_MODE else LIGHT)
+    if chosen == DARK_MODE and _light_plot:
+        globals().update({key: LIGHT[key] for key in PLOT_KEYS})
     _mode = chosen
     _build_styles()
     return chosen

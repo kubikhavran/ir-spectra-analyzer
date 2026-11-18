@@ -37,7 +37,7 @@ def controller(tmp_path, db, monkeypatch):
     for window in app.windows:
         window.close_for_rebuild()
     i18n.set_language(i18n.ENGLISH)
-    theme.set_mode(theme.LIGHT_MODE)
+    theme.set_mode(theme.LIGHT_MODE, light_plot=False)
     instance = QApplication.instance()
     if isinstance(instance, QApplication):
         theme.apply_theme(instance)
@@ -117,6 +117,21 @@ def test_appearance_switches_at_once(qtbot, controller) -> None:
     background = rebuilt._spectrum_widget._plot_widget.backgroundBrush().color().name().upper()
     assert background == theme.LIGHT["PLOT_BG"]
     assert rebuilt._project is window._project
+
+
+def test_light_plot_in_dark_mode_switches_at_once(qtbot, controller) -> None:
+    theme.set_mode(theme.DARK_MODE)
+    window = controller.new_window()
+    window._apply_project_to_ui(_project())
+
+    window._light_plot_action.trigger()
+    qtbot.waitUntil(lambda: len(controller.windows) == 1 and controller.windows[0] is not window)
+
+    assert theme.mode() == theme.DARK_MODE
+    rebuilt = controller.windows[0]
+    background = rebuilt._spectrum_widget._plot_widget.backgroundBrush().color().name().upper()
+    assert background == theme.LIGHT["PLOT_BG"]
+    assert rebuilt._light_plot_action.isChecked()
 
 
 def test_switch_waits_while_a_reference_search_runs(qtbot, controller, monkeypatch) -> None:

@@ -113,7 +113,10 @@ def main() -> None:
     # Pick light or dark colours before any window or panel is built.
     appearance_settings = Settings()
     appearance_settings.load()
-    set_mode(resolve_mode(appearance_settings.get("appearance")))
+    set_mode(
+        resolve_mode(appearance_settings.get("appearance")),
+        light_plot=bool(appearance_settings.get("light_plot_in_dark")),
+    )
     apply_theme(app)
 
     app_icon = _load_app_icon()
