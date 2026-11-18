@@ -99,12 +99,27 @@ _RING_BUTTONS: tuple[tuple[str, str], ...] = (
     ("naphthalene", "Naphthalene"),
     ("pyridine", "Pyridine"),
     ("pyrimidine", "Pyrimidine"),
+    ("pyrazine", "Pyrazine"),
+    ("pyridone", "2-Pyridone (attached through N)"),
     ("furan", "Furan"),
     ("thiophene", "Thiophene"),
     ("pyrrole", "Pyrrole"),
     ("imidazole", "Imidazole"),
+    ("pyrazole", "Pyrazole"),
+    ("oxazole", "Oxazole"),
+    ("isoxazole", "Isoxazole"),
+    ("thiazole", "Thiazole"),
+    ("triazole_123", "1,2,3-Triazole"),
+    ("triazole_124", "1,2,4-Triazole"),
+    ("tetrazole", "Tetrazole"),
     ("indole", "Indole"),
     ("quinoline", "Quinoline"),
+    ("indane", "Indane"),
+    ("biphenyl", "Biphenyl"),
+    ("benzisoxazole", "1,2-Benzisoxazole"),
+    ("benzimidazole", "Benzimidazole"),
+    ("benzodioxole", "1,3-Benzodioxole"),
+    ("pyrene", "Pyrene"),
 )
 # Saturated O/N rings, chairs and sugars (the building blocks of carbohydrates).
 _HETEROCYCLE_BUTTONS: tuple[tuple[str, str], ...] = (
@@ -114,6 +129,11 @@ _HETEROCYCLE_BUTTONS: tuple[tuple[str, str], ...] = (
     ("piperidine", "Piperidine"),
     ("morpholine", "Morpholine"),
     ("piperazine", "Piperazine"),
+    ("pyrrolidone", "2-Pyrrolidone (γ-lactam, attached through N)"),
+    ("pyrrolidine", "Pyrrolidine"),
+    ("thiazolidine", "Thiazolidine"),
+    ("oxazolidinone", "2-Oxazolidinone (attached through N)"),
+    ("steroid", "Steroid skeleton (gonane, attached at C3)"),
     ("chair", "Cyclohexane chair"),
     ("oxane_chair", "Pyranose chair (oxane)"),
     ("beta_glucopyranose", "β-D-Glucopyranose (click an OH or atom to make a glycoside)"),
@@ -135,6 +155,25 @@ _GROUP_BUTTONS: tuple[tuple[str, str], ...] = (
     ("-Ph", "-Ph"),
     ("-Ac", "-Ac"),
     ("-Boc", "-Boc"),
+    ("-OMe", "-OMe"),
+    ("-OAc", "-OAc"),
+    ("-tBu", "-tBu"),
+    ("-OtBu", "-OtBu"),
+    ("-NHAc", "-NHAc"),
+    ("-NHBoc", "-NHBoc"),
+    ("-N3", "-N₃"),
+    ("-SO3-", "-SO₃⁻"),
+    ("-OTBS", "-OTBS"),
+    ("-OTIPS", "-OTIPS"),
+    ("-OEt", "-OEt"),
+    ("-COOEt", "-COOEt"),
+    ("-NEt2", "-NEt₂"),
+    ("-Piv", "-Piv"),
+    ("-OPiv", "-OPiv"),
+    ("-OSO3H", "-OSO₃H"),
+    ("-Ts", "-Ts"),
+    ("-NHTs", "-NHTs"),
+    ("-TIPS", "-TIPS"),
 )
 _ELEMENT_BUTTONS: tuple[str, ...] = (
     "C",
@@ -756,6 +795,17 @@ class MoleculeEditorDialog(QDialog):
         self._custom_remove_btn = QPushButton(tr("Remove"))
         self._custom_remove_btn.clicked.connect(self._on_custom_remove)
         vbox.addWidget(self._custom_remove_btn)
+        transfer = QHBoxLayout()
+        transfer.setSpacing(4)
+        import_btn = QPushButton(tr("Import…"))
+        import_btn.setToolTip(tr("Add the groups from a group file (.json)"))
+        import_btn.clicked.connect(self._on_custom_import)
+        export_btn = QPushButton(tr("Export…"))
+        export_btn.setToolTip(tr("Save all saved groups to a file to use on another computer"))
+        export_btn.clicked.connect(self._on_custom_export)
+        transfer.addWidget(import_btn)
+        transfer.addWidget(export_btn)
+        vbox.addLayout(transfer)
         tip = QLabel(tr("Tip: select atoms, right-click and choose Save as custom group."))
         tip.setWordWrap(True)
         tip.setStyleSheet(theme.CAPTION_STYLE)
@@ -1038,11 +1088,48 @@ class MoleculeEditorDialog(QDialog):
         self._store_group(name, fragment)
 
     def _on_custom_item_clicked(self, item: QListWidgetItem) -> None:
-        fragment = fragment_from_smiles(str(item.data(Qt.ItemDataRole.UserRole)), label=item.text())
+        smiles = str(item.data(Qt.ItemDataRole.UserRole))
+        fragment = fragment_from_smiles(smiles, label=item.text())
         if fragment is None:
             return
+        if "*" not in smiles:
+            fragment.attach = None  # a whole scaffold: placed as its own molecule
         self._canvas.begin_placement(fragment, item.text(), sticky=True)
         self._canvas.setFocus(Qt.FocusReason.OtherFocusReason)
+
+    def _on_custom_import(self) -> None:
+        if self._group_store is None:
+            return
+        path, _ = QFileDialog.getOpenFileName(
+            self, tr("Import Groups"), "", tr("Group files (*.json);;All files (*)")
+        )
+        if not path:
+            return
+        try:
+            imported, skipped = self._group_store.import_from(path)
+        except (OSError, ValueError):
+            self._group_status.setText(tr("The file is not a group file"))
+            return
+        self._refresh_custom_groups()
+        message = tr("{n} groups imported").format(n=imported)
+        if skipped:
+            message += " · " + tr("skipped: {names}").format(names=", ".join(skipped))
+        self._group_status.setText(message)
+
+    def _on_custom_export(self) -> None:
+        if self._group_store is None:
+            return
+        path, _ = QFileDialog.getSaveFileName(
+            self, tr("Export Groups"), "groups.json", tr("Group files (*.json)")
+        )
+        if not path:
+            return
+        try:
+            count = self._group_store.export_to(path)
+        except OSError:
+            self._group_status.setText(tr("The groups could not be saved"))
+            return
+        self._group_status.setText(tr("{n} groups exported").format(n=count))
 
     def _on_custom_remove(self) -> None:
         item = self._custom_list.currentItem()

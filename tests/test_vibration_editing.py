@@ -40,7 +40,7 @@ def test_reopening_the_database_keeps_edits_and_removals(tmp_path) -> None:
     assert "ν(OH) free" in names
     assert "ν(OH) –OH isolated" not in names  # the edit was not undone
     assert "ν(OH) H₂O crystal" not in names  # the removal was not undone
-    assert sum(1 for p in presets if p["is_builtin"] == 1) == 346
+    assert sum(1 for p in presets if p["is_builtin"] == 1) == 333
     kept = next(p for p in presets if p["name"] == "ν(OH) free")
     assert kept["id"] == edited["id"]
     assert (kept["typical_range_min"], kept["typical_range_max"]) == (3590.0, 3660.0)
@@ -70,7 +70,7 @@ def test_a_database_from_before_editing_gets_the_current_library(tmp_path) -> No
     upgraded.initialize()
     presets = upgraded.get_vibration_presets()
     builtin = [p for p in presets if p["is_builtin"] == 1]
-    assert len(builtin) == 347
+    assert len(builtin) == 334
     assert all(p["seed_name"] == p["name"] for p in builtin)
     assert any(p["name"] == "custom kept" and p["is_builtin"] == 0 for p in presets)
 
@@ -160,7 +160,7 @@ def test_reset_restores_builtins_and_leaves_custom_alone(tmp_path) -> None:
     assert restored["category"] == "stretch"
     assert _builtin(db, "ν(OH) H₂O crystal")["id"] == removed["id"]
     presets = db.get_vibration_presets()
-    assert sum(1 for p in presets if p["is_builtin"] == 1) == 347
+    assert sum(1 for p in presets if p["is_builtin"] == 1) == 334
     assert any(p["id"] == custom_id and p["name"] == "my band" for p in presets)
     assert db.reset_builtin_vibration_presets() == 0  # nothing left to restore
 
@@ -170,6 +170,7 @@ def test_reset_restores_builtins_and_leaves_custom_alone(tmp_path) -> None:
 from unittest.mock import MagicMock  # noqa: E402
 
 import numpy as np  # noqa: E402
+from PySide6.QtCore import Qt  # noqa: E402
 from PySide6.QtWidgets import QDialog, QMessageBox  # noqa: E402
 
 from core.peak import Peak  # noqa: E402
@@ -334,3 +335,29 @@ def test_f2_and_the_context_menu_offer_editing_for_builtins(qtbot) -> None:
     panel.set_presets([VibrationPreset("ν(OH)", 3200.0, 3600.0, db_id=1, is_builtin=True)])
     keys = {sc.key().toString() for sc in panel._list.findChildren(QShortcut)}
     assert "F2" in keys
+
+
+def test_range_slider_and_number_boxes_stay_in_sync(qtbot) -> None:
+    from PySide6.QtCore import QPoint
+
+    dialog = _VibrationEditorDialog()
+    qtbot.addWidget(dialog)
+    dialog.resize(600, 300)
+    dialog.show()
+    slider = dialog._range_slider
+    assert slider.values() == (1000.0, 1200.0)
+
+    dialog._rmax_spin.setValue(1750.0)
+    dialog._rmin_spin.setValue(1650.0)
+    assert slider.values() == (1650.0, 1750.0)
+
+    # Moving the whole window to higher wavenumbers widens before narrowing.
+    slider.range_changed.emit(2900.0, 3000.0)
+    assert (dialog._rmin_spin.value(), dialog._rmax_spin.value()) == (2900.0, 3000.0)
+
+    # Clicking the track left of the window (higher wavenumbers) moves the max end.
+    x = round(slider._x_of(3500.0))
+    qtbot.mouseClick(slider, Qt.MouseButton.LeftButton, pos=QPoint(x, 12))
+    assert dialog._rmin_spin.value() == 2900.0
+    assert abs(dialog._rmax_spin.value() - 3500.0) <= 25.0
+    assert dialog.values().range_max == dialog._rmax_spin.value()

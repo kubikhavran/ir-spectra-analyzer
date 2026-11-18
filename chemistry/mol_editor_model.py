@@ -22,7 +22,7 @@ import cmath
 import math
 import re
 from collections import deque
-from collections.abc import Iterable, Iterator
+from collections.abc import Callable, Iterable, Iterator
 from contextlib import contextmanager
 from dataclasses import dataclass
 from functools import lru_cache
@@ -152,6 +152,88 @@ class _RingTemplate:
 _CHAIR = ((0.0, 0.0), (0.55, -0.9), (1.6, -0.65), (2.65, -0.95), (2.1, -0.05), (1.05, -0.3))
 _CHAIR_FRONT = ((0, 1), (1, 2), (2, 3))
 
+# A new atom closer than this to an existing one reads as an overlap.
+_CLEAR = 0.6 * BOND_LENGTH
+# Turns (degrees) of a new bond tried when the usual direction is crowded.
+_TURN_STEPS = (0, 15, -15, 30, -30, 45, -45, 60, -60)
+
+
+def _folded_branches(
+    fragment: Fragment, pts: list[complex], outward: complex
+) -> list[complex] | None:
+    """*pts* redrawn as a compact fan pointing along *outward*.
+
+    The attach atom's branches spread over 120° in front of it and deeper
+    branches over 60°, chains zig-zag, and ring systems keep their shape:
+    how a group is drawn on a crowded atom. ``None`` when the attach atom is
+    in a ring or has fewer than two branches.
+    """
+    if fragment.attach is None or abs(outward) < 1e-9:
+        return None
+    mol = fragment.mol
+    attach = fragment.attach
+    root = mol.GetAtomWithIdx(attach)
+    if root.IsInRing() or root.GetDegree() < 2:
+        return None
+    folded = list(pts)
+
+    def subtree(start: int, parent: int) -> set[int]:
+        members = {start}
+        queue = deque([start])
+        while queue:
+            current = queue.popleft()
+            for nbr in mol.GetAtomWithIdx(current).GetNeighbors():
+                idx = nbr.GetIdx()
+                if idx != parent and idx not in members:
+                    members.add(idx)
+                    queue.append(idx)
+        return members
+
+    def place(atom: int, parent: int, direction: complex, depth: int, flip: int) -> None:
+        children = [n.GetIdx() for n in mol.GetAtomWithIdx(atom).GetNeighbors()]
+        children = [c for c in children if c != parent]
+        if not children:
+            return
+        if len(children) == 1:
+            offsets = [0.0 if depth == 0 else 30.0 * flip]
+        else:
+            width = 120.0 if depth == 0 else 60.0
+            offsets = [-width / 2 + width * i / (len(children) - 1) for i in range(len(children))]
+        centre = folded[atom]
+        current = sorted(children, key=lambda c: cmath.phase((pts[c] - pts[atom]) / direction))
+        for child, offset in zip(current, offsets, strict=True):
+            heading = direction * cmath.exp(1j * math.radians(offset))
+            if mol.GetAtomWithIdx(child).IsInRing():
+                # A ring system keeps its drawn shape, turned onto the new bond.
+                members = subtree(child, atom)
+                old = pts[child] - pts[atom]
+                turn = (heading / abs(heading)) / (old / abs(old))
+                for idx in members:
+                    folded[idx] = centre + (pts[idx] - pts[atom]) * turn
+                continue
+            folded[child] = centre + BOND_LENGTH * heading
+            place(child, atom, heading, depth + 1, -flip if flip else 1)
+
+    axis = outward / abs(outward)
+    place(attach, -1, axis, 0, 1)
+    return folded
+
+
+def _clearance(placed: list[complex], others: list[complex]) -> float:
+    return min((abs(p - o) for p in placed for o in others), default=math.inf)
+
+
+def _least_clashing(
+    options: list[tuple[int, bool, list[complex]]],
+    others: list[complex],
+    crowding: Callable[[list[complex]], float],
+) -> tuple[int, bool, list[complex]]:
+    """The smallest turn that clears every atom, else the one that clears most."""
+    clear = [o for o in options if _clearance(o[2], others) >= _CLEAR]
+    if clear:
+        return min(clear, key=lambda o: (abs(o[0]), crowding(o[2])))
+    return max(options, key=lambda o: _clearance(o[2], others))
+
 
 RING_TEMPLATES: dict[str, _RingTemplate] = {
     "cyclopropane": _RingTemplate("C1CC1", 0, (0, 1), False),
@@ -163,15 +245,33 @@ RING_TEMPLATES: dict[str, _RingTemplate] = {
     # 4-pyridyl / 4-pyrimidinyl when attached.
     "pyridine": _RingTemplate("c1ccncc1", 0, (0, 1), True),
     "pyrimidine": _RingTemplate("c1ncncc1", 4, (4, 5), True),
+    "pyrazine": _RingTemplate("c1cnccn1", 0, (0, 1), True),
+    # 2-Pyridone attached through its N (N-substituted pyridones).
+    "pyridone": _RingTemplate("O=c1cccc[nH]1", 6, (3, 4), True),
     # 2-furyl / 2-thienyl / 2-pyrrolyl / 2-imidazolyl; fusion gives benzo-rings.
     "furan": _RingTemplate("c1ccco1", 0, (0, 1), True),
     "thiophene": _RingTemplate("c1cccs1", 0, (0, 1), True),
     "pyrrole": _RingTemplate("c1ccc[nH]1", 0, (0, 1), True),
     "imidazole": _RingTemplate("c1cnc[nH]1", 3, (0, 1), True),
+    "pyrazole": _RingTemplate("c1cc[nH]n1", 0, (0, 1), True),
+    "oxazole": _RingTemplate("c1cocn1", 3, (0, 1), True),
+    "isoxazole": _RingTemplate("c1cnoc1", 1, (0, 1), True),
+    "thiazole": _RingTemplate("c1cscn1", 3, (0, 1), True),
+    # 1,2,3-triazole attached at C4 (the "click" 1,4-substitution).
+    "triazole_123": _RingTemplate("c1c[nH]nn1", 0, (0, 1), True),
+    "triazole_124": _RingTemplate("c1nc[nH]n1", 0, (0, 1), True),
+    "tetrazole": _RingTemplate("c1nn[nH]n1", 0, (0, 1), True),
     # 1-naphthyl / 3-indolyl / 2-quinolyl when attached.
     "naphthalene": _RingTemplate("c1ccc2ccccc2c1", 9, (0, 1), True),
     "indole": _RingTemplate("c1ccc2[nH]ccc2c1", 6, (0, 1), True),
     "quinoline": _RingTemplate("c1ccc2ncccc2c1", 5, (0, 1), True),
+    "indane": _RingTemplate("C1Cc2ccccc2C1", 4, (4, 5), True),
+    # Biphenyl attached through the para position of one ring.
+    "biphenyl": _RingTemplate("c1ccc(cc1)-c1ccccc1", 0, (0, 1), True, fusable=False),
+    "benzisoxazole": _RingTemplate("c1ccc2oncc2c1", 6, (0, 1), True),
+    "benzimidazole": _RingTemplate("c1ccc2[nH]cnc2c1", 5, (0, 1), True),
+    "benzodioxole": _RingTemplate("c1ccc2c(c1)OCO2", 1, (0, 1), True),
+    "pyrene": _RingTemplate("c1cc2ccc3cccc4ccc(c1)c2c34", 0, (0, 1), True, fusable=False),
     # Saturated heterocycles: the ether rings sugars are built on, and amines.
     "oxane": _RingTemplate("C1CCOCC1", 0, (0, 1), False),
     "oxolane": _RingTemplate("C1CCOC1", 0, (0, 1), False),
@@ -179,6 +279,14 @@ RING_TEMPLATES: dict[str, _RingTemplate] = {
     "piperidine": _RingTemplate("N1CCCCC1", 0, (1, 2), False),
     "morpholine": _RingTemplate("N1CCOCC1", 0, (1, 2), False),
     "piperazine": _RingTemplate("N1CCNCC1", 0, (1, 2), False),
+    "pyrrolidine": _RingTemplate("N1CCCC1", 0, (1, 2), False),
+    "thiazolidine": _RingTemplate("N1CCSC1", 0, (1, 2), False),
+    # 2-Oxazolidinone attached through its N (Evans auxiliaries, linezolid).
+    "oxazolidinone": _RingTemplate("O=C1NCCO1", 2, (3, 4), False),
+    # Steroid skeleton (gonane), attached at C3.
+    "steroid": _RingTemplate("C1CCC2C(C1)CCC1C3CCCC3CCC21", 1, (0, 1), False, fusable=False),
+    # 2-Pyrrolidone (γ-lactam) attached through its N.
+    "pyrrolidone": _RingTemplate("O=C1CCCN1", 5, (2, 3), False),
     # Chair conformations; the oxane chair has O at the back, next to the
     # right-hand tip (C1 of a pyranose).
     "chair": _RingTemplate("C1CCCCC1", 3, (0, 1), False, _CHAIR, bold_bonds=_CHAIR_FRONT),
@@ -212,7 +320,30 @@ FUNCTIONAL_GROUPS: dict[str, str] = {
     "-Ph": "c1ccccc1",
     "-Ac": "C(C)=O",
     "-Boc": "C(=O)OC(C)(C)C",
+    "-OMe": "OC",
+    "-OAc": "OC(C)=O",
+    "-tBu": "C(C)(C)C",
+    "-OtBu": "OC(C)(C)C",
+    "-NHAc": "NC(C)=O",
+    "-NHBoc": "NC(=O)OC(C)(C)C",
+    "-N3": "N=[N+]=[N-]",
+    "-OTIPS": "O[Si](C(C)C)(C(C)C)C(C)C",
+    "-OTBS": "O[Si](C)(C)C(C)(C)C",
+    "-SO3-": "S(=O)(=O)[O-]",
+    "-OEt": "OCC",
+    "-COOEt": "C(=O)OCC",
+    "-NEt2": "N(CC)CC",
+    "-Piv": "C(=O)C(C)(C)C",
+    "-OPiv": "OC(=O)C(C)(C)C",
+    "-OSO3H": "OS(=O)(=O)O",
+    "-Ts": "S(=O)(=O)c1ccc(C)cc1",
+    "-NHTs": "NS(=O)(=O)c1ccc(C)cc1",
+    "-TIPS": "[Si](C(C)C)(C(C)C)C(C)C",
 }
+# Groups with three branches on one atom: placed with a computed layout.
+# Groups with a ring are placed the same way (atom-by-atom sprouting cannot
+# close a ring).
+_LAID_OUT_GROUPS = frozenset({"-OTIPS", "-OTBS", "-TIPS", "-Ts", "-NHTs"})
 
 
 @contextmanager
@@ -1027,17 +1158,18 @@ class MolEditorModel:
                 return _normalize(angles[0] + math.pi / 2)
             return _angle_of(-ux, -uy)
         ordered = sorted(_normalize(a) for a in angles)
-        best_gap = -1.0
-        best_mid = 0.0
+        gaps: list[tuple[float, float]] = []
         for i, start in enumerate(ordered):
             end = ordered[(i + 1) % len(ordered)]
             gap = (end - start) % (2 * math.pi)
             if gap == 0:
                 gap = 2 * math.pi
-            if gap > best_gap:
-                best_gap = gap
-                best_mid = start + gap / 2
-        return _normalize(best_mid)
+            gaps.append((gap, _normalize(start + gap / 2)))
+        best_gap = max(gap for gap, _mid in gaps)
+        # Equally wide gaps (a branched group being built): take the one
+        # that does not land on a neighbour's substituent.
+        widest = [mid for gap, mid in gaps if gap > best_gap - math.radians(1.0)]
+        return self._least_crowded(atom_idx, widest)
 
     def _least_crowded(self, atom_idx: int, candidates: list[float]) -> float:
         """Return the first candidate unless it lands on top of another atom."""
@@ -1536,6 +1668,25 @@ class MolEditorModel:
 
                 use_mirror = clash(mirrored) < clash(straight) / 1.001
                 placed = mirrored if use_mirror else straight
+                if _clearance(placed, others) < _CLEAR:
+                    # Crowded (an ortho neighbour, a carbonyl O next to the
+                    # attachment): turn the new bond a little.
+                    turned = []
+                    for step in _TURN_STEPS:
+                        turn = cmath.exp(1j * math.radians(step))
+                        pos = anchor + (attach_pos - anchor) * turn
+                        rot = rotation * turn
+                        option = [pos + (p - pts[t_a]) * rot for p in pts]
+                        axis_t = direction * turn
+                        turned.append((step, False, option))
+                        turned.append(
+                            (
+                                step,
+                                True,
+                                [pos + ((p - pos) / axis_t).conjugate() * axis_t for p in option],
+                            )
+                        )
+                    _step, use_mirror, placed = _least_clashing(turned, others, clash)
                 if use_mirror:
                     _swap_wedges(template)
                 if merged is not None:
@@ -1650,10 +1801,17 @@ class MolEditorModel:
                 assert phenyl is not None
                 return self.insert_fragment(phenyl, target_atom_idx=atom_idx, angle=angle)
             return self.add_ring_template("benzene", target_atom_idx=atom_idx)
+        if group_key in _LAID_OUT_GROUPS:
+            # Atom-by-atom sprouting crowds three branches on one atom into a
+            # ring; these groups are placed with a computed layout instead.
+            self._push_undo()
+            return self._insert_group_layout(atom_idx, group_key, angle)
         with _quiet_rdkit():
             fragment = Chem.MolFromSmiles(FUNCTIONAL_GROUPS[group_key])
         Chem.Kekulize(fragment, clearAromaticFlags=True)
         self._push_undo()
+        before = Chem.RWMol(self._mol)
+        existing_atoms = self.atom_count
         index_map: dict[int, int] = {}
         root = fragment.GetAtomWithIdx(0)
         index_map[0] = self._sprout(atom_idx, self._copy_fragment_atom(root), 1, STEREO_NONE, angle)
@@ -1679,8 +1837,33 @@ class MolEditorModel:
                     None,
                 )
                 queue.append(other)
+        new_atoms = [
+            complex(*self.atom_position(i)) for i in range(existing_atoms, self.atom_count)
+        ]
+        old_atoms = [
+            complex(*self.atom_position(i)) for i in range(existing_atoms) if i != atom_idx
+        ]
+        if (
+            any(idx < existing_atoms for idx in index_map.values())
+            or _clearance(new_atoms, old_atoms) < _CLEAR
+        ):
+            # On a crowded atom a sprouted branch landed on (or next to) an
+            # existing atom — CF₃ on a tertiary carbon used to close a
+            # cyclopropane: place the whole group with a computed layout.
+            self._set_mol(before)
+            return self._insert_group_layout(atom_idx, group_key, angle)
         self._touch()
         return [index_map[i] for i in range(fragment.GetNumAtoms())]
+
+    def _insert_group_layout(self, atom_idx: int, group_key: str, angle: float | None) -> list[int]:
+        """Insert a group as one laid-out fragment, within the current undo step."""
+        group = parse_group("*" + FUNCTIONAL_GROUPS[group_key])
+        assert group is not None
+        self._compound_depth += 1
+        try:
+            return self.insert_fragment(group, target_atom_idx=atom_idx, angle=angle)
+        finally:
+            self._compound_depth -= 1
 
     @staticmethod
     def _copy_fragment_atom(source: Chem.Atom) -> Chem.Atom:
@@ -2027,8 +2210,6 @@ class MolEditorModel:
                 if angle is not None
                 else self._sprout_direction(target_atom_idx)
             )
-            direction = cmath.exp(1j * bond_angle)
-            attach_pos = target + BOND_LENGTH * direction
             if fragment.anchor is not None:
                 inward = complex(*fragment.anchor) - attach
             else:
@@ -2036,27 +2217,51 @@ class MolEditorModel:
                 inward = -inward
             if abs(inward) < 1e-6:
                 inward = complex(-1, 0)
-            # The bond back to the target points along -direction.
-            rotation = (-direction) / (inward / abs(inward))
-            options = [
-                [attach_pos + (p - attach) * rotation for p in pts],
-                [
-                    attach_pos
-                    + ((p - attach).conjugate()) * (-direction) / (inward.conjugate() / abs(inward))
-                    for p in pts
-                ],
-            ]
             others = [
                 complex(*self.atom_position(i))
                 for i in range(self.atom_count)
                 if i != target_atom_idx
             ]
 
+            def layouts(
+                direction: complex, spin: float = 0.0, source: list[complex] = pts
+            ) -> list[list[complex]]:
+                # The bond back to the target points along -direction; *spin*
+                # (degrees) swings the group about its attach atom.
+                attach_pos = target + BOND_LENGTH * direction
+                swing = cmath.exp(1j * math.radians(spin))
+                rotation = (-direction) / (inward / abs(inward)) * swing
+                mirror = (-direction) / (inward.conjugate() / abs(inward)) * swing
+                return [
+                    [attach_pos + (p - attach) * rotation for p in source],
+                    [attach_pos + (p - attach).conjugate() * mirror for p in source],
+                ]
+
             def crowding(placed: list[complex]) -> float:
                 return sum(1.0 / max(abs(p - o), 0.2) ** 2 for p in placed for o in others)
 
+            options = layouts(cmath.exp(1j * bond_angle))
             mirrored = crowding(options[0]) > crowding(options[1]) * 1.05
             placed = options[1] if mirrored else options[0]
+            if angle is None and _clearance(placed, others) < _CLEAR:
+                # A crowded atom: turn the new bond a little until the group
+                # clears its neighbours (or, failing that, as far as it can).
+                # Last resort: fold the group's branches closer together
+                # (60° instead of 90° around a crowded S, Si or C).
+                shapes = [(0, pts)]
+                folded = _folded_branches(fragment, pts, -inward)
+                if folded is not None:
+                    shapes.append((90, folded))
+                turned = [
+                    (abs(step) + abs(spin) + cost, index == 1, option)
+                    for cost, shape in shapes
+                    for step in _TURN_STEPS
+                    for spin in (0, 30, -30)
+                    for index, option in enumerate(
+                        layouts(cmath.exp(1j * (bond_angle + math.radians(step))), spin, shape)
+                    )
+                ]
+                _step, mirrored, placed = _least_clashing(turned, others, crowding)
             self._last_fragment_mirrored = mirrored
         else:
             if position is None:

@@ -209,3 +209,65 @@ def test_abbreviated_smiles_from_older_projects_are_read() -> None:
     salt = _ids("NCCCN(CCCN)CC(=O)NC.[HCl].[HCl].[.6]")
     assert {"ammonium", "secondary_amide"} <= salt
     assert _ids("C[C@H]([OBn])CO") >= {"dialkyl_ether", "primary_alcohol"}
+
+
+@pytest.mark.parametrize(
+    ("ring_type", "motif"),
+    [
+        ("pyrazine", "pyrazine"),
+        ("pyridone", "pyridone"),
+        ("pyrazole", "pyrazole"),
+        ("oxazole", "oxazole"),
+        ("isoxazole", "isoxazole"),
+        ("thiazole", "thiazole"),
+        ("triazole_123", "triazole_123"),
+        ("triazole_124", "triazole_124"),
+        ("tetrazole", "tetrazole"),
+        ("quinoline", "quinoline"),
+        ("indane", "indane"),
+        ("biphenyl", "biphenyl"),
+        ("pyrrolidone", "gamma_lactam"),
+        ("benzisoxazole", "isoxazole"),
+        ("benzimidazole", "imidazole"),
+        ("benzodioxole", "acetal"),
+        ("pyrene", "polycyclic_aromatic"),
+        ("oxazolidinone", "carbamate"),
+    ],
+)
+def test_editor_ring_quick_picks_are_recognised(ring_type: str, motif: str) -> None:
+    from chemistry.mol_editor_model import MolEditorModel
+
+    model = MolEditorModel.from_smiles("CCCC")
+    model.add_ring_template(ring_type, target_atom_idx=3)
+    assert not model.invalid_atom_indices()
+    assert motif in {f.id for f in perceive_smiles(model.to_smiles())}
+
+
+@pytest.mark.parametrize(
+    ("group", "motifs"),
+    [
+        ("-OMe", {"methoxy"}),
+        ("-OAc", {"acetate"}),
+        ("-tBu", {"tert_butyl"}),
+        ("-OtBu", {"tert_butoxy"}),
+        ("-NHAc", {"secondary_amide"}),
+        ("-NHBoc", {"carbamate", "tert_butoxy"}),
+        ("-N3", {"azide"}),
+        ("-SO3-", {"sulfonate"}),
+        ("-OTBS", {"tbs", "silyl_ether"}),
+        ("-OTIPS", {"tips", "silyl_ether"}),
+        ("-TIPS", {"tips"}),
+        ("-Piv", {"tert_butyl"}),
+        ("-OSO3H", {"sulfate"}),
+        ("-NHTs", {"sulfonamide", "para_benzene"}),
+    ],
+)
+def test_editor_group_quick_picks_are_recognised(group: str, motifs: set[str]) -> None:
+    from chemistry.mol_editor_model import MolEditorModel
+
+    for start, atom in (("c1ccccc1", 0), ("CC(C)C", 1)):
+        model = MolEditorModel.from_smiles(start)
+        model.attach_functional_group(atom, group)
+        assert not model.invalid_atom_indices()
+        smiles = model.to_smiles()
+        assert motifs <= {f.id for f in perceive_smiles(smiles)}, smiles

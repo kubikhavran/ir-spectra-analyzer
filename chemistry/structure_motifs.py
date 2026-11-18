@@ -1144,15 +1144,7 @@ _LAB_VIBRATIONS: dict[str, tuple[str, ...]] = {
     "tert_butoxy": ("ν(O–C(CH₃)₃) t-Bu ester/Boc", "δs(CH₃) t-Bu doublet"),
     "acetate": ("νas(C–O) acetate ~1230", "νs(O–C–C) acetate ~1045", "δ(O–C=O) acetate ~605"),
     "tertiary_amide": ("ν(C–N) tert. amide ~1410",),
-    "gamma_lactam": (
-        "ν(NH) lactam cis-NH (2-pyrrolidone)",
-        "δ(NH) lactam cis-NH (2-pyrrolidone)",
-        "2-pyrrolidone ring ~1457",
-        "2-pyrrolidone ring ~1290",
-        "2-pyrrolidone ring ~1154",
-        "2-pyrrolidone ring ~888",
-        "2-pyrrolidone ring ~621",
-    ),
+    "gamma_lactam": ("ν(NH) lactam cis-NH (2-pyrrolidone)",),
     "pyridone": (
         "2-pyridone ring ~1359",
         "2-pyridone ring ~1326",
@@ -1166,7 +1158,6 @@ _LAB_VIBRATIONS: dict[str, tuple[str, ...]] = {
         "2-pyridone ring ~458",
     ),
     "quinoline": (
-        "ν(CH) quinoline",
         "quinoline ring ~1426",
         "quinoline ring ~1392",
         "quinoline ring ~1330",
@@ -1185,17 +1176,14 @@ _LAB_VIBRATIONS: dict[str, tuple[str, ...]] = {
         "pyridine ring ~826",
         "pyridine ring ~786",
         "pyridine ring ~711",
-        "pyridine ring ~664",
     ),
     "pyrazine": (
-        "pyrazine ring ~1576",
         "pyrazine ring ~1549",
         "pyrazine ring ~1416",
         "pyrazine ring ~1368",
         "pyrazine ring ~1216",
         "pyrazine ring ~1082",
         "pyrazine ring ~1003",
-        "pyrazine ring ~923",
         "pyrazine ring ~773",
         "pyrazine ring ~723",
         "pyrazine ring ~594",
@@ -1223,10 +1211,8 @@ _LAB_VIBRATIONS: dict[str, tuple[str, ...]] = {
         "biphenyl ring ~697",
     ),
     "polycyclic_aromatic": (
-        "ν(CH) naphthalene",
         "naphthalene ring ~1390",
         "naphthalene ring ~1365",
-        "naphthalene ring ~1285",
         "naphthalene ring ~1145",
         "naphthalene ring ~954",
         "naphthalene ring ~774",
@@ -1249,7 +1235,6 @@ _LAB_VIBRATIONS: dict[str, tuple[str, ...]] = {
         "comb. R–NH₃⁺ salt indicator ~2030",
         "δas(NH₃⁺) R–NH₃⁺",
         "δs(NH₃⁺) R–NH₃⁺",
-        "ρ(NH₃⁺) R–NH₃⁺",
     ),
 }
 MOTIFS = tuple(

@@ -161,3 +161,28 @@ def test_custom_group_store(tmp_path):
     assert reopened.remove("Pin")
     assert not reopened.remove("Pin")
     assert reopened.groups() == {}
+
+
+def test_custom_groups_export_and_import(tmp_path):
+    import json
+
+    from app.custom_groups import FILE_FORMAT, CustomGroupStore
+    from storage.settings import Settings
+
+    source = CustomGroupStore(Settings(tmp_path / "a.json"))
+    source.save("Pin", "*B1OC(C)(C)C(C)(C)O1")
+    source.save("Core", "O=C1CCCN1")
+    file = tmp_path / "groups.json"
+    assert source.export_to(file) == 2
+    assert json.loads(file.read_text(encoding="utf-8"))["format"] == FILE_FORMAT
+
+    target = CustomGroupStore(Settings(tmp_path / "b.json"))
+    target.save("Pin", "*C")  # replaced by the imported one
+    assert target.import_from(file) == (2, [])
+    assert target.groups() == {"Pin": "*B1OC(C)(C)C(C)(C)O1", "Core": "O=C1CCCN1"}
+
+    file.write_text(json.dumps({"groups": {"Bad": "not smiles(", "Ok": "*CCO"}}), "utf-8")
+    assert target.import_from(file) == (1, ["Bad"])
+    file.write_text("[1, 2]", encoding="utf-8")
+    with pytest.raises(ValueError, match="custom-group file"):
+        target.import_from(file)

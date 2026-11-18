@@ -14,7 +14,7 @@ def test_database_seeds_expanded_builtin_vibration_presets():
     presets = database.get_vibration_presets()
     builtin_names = {preset["name"] for preset in presets if preset["is_builtin"] == 1}
 
-    assert len(builtin_names) == 347
+    assert len(builtin_names) == 334
     assert "ν(C=O) –COCl acid halide" in builtin_names
     assert "ν(C=O) anhydride asym." in builtin_names
     assert "ν(N₃) –N₃ azide" in builtin_names
