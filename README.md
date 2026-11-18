@@ -500,11 +500,11 @@ runs on `windows-latest` to produce an installer and attach it to the
 matching GitHub Release:
 
 ```bash
-git tag v0.31.0
-git push origin v0.31.0
+git tag v0.32.0
+git push origin v0.32.0
 ```
 
-A few minutes later `IR-Spectra-Analyzer-Setup-0.31.0.exe` appears on the
+A few minutes later `IR-Spectra-Analyzer-Setup-0.32.0.exe` appears on the
 [Releases page](https://github.com/kubikhavran/ir-spectra-analyzer/releases).
 
 Without pushing a tag, run the workflow by hand instead (**Actions → Build
@@ -523,13 +523,13 @@ pip install pyinstaller dmgbuild
 python scripts/build_icon.py
 
 # 3. Bundle to dist/IR Spectra Analyzer.app/
-IR_SPECTRA_VERSION=0.31.0 pyinstaller packaging/ir-spectra-analyzer-mac.spec --clean --noconfirm
+IR_SPECTRA_VERSION=0.32.0 pyinstaller packaging/ir-spectra-analyzer-mac.spec --clean --noconfirm
 
 # 4. Wrap in a DMG
 dmgbuild -s packaging/dmg_settings.py \
-  -D version=0.31.0 -D arch=arm64 \
+  -D version=0.32.0 -D arch=arm64 \
   "IR Spectra Analyzer" \
-  "dist/IR-Spectra-Analyzer-0.31.0-arm64.dmg"
+  "dist/IR-Spectra-Analyzer-0.32.0-arm64.dmg"
 ```
 
 To build locally on a **Windows** machine:
